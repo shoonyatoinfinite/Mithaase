@@ -1,0 +1,33 @@
+import { NextResponse } from "next/server";
+import { getProducts, getAllProductsAdmin, createProduct } from "@/lib/data/store";
+
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const categoryId = searchParams.get("category") || undefined;
+    const admin = searchParams.get("admin") === "true";
+
+    if (admin) {
+      const products = await getAllProductsAdmin();
+      return NextResponse.json(products);
+    }
+
+    const products = await getProducts(categoryId);
+    return NextResponse.json(products);
+  } catch (error) {
+    return NextResponse.json({ error: "Failed to fetch products" }, { status: 500 });
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    if (!body.name || !body.description) {
+      return NextResponse.json({ error: "Name and description are required" }, { status: 400 });
+    }
+    const created = await createProduct(body);
+    return NextResponse.json(created, { status: 201 });
+  } catch (error) {
+    return NextResponse.json({ error: "Failed to create product" }, { status: 500 });
+  }
+}

@@ -1,0 +1,1866 @@
+import {
+  Category,
+  Product,
+  ProductVariant,
+  StoreSettings,
+  Order,
+  OrderItem,
+  OrderStatus,
+  PaymentStatus,
+  Expense,
+  OfflineSale,
+  InventoryMovement,
+  OrderStatusHistory,
+  CustomerAccount,
+  Coupon,
+  Rider,
+  AdminProfile,
+} from "@/types";
+import {
+  initialCategories,
+  initialProducts,
+  initialSettings,
+  initialOrders,
+  initialExpenses,
+  initialOfflineSales,
+  initialInventoryMovements,
+  initialCustomers,
+  initialCoupons,
+} from "./initial-data";
+import { sql } from "@/lib/neon/db";
+
+// In-memory persistent state (shared in Node runtime / development server)
+// Also syncs seamlessly when Supabase client is configured
+declare global {
+  // eslint-disable-next-line no-var
+  var __mithaase_store: {
+    categories: Category[];
+    products: Product[];
+    settings: StoreSettings;
+    orders: Order[];
+    expenses: Expense[];
+    offlineSales: OfflineSale[];
+    inventoryMovements: InventoryMovement[];
+    customers: CustomerAccount[];
+    coupons: Coupon[];
+    riders: Rider[];
+  } | undefined;
+}
+
+if (!global.__mithaase_store) {
+  global.__mithaase_store = {
+    categories: [...initialCategories],
+    products: JSON.parse(JSON.stringify(initialProducts)),
+    settings: { ...initialSettings },
+    orders: JSON.parse(JSON.stringify(initialOrders)),
+    expenses: JSON.parse(JSON.stringify(initialExpenses)),
+    offlineSales: JSON.parse(JSON.stringify(initialOfflineSales)),
+    inventoryMovements: JSON.parse(JSON.stringify(initialInventoryMovements)),
+    customers: JSON.parse(JSON.stringify(initialCustomers)),
+    coupons: JSON.parse(JSON.stringify(initialCoupons)),
+    riders: [],
+  };
+}
+
+if (!global.__mithaase_store.customers) {
+  global.__mithaase_store.customers = JSON.parse(JSON.stringify(initialCustomers));
+}
+
+if (!global.__mithaase_store.riders) {
+  global.__mithaase_store.riders = [];
+}
+
+if (!global.__mithaase_store.coupons) {
+  global.__mithaase_store.coupons = JSON.parse(JSON.stringify(initialCoupons));
+}
+
+// Self-heal any orders where free delivery coupon (₹21) improperly subtracted from sweets subtotal
+if (global.__mithaase_store.orders) {
+  global.__mithaase_store.orders.forEach((o) => {
+    if (
+      (o.coupon_code?.toUpperCase() === "FREEDEL" || o.delivery_charge === 0) &&
+      o.subtotal > 0 &&
+      (o.total_amount === 0 || o.discount_amount === 21)
+    ) {
+      o.discount_amount = 0;
+      o.delivery_charge = 0;
+      o.total_amount = o.subtotal;
+    }
+  });
+}
+
+// Ensure Diwali Special Paneer Sabji 1L variant has active stock
+if (global.__mithaase_store.products) {
+  const paneer = global.__mithaase_store.products.find((p) => p.id === "prod-8");
+  if (paneer) {
+    const v1L = paneer.variants.find((v) => v.id === "var-8b");
+    if (v1L) {
+      v1L.variant_name = "Family Handi (1L / 1000ml)";
+      if (v1L.stock_quantity <= 0) v1L.stock_quantity = 50;
+      v1L.is_active = true;
+    }
+    const v500 = paneer.variants.find((v) => v.id === "var-8a");
+    if (v500) {
+      if (v500.stock_quantity <= 0) v500.stock_quantity = 50;
+      v500.is_active = true;
+    }
+  }
+}
+
+const db = global.__mithaase_store;
+
+// 1. SETTINGS
+export async function getStoreSettings(): Promise<StoreSettings> {
+  if (sql) {
+    try {
+      const rows = await sql.query(`SELECT * FROM store_settings WHERE id = 1 LIMIT 1;`);
+      if (rows && rows.length > 0) {
+        const s = rows[0];
+        const loaded: StoreSettings = {
+          store_name: s.store_name || db.settings.store_name,
+          brand_tagline: s.brand_tagline || db.settings.brand_tagline,
+          store_status: s.store_status || db.settings.store_status,
+          accepts_orders: s.accepts_orders !== undefined ? Boolean(s.accepts_orders) : db.settings.accepts_orders,
+          default_delivery_fee: s.default_delivery_fee !== undefined ? Number(s.default_delivery_fee) : db.settings.default_delivery_fee,
+          minimum_order_value: s.minimum_order_value !== undefined ? Number(s.minimum_order_value) : db.settings.minimum_order_value,
+          same_day_delivery_enabled: s.same_day_delivery_enabled !== undefined ? Boolean(s.same_day_delivery_enabled) : db.settings.same_day_delivery_enabled,
+          operating_hours: s.operating_hours || db.settings.operating_hours,
+          cutoff_time: s.cutoff_time || db.settings.cutoff_time,
+          service_areas: Array.isArray(s.service_areas)
+            ? s.service_areas
+            : typeof s.service_areas === "string"
+            ? JSON.parse(s.service_areas)
+            : db.settings.service_areas,
+          business_phone: s.business_phone || db.settings.business_phone,
+          whatsapp_number: s.whatsapp_number || db.settings.whatsapp_number,
+          shop_address: s.shop_address || db.settings.shop_address,
+          announcement_message: s.announcement_message || db.settings.announcement_message,
+          closure_message: s.closure_message || db.settings.closure_message,
+          store_shutoff: s.store_shutoff !== undefined ? Boolean(s.store_shutoff) : db.settings.store_shutoff,
+          shutoff_message: s.shutoff_message || db.settings.shutoff_message,
+          upi_id: s.upi_id || db.settings.upi_id,
+          upi_payee_name: s.upi_payee_name || db.settings.upi_payee_name,
+          admin_name: s.admin_name || db.settings.admin_name,
+          admin_email: s.admin_email || db.settings.admin_email,
+          admin_phone: s.admin_phone || db.settings.admin_phone,
+          admin_pin: s.admin_pin || db.settings.admin_pin,
+        };
+        db.settings = { ...db.settings, ...loaded };
+      }
+    } catch (err) {
+      console.error("[STORE] getStoreSettings error:", err);
+    }
+  }
+  return { ...db.settings };
+}
+
+export async function updateStoreSettings(updates: Partial<StoreSettings>): Promise<StoreSettings> {
+  db.settings = { ...db.settings, ...updates };
+
+  if (sql) {
+    try {
+      await sql.query(
+        `UPDATE store_settings SET
+          store_name = COALESCE($1, store_name),
+          brand_tagline = COALESCE($2, brand_tagline),
+          store_status = COALESCE($3, store_status),
+          accepts_orders = COALESCE($4, accepts_orders),
+          default_delivery_fee = COALESCE($5, default_delivery_fee),
+          minimum_order_value = COALESCE($6, minimum_order_value),
+          same_day_delivery_enabled = COALESCE($7, same_day_delivery_enabled),
+          operating_hours = COALESCE($8, operating_hours),
+          cutoff_time = COALESCE($9, cutoff_time),
+          business_phone = COALESCE($10, business_phone),
+          whatsapp_number = COALESCE($11, whatsapp_number),
+          shop_address = COALESCE($12, shop_address),
+          announcement_message = COALESCE($13, announcement_message),
+          closure_message = COALESCE($14, closure_message),
+          store_shutoff = COALESCE($15, store_shutoff),
+          shutoff_message = COALESCE($16, shutoff_message),
+          updated_at = NOW()
+        WHERE id = 1;`,
+        [
+          updates.store_name,
+          updates.brand_tagline,
+          updates.store_status,
+          updates.accepts_orders,
+          updates.default_delivery_fee,
+          updates.minimum_order_value,
+          updates.same_day_delivery_enabled,
+          updates.operating_hours,
+          updates.cutoff_time,
+          updates.business_phone,
+          updates.whatsapp_number,
+          updates.shop_address,
+          updates.announcement_message,
+          updates.closure_message,
+          updates.store_shutoff,
+          updates.shutoff_message,
+        ]
+      );
+    } catch (err) {
+      console.error("[STORE] updateStoreSettings sql error:", err);
+    }
+  }
+
+  return { ...db.settings };
+}
+
+// 2. CATEGORIES
+export async function getCategories(): Promise<Category[]> {
+  const settings = await getStoreSettings();
+  if (settings.store_shutoff || settings.store_status === "shutoff") {
+    return [];
+  }
+  return [...db.categories].sort((a, b) => a.display_order - b.display_order);
+}
+
+// 3. PRODUCTS
+export async function getProducts(categoryId?: string): Promise<Product[]> {
+  const settings = await getStoreSettings();
+  if (settings.store_shutoff || settings.store_status === "shutoff") {
+    return [];
+  }
+  let list = db.products.filter((p) => p.is_active);
+  if (categoryId) {
+    list = list.filter((p) => p.category_id === categoryId);
+  }
+  return list;
+}
+
+export async function getAllProductsAdmin(): Promise<Product[]> {
+  return [...db.products];
+}
+
+export async function getProductBySlug(slug: string): Promise<Product | null> {
+  const prod = db.products.find((p) => p.slug === slug);
+  return prod ? { ...prod } : null;
+}
+
+export async function getProductById(id: string): Promise<Product | null> {
+  const prod = db.products.find((p) => p.id === id);
+  return prod ? { ...prod } : null;
+}
+
+export async function createProduct(input: Partial<Product>): Promise<Product> {
+  const id = `prod-${Date.now()}`;
+  const slug = (input.name || "sweet")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  const newProd: Product = {
+    id,
+    name: input.name || "Special Sweets",
+    slug,
+    description: input.description || "",
+    category_id: input.category_id || db.categories[0].id,
+    category_name: db.categories.find((c) => c.id === input.category_id)?.name || "Barfi",
+    image_url: input.image_url || "/images/hero_diwali_sweets.jpg",
+    is_active: input.is_active ?? true,
+    is_featured: input.is_featured ?? false,
+    badge: input.badge,
+    variants: (input.variants || []).map((v, i) => ({
+      id: `var-${id}-${i + 1}`,
+      product_id: id,
+      variant_name: v.variant_name || "500g",
+      unit: v.unit || "Box",
+      price: Number(v.price) || 0,
+      stock_quantity: Number(v.stock_quantity) || 0,
+      low_stock_threshold: Number(v.low_stock_threshold) || 5,
+      is_active: v.is_active ?? true,
+    })),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  db.products.unshift(newProd);
+  return newProd;
+}
+
+export async function updateProduct(id: string, updates: Partial<Product>): Promise<Product | null> {
+  const index = db.products.findIndex((p) => p.id === id);
+  if (index === -1) return null;
+
+  db.products[index] = {
+    ...db.products[index],
+    ...updates,
+    updated_at: new Date().toISOString(),
+  };
+
+  return db.products[index];
+}
+
+export async function adjustVariantStock(
+  variantId: string,
+  quantityChange: number,
+  movementType: 'addition' | 'reduction' | 'correction' | 'wastage' | 'sale' | 'order_reservation' | 'order_cancellation',
+  reason: string,
+  createdBy = "Admin"
+): Promise<{ success: boolean; newStock: number; error?: string }> {
+  for (const product of db.products) {
+    const variant = product.variants.find((v) => v.id === variantId);
+    if (variant) {
+      const nextStock = variant.stock_quantity + quantityChange;
+      if (nextStock < 0) {
+        return { success: false, newStock: variant.stock_quantity, error: "Stock cannot become negative" };
+      }
+      variant.stock_quantity = nextStock;
+      
+      const movement: InventoryMovement = {
+        id: `im-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        variant_id: variantId,
+        product_name: product.name,
+        variant_name: variant.variant_name,
+        movement_type: movementType,
+        quantity_change: quantityChange,
+        stock_after: nextStock,
+        reason,
+        created_by: createdBy,
+        created_at: new Date().toISOString(),
+      };
+      db.inventoryMovements.unshift(movement);
+      return { success: true, newStock: nextStock };
+    }
+  }
+  return { success: false, newStock: 0, error: "Variant not found" };
+}
+
+// 4. ORDERS
+export interface CreateOrderParams {
+  customer_name: string;
+  customer_email?: string;
+  customer_phone: string;
+  delivery_address: string;
+  locality: string;
+  landmark?: string;
+  delivery_instructions?: string;
+  payment_method: 'cod' | 'upi';
+  upi_reference?: string;
+  upi_screenshot?: string;
+  coupon_code?: string;
+  discount_amount?: number;
+  latitude?: number;
+  longitude?: number;
+  map_url?: string;
+  items: Array<{
+    productId: string;
+    variantId: string;
+    quantity: number;
+  }>;
+}
+
+function parseItemWeightInKg(variantName: string): number {
+  if (!variantName) return 1;
+  const str = variantName.toLowerCase();
+  const kgMatch = str.match(/(\d+(?:\.\d+)?)\s*kg/);
+  if (kgMatch) return parseFloat(kgMatch[1]);
+  const gmMatch = str.match(/(\d+(?:\.\d+)?)\s*(?:g|gm|gram)/);
+  if (gmMatch) return parseFloat(gmMatch[1]) / 1000;
+  return 1;
+}
+
+export async function createOrder(params: CreateOrderParams): Promise<{ success: boolean; order?: Order; error?: string }> {
+  // 1. Verify store status
+  const settings = await getStoreSettings();
+  if (settings.store_shutoff || settings.store_status === "shutoff") {
+    return {
+      success: false,
+      error: settings.shutoff_message || "The store is permanently shut off. Shopping has been disabled.",
+    };
+  }
+  if (!settings.accepts_orders || settings.store_status !== "open") {
+    return {
+      success: false,
+      error: settings.closure_message || "We are currently not accepting orders. Please try again later.",
+    };
+  }
+
+  // 2. Validate maximum total order weight (Max 20 kg standard limit)
+  let totalOrderWeightKg = 0;
+  for (const item of params.items) {
+    const prod = db.products.find((p) => p.id === item.productId);
+    const vr = prod?.variants.find((v) => v.id === item.variantId);
+    if (vr) {
+      totalOrderWeightKg += parseItemWeightInKg(vr.variant_name) * item.quantity;
+    }
+  }
+
+  if (totalOrderWeightKg > 20) {
+    return {
+      success: false,
+      error: `Order weight (${totalOrderWeightKg.toFixed(1)} kg) exceeds the 20 kg online limit. For bulk orders, please contact Shree Shyam Sweets directly.`,
+    };
+  }
+
+  // 3. Validate items, recalculate prices server-side, check inventory
+  let subtotal = 0;
+  const verifiedItems: OrderItem[] = [];
+  const stockDeductions: Array<{ variant: ProductVariant; product: Product; qty: number }> = [];
+
+  for (const item of params.items) {
+    const product = db.products.find((p) => p.id === item.productId && p.is_active);
+    if (!product) {
+      return { success: false, error: `Product not found or unavailable.` };
+    }
+
+    // Check seasonal special availability (e.g. Paneer Sabji)
+    if (product.is_seasonal_special) {
+      const now = new Date();
+      if (product.special_start_date && now < new Date(product.special_start_date)) {
+        return { success: false, error: `${product.name} is not available yet.` };
+      }
+      if (product.special_end_date && now > new Date(product.special_end_date)) {
+        return { success: false, error: `${product.name} is no longer available.` };
+      }
+    }
+
+    const variant = product.variants.find((v) => v.id === item.variantId && v.is_active);
+    if (!variant) {
+      return { success: false, error: `Selected portion/variant for ${product.name} is unavailable.` };
+    }
+
+    if (variant.stock_quantity < item.quantity) {
+      return {
+        success: false,
+        error: `Only ${variant.stock_quantity} in stock for ${product.name} (${variant.variant_name}). Please reduce quantity.`,
+      };
+    }
+
+    const lineTotal = variant.price * item.quantity;
+    subtotal += lineTotal;
+
+    verifiedItems.push({
+      id: `item-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      order_id: "", // filled below
+      product_id: product.id,
+      variant_id: variant.id,
+      product_name_snapshot: product.name,
+      variant_name_snapshot: variant.variant_name,
+      quantity: item.quantity,
+      unit_price: variant.price,
+      line_total: lineTotal,
+      image_url: product.image_url,
+    });
+
+    stockDeductions.push({ variant, product, qty: item.quantity });
+  }
+
+  if (settings.minimum_order_value > 0 && subtotal < settings.minimum_order_value) {
+    return {
+      success: false,
+      error: `Minimum order amount is ₹${settings.minimum_order_value}. Your subtotal is ₹${subtotal}.`,
+    };
+  }
+
+  // Deduct inventory transactional
+  for (const item of stockDeductions) {
+    item.variant.stock_quantity -= item.qty;
+    db.inventoryMovements.unshift({
+      id: `im-${Date.now()}-${Math.random()}`,
+      variant_id: item.variant.id,
+      product_name: item.product.name,
+      variant_name: item.variant.variant_name,
+      movement_type: "order_reservation",
+      quantity_change: -item.qty,
+      stock_after: item.variant.stock_quantity,
+      reason: `Online order placement`,
+      created_by: "System",
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  const phoneToMatch = (params.customer_phone || "").replace(/[^0-9]/g, "");
+  const emailToMatch = (params.customer_email || "").trim().toLowerCase();
+
+  let isFirstTimeCustomer = true;
+  if (sql) {
+    try {
+      const pastOrders = await sql.query(
+        `SELECT count(*)::int as count FROM orders 
+         WHERE (customer_email IS NOT NULL AND LOWER(customer_email) = $1)
+            OR (customer_phone IS NOT NULL AND customer_phone = $2);`,
+        [emailToMatch || "none@empty", phoneToMatch || "none"]
+      );
+      if (pastOrders && pastOrders[0] && pastOrders[0].count > 0) {
+        isFirstTimeCustomer = false;
+      }
+    } catch {
+      isFirstTimeCustomer = !db.orders.some(
+        (o) =>
+          (emailToMatch && o.customer_email?.toLowerCase() === emailToMatch) ||
+          (phoneToMatch && (o.customer_phone || "").replace(/[^0-9]/g, "") === phoneToMatch)
+      );
+    }
+  } else {
+    isFirstTimeCustomer = !db.orders.some(
+      (o) =>
+        (emailToMatch && o.customer_email?.toLowerCase() === emailToMatch) ||
+        (phoneToMatch && (o.customer_phone || "").replace(/[^0-9]/g, "") === phoneToMatch)
+    );
+  }
+
+  // First-time customers get FREE delivery (₹0) on their first order!
+  const standardDeliveryFee = Number(settings.default_delivery_fee) || 21;
+  let deliveryCharge = isFirstTimeCustomer ? 0 : standardDeliveryFee;
+  let discountAmount = 0;
+
+  if (params.coupon_code) {
+    const cp = db.coupons.find(
+      (c) => c.code.toUpperCase() === params.coupon_code?.toUpperCase() && c.is_active
+    );
+    if (cp) {
+      if (cp.discount_type === "free_delivery" || cp.code.toUpperCase() === "FREEDEL") {
+        if (!isFirstTimeCustomer) {
+          return {
+            success: false,
+            error: "Free delivery coupon (FREEDEL) is valid only for new customers on their 1st order. Standard flat delivery fee applies.",
+          };
+        }
+        deliveryCharge = 0;
+        discountAmount = 0; // Free delivery waives the delivery fee; sweets subtotal is NOT discounted
+      } else if (cp.discount_type === "percentage") {
+        const pct = Math.round((subtotal * cp.discount_value) / 100);
+        discountAmount = cp.max_discount_amount ? Math.min(cp.max_discount_amount, pct) : pct;
+      } else if (cp.discount_type === "flat_amount") {
+        discountAmount = Math.min(subtotal, cp.discount_value);
+      }
+    }
+  } else if (typeof params.discount_amount === "number" && params.discount_amount > 0) {
+    discountAmount = Math.min(subtotal, params.discount_amount);
+  }
+
+  const totalAmount = Math.max(0, subtotal - discountAmount + deliveryCharge);
+  const orderId = `ord-${Date.now()}`;
+  const orderNumber = `SSS-${new Date().getFullYear()}-${1000 + db.orders.length + 1}`;
+
+  verifiedItems.forEach((it) => (it.order_id = orderId));
+
+  const initialStatusHistory: OrderStatusHistory = {
+    id: `hist-${Date.now()}`,
+    order_id: orderId,
+    previous_status: "pending_confirmation",
+    new_status: "pending_confirmation",
+    changed_by: "Customer",
+    note: "Order placed online",
+    created_at: new Date().toISOString(),
+  };
+
+  const newOrder: Order = {
+    id: orderId,
+    order_number: orderNumber,
+    customer_name: params.customer_name.trim(),
+    customer_email: params.customer_email?.trim(),
+    customer_phone: params.customer_phone.trim(),
+    delivery_address: params.delivery_address.trim(),
+    locality: params.locality.trim(),
+    landmark: params.landmark?.trim(),
+    delivery_instructions: params.delivery_instructions?.trim(),
+    subtotal,
+    discount_amount: discountAmount,
+    delivery_charge: deliveryCharge,
+    total_amount: totalAmount,
+    coupon_code: params.coupon_code ? params.coupon_code.toUpperCase().trim() : undefined,
+    payment_method: params.payment_method,
+    payment_status: params.payment_method === "upi" ? "paid" : "unpaid",
+    order_status: "pending_confirmation",
+    upi_reference: params.upi_reference,
+    upi_screenshot: params.upi_screenshot,
+    latitude: params.latitude,
+    longitude: params.longitude,
+    map_url: params.map_url,
+    source: "online",
+    items: verifiedItems,
+    status_history: [initialStatusHistory],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  db.orders.unshift(newOrder);
+  return { success: true, order: newOrder };
+}
+
+export async function getOrders(
+  statusFilter?: string,
+  searchQuery?: string,
+  emailFilter?: string
+): Promise<Order[]> {
+  let list = [...db.orders];
+  if (emailFilter) {
+    const norm = emailFilter.toLowerCase().trim();
+    const cleanPhone = norm.replace(/[^0-9]/g, "");
+    list = list.filter(
+      (o) =>
+        (o.customer_email || "").toLowerCase() === norm ||
+        (cleanPhone.length >= 10 && (o.customer_phone || "").replace(/[^0-9]/g, "").includes(cleanPhone)) ||
+        o.order_number.toLowerCase() === norm ||
+        o.id === norm
+    );
+  }
+  if (statusFilter && statusFilter !== "all") {
+    if (statusFilter === "current" || statusFilter === "active") {
+      list = list.filter((o) => o.order_status !== "delivered" && o.order_status !== "cancelled");
+    } else if (statusFilter === "queued") {
+      list = list.filter((o) => o.delivery_queued && o.order_status !== "delivered" && o.order_status !== "cancelled");
+    } else {
+      list = list.filter((o) => o.order_status === statusFilter);
+    }
+  }
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    list = list.filter(
+      (o) =>
+        o.order_number.toLowerCase().includes(q) ||
+        o.customer_name.toLowerCase().includes(q) ||
+        o.customer_phone.includes(q) ||
+        o.locality.toLowerCase().includes(q)
+    );
+  }
+  return list.map(normalizeOrder);
+}
+
+function normalizeOrder(order: Order): Order {
+  if (
+    (order.coupon_code?.toUpperCase() === "FREEDEL" || order.delivery_charge === 0) &&
+    order.subtotal > 0 &&
+    (order.total_amount === 0 || order.discount_amount === 21)
+  ) {
+    order.discount_amount = 0;
+    order.delivery_charge = 0;
+    order.total_amount = order.subtotal;
+  }
+  return order;
+}
+
+export async function getOrderById(id: string): Promise<Order | null> {
+  const order = db.orders.find((o) => o.id === id || o.order_number === id);
+  return order ? { ...normalizeOrder(order) } : null;
+}
+
+export async function updateOrderStatus(
+  orderId: string,
+  newStatus: OrderStatus,
+  note?: string,
+  changedBy = "Admin",
+  deliveryProofPhoto?: string,
+  pickupPhoto?: string,
+  deliveryDetails?: {
+    delivered_at?: string;
+    delivered_lat?: number;
+    delivered_lng?: number;
+    delivered_location_name?: string;
+    delivered_map_url?: string;
+  }
+): Promise<{ success: boolean; order?: Order; error?: string }> {
+  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId);
+  if (!order) return { success: false, error: "Order not found" };
+
+  if (deliveryProofPhoto) {
+    order.delivery_proof_photo = deliveryProofPhoto;
+  }
+  if (pickupPhoto) {
+    order.pickup_photo = pickupPhoto;
+  }
+  if (deliveryDetails) {
+    if (deliveryDetails.delivered_at) order.delivered_at = deliveryDetails.delivered_at;
+    if (deliveryDetails.delivered_lat !== undefined) order.delivered_lat = deliveryDetails.delivered_lat;
+    if (deliveryDetails.delivered_lng !== undefined) order.delivered_lng = deliveryDetails.delivered_lng;
+    if (deliveryDetails.delivered_location_name) order.delivered_location_name = deliveryDetails.delivered_location_name;
+    if (deliveryDetails.delivered_map_url) order.delivered_map_url = deliveryDetails.delivered_map_url;
+  }
+
+  const prevStatus = order.order_status;
+  if (prevStatus === newStatus) return { success: true, order };
+
+  // Strict non-reversible workflow progression check
+  const workflowOrder: OrderStatus[] = [
+    "pending_confirmation",
+    "confirmed",
+    "preparing",
+    "ready_for_dispatch",
+    "out_for_delivery",
+    "delivered",
+  ];
+
+  const prevIdx = workflowOrder.indexOf(prevStatus);
+  const newIdx = workflowOrder.indexOf(newStatus);
+
+  // If moving backwards in the workflow, reject
+  if (prevIdx !== -1 && newIdx !== -1 && newIdx < prevIdx && newStatus !== "cancelled") {
+    return {
+      success: false,
+      error: `Workflow is irreversible: Cannot change status backwards from ${prevStatus.replace(/_/g, " ")} to ${newStatus.replace(/_/g, " ")}.`,
+    };
+  }
+
+  // When confirming order: If UPI, auto-mark payment as paid
+  if (newStatus === "confirmed" && order.payment_method === "upi") {
+    order.payment_status = "paid";
+  }
+
+  // If cancelling an order, restore inventory and initiate refund if paid via UPI
+  if (newStatus === "cancelled" && prevStatus !== "cancelled") {
+    order.cancelled_at = new Date().toISOString();
+    order.cancellation_reason = note || "Cancelled by store administrator";
+
+    for (const item of order.items) {
+      await adjustVariantStock(
+        item.variant_id,
+        item.quantity,
+        "order_cancellation",
+        `Order ${order.order_number} cancelled`,
+        changedBy
+      );
+    }
+
+    // If order was paid via UPI or payment status is paid, trigger refund process
+    if (order.payment_method === "upi" || order.payment_status === "paid") {
+      order.refund_status = "pending";
+      order.refund_amount = order.total_amount;
+    }
+  }
+
+  order.order_status = newStatus;
+  order.updated_at = new Date().toISOString();
+
+  if (!order.status_history) order.status_history = [];
+  order.status_history.push({
+    id: `hist-${Date.now()}`,
+    order_id: order.id,
+    previous_status: prevStatus,
+    new_status: newStatus,
+    changed_by: changedBy,
+    note: note || `Status changed to ${newStatus}`,
+    created_at: new Date().toISOString(),
+  });
+
+  if (sql) {
+    try {
+      await sql.query(
+        `UPDATE orders SET
+          order_status = $1,
+          cancellation_reason = $2,
+          cancelled_at = $3,
+          refund_status = $4,
+          refund_amount = $5,
+          delivery_proof_photo = COALESCE($6, delivery_proof_photo),
+          delivered_at = COALESCE($7, delivered_at),
+          delivered_lat = COALESCE($8, delivered_lat),
+          delivered_lng = COALESCE($9, delivered_lng),
+          delivered_location_name = COALESCE($10, delivered_location_name),
+          delivered_map_url = COALESCE($11, delivered_map_url),
+          payment_status = $12,
+          updated_at = NOW()
+        WHERE id = $13 OR order_number = $13;`,
+        [
+          order.order_status,
+          order.cancellation_reason || null,
+          order.cancelled_at || null,
+          order.refund_status || null,
+          order.refund_amount || null,
+          order.delivery_proof_photo || null,
+          order.delivered_at || null,
+          order.delivered_lat || null,
+          order.delivered_lng || null,
+          order.delivered_location_name || null,
+          order.delivered_map_url || null,
+          order.payment_status,
+          orderId,
+        ]
+      );
+    } catch (err) {
+      console.error("[STORE] updateOrderStatus sql error:", err);
+    }
+  }
+
+  return { success: true, order };
+}
+
+export async function processOrderRefund(
+  orderId: string,
+  refundTxnId: string,
+  refundScreenshot: string,
+  refundNote?: string,
+  processedBy = "Admin"
+): Promise<{ success: boolean; order?: Order; error?: string }> {
+  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId);
+  if (!order) return { success: false, error: "Order not found." };
+
+  if (order.order_status !== "cancelled") {
+    return { success: false, error: "Only cancelled orders can have refunds processed." };
+  }
+  if (!refundTxnId.trim()) {
+    return { success: false, error: "Refund transaction number (UTR / Ref ID) is required." };
+  }
+  if (!refundScreenshot) {
+    return { success: false, error: "Screenshot proof of refund is required." };
+  }
+
+  const nowIso = new Date().toISOString();
+  order.refund_status = "refunded";
+  order.payment_status = "refunded";
+  order.refund_txn_id = refundTxnId.trim();
+  order.refund_screenshot = refundScreenshot;
+  order.refunded_at = nowIso;
+  order.refund_amount = order.total_amount;
+  order.updated_at = nowIso;
+
+  if (!order.status_history) order.status_history = [];
+  order.status_history.push({
+    id: `hist-${Date.now()}`,
+    order_id: order.id,
+    previous_status: "cancelled",
+    new_status: "cancelled",
+    changed_by: processedBy,
+    note: refundNote?.trim()
+      ? `Refund of ₹${order.total_amount} completed (Txn #${refundTxnId.trim()}): ${refundNote.trim()}`
+      : `Refund of ₹${order.total_amount} completed. UPI Transaction #${refundTxnId.trim()}`,
+    created_at: nowIso,
+  });
+
+  if (sql) {
+    try {
+      await sql.query(
+        `UPDATE orders SET
+          refund_status = $1,
+          payment_status = $2,
+          refund_txn_id = $3,
+          refund_screenshot = $4,
+          refunded_at = $5,
+          refund_amount = $6,
+          updated_at = NOW()
+        WHERE id = $7 OR order_number = $7;`,
+        [
+          order.refund_status,
+          order.payment_status,
+          order.refund_txn_id,
+          order.refund_screenshot,
+          order.refunded_at,
+          order.refund_amount,
+          orderId,
+        ]
+      );
+    } catch (err) {
+      console.error("[STORE] processOrderRefund sql error:", err);
+    }
+  }
+
+  return { success: true, order };
+}
+
+export async function updatePaymentStatus(
+  orderId: string,
+  newStatus: PaymentStatus,
+  upiRef?: string
+): Promise<{ success: boolean; order?: Order }> {
+  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId);
+  if (!order) return { success: false };
+
+  order.payment_status = newStatus;
+  if (upiRef) order.upi_reference = upiRef;
+  order.updated_at = new Date().toISOString();
+  return { success: true, order };
+}
+
+export async function setOrderDeliveryQueue(
+  orderId: string,
+  queued: boolean,
+  groupId?: string
+): Promise<{ success: boolean; order?: Order }> {
+  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId);
+  if (!order) return { success: false };
+
+  order.delivery_queued = queued;
+  if (groupId !== undefined) order.delivery_group_id = groupId;
+  if (!queued) order.delivery_group_id = undefined;
+  order.updated_at = new Date().toISOString();
+  return { success: true, order };
+}
+
+export async function batchDispatchOrders(
+  orderIds: string[],
+  changedBy = "Admin"
+): Promise<{ success: boolean; orders: Order[] }> {
+  const dispatchedOrders: Order[] = [];
+  const batchGroupId = `batch-${Date.now()}`;
+
+  for (const id of orderIds) {
+    const order = db.orders.find((o) => o.id === id || o.order_number === id);
+    if (order) {
+      order.delivery_queued = false;
+      order.delivery_group_id = batchGroupId;
+      order.updated_at = new Date().toISOString();
+      if (!order.status_history) order.status_history = [];
+      order.status_history.push({
+        id: `hist-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        order_id: order.id,
+        previous_status: order.order_status,
+        new_status: order.order_status,
+        changed_by: changedBy,
+        note: `Dispatched in grouped delivery batch (${orderIds.length} orders)`,
+        created_at: new Date().toISOString(),
+      });
+      dispatchedOrders.push(order);
+    }
+  }
+
+  return { success: true, orders: dispatchedOrders };
+}
+
+// 5. OFFLINE SALES (Counter Transactions)
+export interface CreateOfflineSaleParams {
+  payment_method: 'cash' | 'upi';
+  discount_amount?: number;
+  customer_name?: string;
+  customer_phone?: string;
+  items: Array<{
+    productId: string;
+    variantId: string;
+    quantity: number;
+    unit_price: number;
+  }>;
+}
+
+export async function createOfflineSale(params: CreateOfflineSaleParams): Promise<{ success: boolean; sale?: OfflineSale; error?: string }> {
+  let subtotal = 0;
+  const saleItems = [];
+
+  for (const item of params.items) {
+    const product = db.products.find((p) => p.id === item.productId);
+    const variant = product?.variants.find((v) => v.id === item.variantId);
+    if (!product || !variant) {
+      return { success: false, error: "Invalid product item" };
+    }
+
+    if (variant.stock_quantity < item.quantity) {
+      return {
+        success: false,
+        error: `Insufficient stock for ${product.name} (${variant.variant_name}). Only ${variant.stock_quantity} available.`,
+      };
+    }
+
+    const lineTotal = item.unit_price * item.quantity;
+    subtotal += lineTotal;
+
+    saleItems.push({
+      id: `oi-${Date.now()}-${Math.random()}`,
+      offline_sale_id: "",
+      product_id: product.id,
+      variant_id: variant.id,
+      product_name_snapshot: product.name,
+      variant_name_snapshot: variant.variant_name,
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      line_total: lineTotal,
+    });
+  }
+
+  const discount = Number(params.discount_amount) || 0;
+  const totalAmount = Math.max(0, subtotal - discount);
+  const saleId = `sale-${Date.now()}`;
+  const saleNumber = `OFF-${new Date().getFullYear()}-${100 + db.offlineSales.length + 1}`;
+
+  saleItems.forEach((si) => (si.offline_sale_id = saleId));
+
+  // Deduct stock safely
+  for (const item of params.items) {
+    await adjustVariantStock(
+      item.variantId,
+      -item.quantity,
+      "sale",
+      `Counter sale ${saleNumber}`,
+      "Counter Staff"
+    );
+  }
+
+  const newSale: OfflineSale = {
+    id: saleId,
+    sale_number: saleNumber,
+    subtotal,
+    discount_amount: discount,
+    total_amount: totalAmount,
+    payment_method: params.payment_method,
+    customer_name: params.customer_name,
+    customer_phone: params.customer_phone,
+    items: saleItems,
+    created_by: "Counter Staff",
+    created_at: new Date().toISOString(),
+  };
+
+  db.offlineSales.unshift(newSale);
+  return { success: true, sale: newSale };
+}
+
+export async function getOfflineSales(): Promise<OfflineSale[]> {
+  return [...db.offlineSales];
+}
+
+// 6. EXPENSES
+export async function getExpenses(): Promise<Expense[]> {
+  return [...db.expenses];
+}
+
+export async function createExpense(input: Partial<Expense>): Promise<Expense> {
+  const expense: Expense = {
+    id: `exp-${Date.now()}`,
+    title: input.title || "Expense",
+    category: input.category || "Raw materials",
+    amount: Number(input.amount) || 0,
+    payment_method: input.payment_method || "cash",
+    expense_date: input.expense_date || new Date().toISOString().split("T")[0],
+    description: input.description || "",
+    receipt_url: input.receipt_url,
+    created_by: input.created_by || "Admin",
+    created_at: new Date().toISOString(),
+  };
+  db.expenses.unshift(expense);
+  return expense;
+}
+
+// 7. INVENTORY MOVEMENTS
+export async function getInventoryMovements(): Promise<InventoryMovement[]> {
+  return [...db.inventoryMovements];
+}
+
+// 8. DASHBOARD METRICS & REPORTS
+export async function getDashboardMetrics() {
+  const todayStr = new Date().toISOString().split("T")[0];
+
+  const todayOrders = db.orders.filter((o) => o.created_at.startsWith(todayStr));
+  const todaySalesAmount =
+    todayOrders.filter((o) => o.order_status !== "cancelled").reduce((sum, o) => sum + o.total_amount, 0) +
+    db.offlineSales.filter((s) => s.created_at.startsWith(todayStr)).reduce((sum, s) => sum + s.total_amount, 0);
+
+  const completedOrders = db.orders.filter((o) => o.order_status === "delivered").length;
+  const pendingOrders = db.orders.filter((o) => o.order_status === "pending_confirmation" || o.order_status === "confirmed" || o.order_status === "preparing").length;
+  const cancelledOrders = db.orders.filter((o) => o.order_status === "cancelled").length;
+
+  // Low stock products count
+  let lowStockCount = 0;
+  for (const p of db.products) {
+    for (const v of p.variants) {
+      if (v.stock_quantity <= v.low_stock_threshold) {
+        lowStockCount++;
+      }
+    }
+  }
+
+  const todayExpenses = db.expenses
+    .filter((e) => e.expense_date === todayStr)
+    .reduce((sum, e) => sum + e.amount, 0);
+
+  const estimatedProfit = todaySalesAmount - todayExpenses;
+
+  return {
+    todayOrdersCount: todayOrders.length,
+    todaySalesAmount,
+    completedOrders,
+    pendingOrders,
+    cancelledOrders,
+    lowStockCount,
+    todayExpenses,
+    estimatedProfit,
+  };
+}
+
+// 8. CUSTOMER AUTH & PROFILES
+export async function findCustomerByIdentifier(identifier: string): Promise<CustomerAccount | null> {
+  const norm = identifier.trim().toLowerCase();
+  const cleanPhone = norm.replace(/[^0-9]/g, "");
+
+  if (sql) {
+    try {
+      const rows = await sql.query(
+        `SELECT * FROM customer_accounts 
+         WHERE LOWER(email) = $1 
+            OR ($2 != '' AND REPLACE(phone, ' ', '') LIKE '%' || $2 || '%')
+         LIMIT 1;`,
+        [norm, cleanPhone.length >= 10 ? cleanPhone : ""]
+      );
+      if (rows && rows.length > 0) {
+        const r = rows[0] as any;
+        return {
+          id: String(r.id),
+          email: String(r.email),
+          phone: String(r.phone),
+          password: r.password ? String(r.password) : undefined,
+          pin: String(r.pin),
+          name: String(r.name),
+          delivery_address: String(r.delivery_address),
+          locality: String(r.locality),
+          landmark: r.landmark ? String(r.landmark) : undefined,
+          delivery_instructions: r.delivery_instructions ? String(r.delivery_instructions) : undefined,
+          latitude: r.latitude ? Number(r.latitude) : 28.1907,
+          longitude: r.longitude ? Number(r.longitude) : 76.1624,
+          map_url: r.map_url ? String(r.map_url) : "https://www.google.com/maps?q=28.1907,76.1624",
+          created_at: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+          updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : new Date().toISOString(),
+        };
+      }
+    } catch (e) {
+      console.warn("Neon DB customer lookup error, falling back to memory:", e);
+    }
+  }
+
+  const customer = db.customers.find(
+    (c) =>
+      c.email.toLowerCase() === norm ||
+      (cleanPhone.length >= 10 && c.phone.replace(/[^0-9]/g, "") === cleanPhone)
+  );
+  return customer ? { ...customer } : null;
+}
+
+export async function findCustomerByEmail(email: string): Promise<CustomerAccount | null> {
+  return findCustomerByIdentifier(email);
+}
+
+export async function verifyCustomerLogin(
+  identifier: string,
+  secret: string // Can be Password OR 6-Digit PIN
+): Promise<{ success: boolean; customer?: CustomerAccount; error?: string }> {
+  const customer = await findCustomerByIdentifier(identifier);
+
+  if (!customer) {
+    return {
+      success: false,
+      error: "No account found with this email or phone number. Please click Sign Up to create your account.",
+    };
+  }
+
+  const cleanSecret = secret.trim();
+  const pinMatches = Boolean(customer.pin && customer.pin.trim() === cleanSecret);
+  const passwordMatches = Boolean(customer.password && customer.password.trim() === cleanSecret);
+
+  if (!pinMatches && !passwordMatches) {
+    return {
+      success: false,
+      error: "Incorrect Password or 6-Digit PIN. Please re-check and try again.",
+    };
+  }
+
+  return { success: true, customer: { ...customer } };
+}
+
+export async function registerCustomer(
+  data: Omit<CustomerAccount, "id" | "created_at" | "updated_at">
+): Promise<{ success: boolean; customer?: CustomerAccount; error?: string }> {
+  const normEmail = data.email.trim().toLowerCase();
+  const cleanPhone = data.phone.trim().replace(/[^0-9]/g, "");
+
+  if (sql) {
+    try {
+      const rows = await sql.query(
+        `INSERT INTO customer_accounts (email, phone, password, pin, name, delivery_address, locality, landmark, delivery_instructions, latitude, longitude, map_url, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+         ON CONFLICT (email) DO UPDATE SET 
+           phone = EXCLUDED.phone,
+           password = COALESCE(EXCLUDED.password, customer_accounts.password),
+           pin = EXCLUDED.pin,
+           name = EXCLUDED.name,
+           delivery_address = EXCLUDED.delivery_address,
+           locality = EXCLUDED.locality,
+           landmark = EXCLUDED.landmark,
+           delivery_instructions = EXCLUDED.delivery_instructions,
+           latitude = EXCLUDED.latitude,
+           longitude = EXCLUDED.longitude,
+           map_url = EXCLUDED.map_url,
+           updated_at = NOW()
+         RETURNING *;`,
+        [
+          normEmail,
+          cleanPhone,
+          data.password ? data.password.trim() : null,
+          data.pin.trim(),
+          data.name.trim(),
+          data.delivery_address.trim(),
+          data.locality.trim(),
+          data.landmark?.trim() || null,
+          data.delivery_instructions?.trim() || null,
+          data.latitude || 28.1907,
+          data.longitude || 76.1624,
+          data.map_url || null,
+        ]
+      );
+      if (rows && rows.length > 0) {
+        const r = rows[0] as any;
+        const savedCustomer: CustomerAccount = {
+          id: String(r.id),
+          email: String(r.email),
+          phone: String(r.phone),
+          password: r.password ? String(r.password) : undefined,
+          pin: String(r.pin),
+          name: String(r.name),
+          delivery_address: String(r.delivery_address),
+          locality: String(r.locality),
+          landmark: r.landmark ? String(r.landmark) : undefined,
+          delivery_instructions: r.delivery_instructions ? String(r.delivery_instructions) : undefined,
+          latitude: r.latitude ? Number(r.latitude) : (data.latitude || 28.1907),
+          longitude: r.longitude ? Number(r.longitude) : (data.longitude || 76.1624),
+          map_url: r.map_url ? String(r.map_url) : (data.map_url || "https://www.google.com/maps?q=28.1907,76.1624"),
+          created_at: new Date(r.created_at).toISOString(),
+          updated_at: new Date(r.updated_at).toISOString(),
+        };
+        const idx = db.customers.findIndex((c) => c.email.toLowerCase() === normEmail);
+        if (idx >= 0) db.customers[idx] = savedCustomer;
+        else db.customers.push(savedCustomer);
+        return { success: true, customer: savedCustomer };
+      }
+    } catch (e) {
+      console.warn("Neon DB customer save error, falling back to memory:", e);
+    }
+  }
+
+  const existing = db.customers.find((c) => c.email.toLowerCase() === normEmail);
+  if (existing) {
+    if (data.password) existing.password = data.password.trim();
+    existing.pin = data.pin.trim();
+    existing.name = data.name.trim();
+    existing.phone = cleanPhone;
+    existing.delivery_address = data.delivery_address.trim();
+    existing.locality = data.locality.trim();
+    existing.landmark = data.landmark?.trim();
+    existing.delivery_instructions = data.delivery_instructions?.trim();
+    existing.latitude = data.latitude;
+    existing.longitude = data.longitude;
+    existing.map_url = data.map_url;
+    existing.updated_at = new Date().toISOString();
+    return { success: true, customer: { ...existing } };
+  }
+
+  const newCustomer: CustomerAccount = {
+    id: `cust-${Date.now()}`,
+    email: normEmail,
+    phone: cleanPhone,
+    password: data.password ? data.password.trim() : undefined,
+    pin: data.pin.trim(),
+    name: data.name.trim(),
+    delivery_address: data.delivery_address.trim(),
+    locality: data.locality.trim(),
+    landmark: data.landmark?.trim(),
+    delivery_instructions: data.delivery_instructions?.trim(),
+    latitude: data.latitude,
+    longitude: data.longitude,
+    map_url: data.map_url,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  db.customers.push(newCustomer);
+  return { success: true, customer: { ...newCustomer } };
+}
+
+// 9. COUPONS & DISCOUNTS
+export async function getCoupons(onlyActive = false): Promise<Coupon[]> {
+  if (onlyActive) {
+    return db.coupons.filter((c) => c.is_active);
+  }
+  return [...db.coupons];
+}
+
+export async function getCouponByCode(code: string): Promise<Coupon | null> {
+  if (!code || typeof code !== "string") return null;
+  const norm = code.trim().toUpperCase();
+  const c = db.coupons.find((x) => x.code.toUpperCase() === norm);
+  return c ? { ...c } : null;
+}
+
+export async function createCoupon(data: {
+  code: string;
+  description: string;
+  discount_type: "flat_amount" | "percentage" | "free_delivery";
+  discount_value: number;
+  min_order_amount: number;
+  max_discount_amount?: number;
+  is_active?: boolean;
+}): Promise<{ success: boolean; coupon?: Coupon; error?: string }> {
+  const normalized = data.code.trim().toUpperCase();
+  if (db.coupons.some((c) => c.code.toUpperCase() === normalized)) {
+    return { success: false, error: "Coupon code already exists." };
+  }
+
+  const newCoupon: Coupon = {
+    id: `coup-${Date.now()}`,
+    code: normalized,
+    description: data.description.trim(),
+    discount_type: data.discount_type,
+    discount_value: Number(data.discount_value) || 0,
+    min_order_amount: Number(data.min_order_amount) || 0,
+    max_discount_amount: data.max_discount_amount ? Number(data.max_discount_amount) : undefined,
+    is_active: data.is_active ?? true,
+    created_at: new Date().toISOString(),
+  };
+
+  db.coupons.unshift(newCoupon);
+  return { success: true, coupon: newCoupon };
+}
+
+export async function updateCoupon(
+  id: string,
+  updates: Partial<Coupon>
+): Promise<{ success: boolean; coupon?: Coupon; error?: string }> {
+  const coupon = db.coupons.find((c) => c.id === id);
+  if (!coupon) return { success: false, error: "Coupon not found" };
+
+  if (updates.code) {
+    const normalized = updates.code.trim().toUpperCase();
+    if (db.coupons.some((c) => c.id !== id && c.code.toUpperCase() === normalized)) {
+      return { success: false, error: "Another coupon with this code already exists." };
+    }
+    coupon.code = normalized;
+  }
+  if (updates.description !== undefined) coupon.description = updates.description.trim();
+  if (updates.discount_type !== undefined) coupon.discount_type = updates.discount_type;
+  if (updates.discount_value !== undefined) coupon.discount_value = Number(updates.discount_value);
+  if (updates.min_order_amount !== undefined) coupon.min_order_amount = Number(updates.min_order_amount);
+  if (updates.max_discount_amount !== undefined) coupon.max_discount_amount = Number(updates.max_discount_amount);
+  if (updates.is_active !== undefined) coupon.is_active = updates.is_active;
+
+  return { success: true, coupon: { ...coupon } };
+}
+
+export async function deleteCoupon(id: string): Promise<boolean> {
+  const idx = db.coupons.findIndex((c) => c.id === id);
+  if (idx !== -1) {
+    db.coupons.splice(idx, 1);
+    return true;
+  }
+  return false;
+}
+
+export async function validateAndCalculateCoupon(
+  code: string,
+  subtotal: number,
+  deliveryCharge: number,
+  customerEmail?: string,
+  customerPhone?: string
+): Promise<{
+  valid: boolean;
+  coupon?: Coupon;
+  discountAmount: number;
+  finalDeliveryCharge: number;
+  message?: string;
+}> {
+  const coupon = await getCouponByCode(code);
+  if (!coupon) {
+    return { valid: false, discountAmount: 0, finalDeliveryCharge: deliveryCharge, message: "Invalid coupon code." };
+  }
+  if (!coupon.is_active) {
+    return { valid: false, discountAmount: 0, finalDeliveryCharge: deliveryCharge, message: "This coupon is currently inactive." };
+  }
+  if (coupon.min_order_amount > 0 && subtotal < coupon.min_order_amount) {
+    return {
+      valid: false,
+      discountAmount: 0,
+      finalDeliveryCharge: deliveryCharge,
+      message: `Minimum order value of ₹${coupon.min_order_amount} required to use coupon ${coupon.code}.`,
+    };
+  }
+
+  // Free delivery coupon (FREEDEL / discount_type: "free_delivery") is only for NEW users on 1st order!
+  if (coupon.discount_type === "free_delivery" || coupon.code.toUpperCase() === "FREEDEL") {
+    let isReturning = false;
+    const cleanPhone = (customerPhone || "").replace(/[^0-9]/g, "");
+    const cleanEmail = (customerEmail || "").trim().toLowerCase();
+
+    if (cleanEmail || cleanPhone) {
+      if (sql) {
+        try {
+          const rows = await sql.query(
+            `SELECT count(*)::int as count FROM orders 
+             WHERE (customer_email IS NOT NULL AND LOWER(customer_email) = $1)
+                OR (customer_phone IS NOT NULL AND customer_phone = $2);`,
+            [cleanEmail || "none@empty", cleanPhone || "none"]
+          );
+          if (rows && rows[0] && rows[0].count > 0) {
+            isReturning = true;
+          }
+        } catch {
+          isReturning = db.orders.some(
+            (o) =>
+              (cleanEmail && o.customer_email?.toLowerCase() === cleanEmail) ||
+              (cleanPhone && (o.customer_phone || "").replace(/[^0-9]/g, "") === cleanPhone)
+          );
+        }
+      } else {
+        isReturning = db.orders.some(
+          (o) =>
+            (cleanEmail && o.customer_email?.toLowerCase() === cleanEmail) ||
+            (cleanPhone && (o.customer_phone || "").replace(/[^0-9]/g, "") === cleanPhone)
+        );
+      }
+    }
+
+    if (isReturning) {
+      return {
+        valid: false,
+        discountAmount: 0,
+        finalDeliveryCharge: deliveryCharge,
+        message: "Free delivery coupon (FREEDEL) is valid only for new customers on their 1st order. Standard delivery fee applies for returning customers.",
+      };
+    }
+  }
+
+  let discount = 0;
+  let newDeliveryCharge = deliveryCharge;
+
+  if (coupon.discount_type === "free_delivery") {
+    discount = deliveryCharge;
+    newDeliveryCharge = 0;
+  } else if (coupon.discount_type === "percentage") {
+    discount = Math.round((subtotal * coupon.discount_value) / 100);
+    if (coupon.max_discount_amount && coupon.max_discount_amount > 0) {
+      discount = Math.min(coupon.max_discount_amount, discount);
+    }
+  } else if (coupon.discount_type === "flat_amount") {
+    discount = Math.min(subtotal, coupon.discount_value);
+  }
+
+  return {
+    valid: true,
+    coupon,
+    discountAmount: discount,
+    finalDeliveryCharge: newDeliveryCharge,
+    message: `Coupon ${coupon.code} applied! Saved ₹${discount}.`,
+  };
+}
+
+// ==========================================
+// RIDER FLEET MANAGEMENT (Neon Postgres)
+// ==========================================
+export async function getRiders(): Promise<Rider[]> {
+  if (sql) {
+    try {
+      const rows = await sql.query(`
+        SELECT id, name, phone, email, pin, vehicle_type, vehicle_number, assigned_area, is_active, 
+               created_at, updated_at
+        FROM riders
+        ORDER BY created_at DESC;
+      `);
+      return rows.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        phone: r.phone,
+        email: r.email || undefined,
+        pin: r.pin,
+        vehicle_type: r.vehicle_type || "Motorbike",
+        vehicle_number: r.vehicle_number || "",
+        assigned_area: r.assigned_area || "",
+        is_active: Boolean(r.is_active),
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+      }));
+    } catch (err) {
+      console.error("[STORE] getRiders database query error:", err);
+    }
+  }
+  return [...db.riders];
+}
+
+export async function getRiderById(id: string): Promise<Rider | null> {
+  if (sql) {
+    try {
+      const rows = await sql.query(`SELECT * FROM riders WHERE id = $1 LIMIT 1;`, [id]);
+      if (rows && rows.length > 0) {
+        const r = rows[0];
+        return {
+          id: r.id,
+          name: r.name,
+          phone: r.phone,
+          email: r.email || undefined,
+          pin: r.pin,
+          vehicle_type: r.vehicle_type || "Motorbike",
+          vehicle_number: r.vehicle_number || "",
+          assigned_area: r.assigned_area || "",
+          is_active: Boolean(r.is_active),
+          created_at: r.created_at,
+          updated_at: r.updated_at,
+        };
+      }
+    } catch (err) {
+      console.error("[STORE] getRiderById error:", err);
+    }
+  }
+  const found = db.riders.find((r) => r.id === id);
+  return found ? { ...found } : null;
+}
+
+export async function createRider(data: {
+  name: string;
+  phone: string;
+  email?: string;
+  pin: string;
+  vehicle_type?: string;
+  vehicle_number?: string;
+  assigned_area?: string;
+}): Promise<{ success: boolean; rider?: Rider; error?: string }> {
+  const cleanPhone = data.phone.trim().replace(/[^0-9]/g, "");
+  const cleanPin = data.pin.trim().replace(/[^0-9]/g, "");
+  const cleanEmail = data.email?.trim().toLowerCase() || null;
+
+  if (!data.name.trim()) return { success: false, error: "Rider name is required." };
+  if (cleanPhone.length !== 10) return { success: false, error: "Rider mobile number must be exactly 10 digits." };
+  if (cleanPin.length !== 6) return { success: false, error: "Rider security PIN must be exactly 6 digits." };
+
+  if (sql) {
+    try {
+      const rows = await sql.query(
+        `INSERT INTO riders (name, phone, email, pin, vehicle_type, vehicle_number, assigned_area, is_active, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, NOW(), NOW())
+         RETURNING *;`,
+        [
+          data.name.trim(),
+          cleanPhone,
+          cleanEmail,
+          cleanPin,
+          data.vehicle_type?.trim() || "Motorbike",
+          data.vehicle_number?.trim() || "",
+          data.assigned_area?.trim() || "Kothal Kalan / Mahendragarh",
+        ]
+      );
+      if (rows && rows.length > 0) {
+        const r = rows[0];
+        const newRider: Rider = {
+          id: r.id,
+          name: r.name,
+          phone: r.phone,
+          email: r.email || undefined,
+          pin: r.pin,
+          vehicle_type: r.vehicle_type,
+          vehicle_number: r.vehicle_number,
+          assigned_area: r.assigned_area,
+          is_active: Boolean(r.is_active),
+          created_at: r.created_at,
+          updated_at: r.updated_at,
+        };
+        db.riders.unshift(newRider);
+        return { success: true, rider: newRider };
+      }
+    } catch (err: any) {
+      if (err.message && err.message.includes("unique")) {
+        return { success: false, error: "A rider with this mobile number or email already exists." };
+      }
+      return { success: false, error: err.message || "Failed to create rider in database." };
+    }
+  }
+
+  const memoryRider: Rider = {
+    id: `rider-${Date.now()}`,
+    name: data.name.trim(),
+    phone: cleanPhone,
+    email: cleanEmail || undefined,
+    pin: cleanPin,
+    vehicle_type: data.vehicle_type?.trim() || "Motorbike",
+    vehicle_number: data.vehicle_number?.trim() || "",
+    assigned_area: data.assigned_area?.trim() || "Kothal Kalan",
+    is_active: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  db.riders.unshift(memoryRider);
+  return { success: true, rider: memoryRider };
+}
+
+export async function updateRider(
+  id: string,
+  updates: Partial<Omit<Rider, "id" | "created_at">>
+): Promise<{ success: boolean; rider?: Rider; error?: string }> {
+  if (sql) {
+    try {
+      const existing = await getRiderById(id);
+      if (!existing) return { success: false, error: "Rider not found." };
+
+      const name = updates.name !== undefined ? updates.name.trim() : existing.name;
+      const phone = updates.phone !== undefined ? updates.phone.trim().replace(/[^0-9]/g, "") : existing.phone;
+      const email = updates.email !== undefined ? (updates.email.trim() ? updates.email.trim().toLowerCase() : null) : existing.email || null;
+      const pin = updates.pin !== undefined ? updates.pin.trim().replace(/[^0-9]/g, "") : existing.pin;
+      const vehicleType = updates.vehicle_type !== undefined ? updates.vehicle_type.trim() : existing.vehicle_type;
+      const vehicleNum = updates.vehicle_number !== undefined ? updates.vehicle_number.trim() : existing.vehicle_number;
+      const assignedArea = updates.assigned_area !== undefined ? updates.assigned_area.trim() : existing.assigned_area;
+      const isActive = updates.is_active !== undefined ? updates.is_active : existing.is_active;
+
+      if (updates.phone !== undefined && phone.length !== 10) {
+        return { success: false, error: "Rider mobile number must be exactly 10 digits." };
+      }
+      if (updates.pin !== undefined && updates.pin.trim() !== "" && pin.length !== 6) {
+        return { success: false, error: "Rider security PIN must be exactly 6 digits." };
+      }
+
+      const rows = await sql.query(
+        `UPDATE riders 
+         SET name = $1, phone = $2, email = $3, pin = $4, vehicle_type = $5, vehicle_number = $6, assigned_area = $7, is_active = $8, updated_at = NOW()
+         WHERE id = $9
+         RETURNING *;`,
+        [name, phone, email, pin, vehicleType, vehicleNum, assignedArea, isActive, id]
+      );
+      if (rows && rows.length > 0) {
+        const r = rows[0];
+        const updated: Rider = {
+          id: r.id,
+          name: r.name,
+          phone: r.phone,
+          email: r.email || undefined,
+          pin: r.pin,
+          vehicle_type: r.vehicle_type,
+          vehicle_number: r.vehicle_number,
+          assigned_area: r.assigned_area,
+          is_active: Boolean(r.is_active),
+          created_at: r.created_at,
+          updated_at: r.updated_at,
+        };
+        const idx = db.riders.findIndex((ri) => ri.id === id);
+        if (idx !== -1) db.riders[idx] = updated;
+        return { success: true, rider: updated };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || "Failed to update rider." };
+    }
+  }
+
+  const idx = db.riders.findIndex((ri) => ri.id === id);
+  if (idx !== -1) {
+    db.riders[idx] = { ...db.riders[idx], ...updates, updated_at: new Date().toISOString() };
+    return { success: true, rider: { ...db.riders[idx] } };
+  }
+  return { success: false, error: "Rider not found." };
+}
+
+export async function deleteRider(id: string): Promise<boolean> {
+  if (sql) {
+    try {
+      await sql.query(`DELETE FROM riders WHERE id = $1;`, [id]);
+    } catch (err) {
+      console.error("[STORE] deleteRider error:", err);
+    }
+  }
+  const idx = db.riders.findIndex((r) => r.id === id);
+  if (idx !== -1) {
+    db.riders.splice(idx, 1);
+    return true;
+  }
+  return true;
+}
+
+export async function verifyRiderLogin(
+  identifier: string,
+  pin: string
+): Promise<{ success: boolean; rider?: Rider; error?: string }> {
+  const cleanId = identifier.trim();
+  const cleanPin = pin.trim().replace(/[^0-9]/g, "");
+
+  if (!cleanId || !cleanPin) {
+    return { success: false, error: "Please enter your registered rider mobile or name and 6-digit PIN." };
+  }
+  if (cleanPin.length !== 6) {
+    return { success: false, error: "Rider security PIN must be exactly 6 digits." };
+  }
+
+  if (sql) {
+    try {
+      const rows = await sql.query(
+        `SELECT * FROM riders 
+         WHERE (phone = $1 OR LOWER(name) = LOWER($1) OR LOWER(email) = LOWER($1))
+         LIMIT 1;`,
+        [cleanId]
+      );
+      if (rows && rows.length > 0) {
+        const r = rows[0];
+        if (!r.is_active) {
+          return { success: false, error: "This rider account is marked inactive by Admin." };
+        }
+        if (r.pin && r.pin.trim() === cleanPin) {
+          return {
+            success: true,
+            rider: {
+              id: r.id,
+              name: r.name,
+              phone: r.phone,
+              email: r.email || undefined,
+              pin: r.pin,
+              vehicle_type: r.vehicle_type,
+              vehicle_number: r.vehicle_number,
+              assigned_area: r.assigned_area,
+              is_active: Boolean(r.is_active),
+              created_at: r.created_at,
+              updated_at: r.updated_at,
+            },
+          };
+        } else {
+          return { success: false, error: "Incorrect Rider Security PIN. Please try again." };
+        }
+      }
+    } catch (err) {
+      console.error("[STORE] verifyRiderLogin error:", err);
+    }
+  }
+
+  const memoryFound = db.riders.find(
+    (r) =>
+      r.phone === cleanId ||
+      r.name.toLowerCase() === cleanId.toLowerCase() ||
+      (r.email && r.email.toLowerCase() === cleanId.toLowerCase())
+  );
+
+  if (memoryFound) {
+    if (!memoryFound.is_active) {
+      return { success: false, error: "Rider account is inactive." };
+    }
+    if (memoryFound.pin === cleanPin) {
+      return { success: true, rider: { ...memoryFound } };
+    }
+    return { success: false, error: "Incorrect Rider Security PIN." };
+  }
+
+  return { success: false, error: "No rider found matching these credentials. Please contact your store manager." };
+}
+
+// ==========================================
+// ROLE PROFILE MANAGEMENT
+// ==========================================
+
+export async function getAdminProfile(): Promise<AdminProfile> {
+  const currentSettings = await getStoreSettings();
+  return {
+    name: currentSettings.admin_name || "Store Manager",
+    email: currentSettings.admin_email || "admin@mithaase.in", // Email is constant / non-changeable
+    phone: currentSettings.admin_phone || "0000000000",
+    pin: currentSettings.admin_pin || "000000",
+    role: "super_admin",
+  };
+}
+
+export async function updateAdminProfile(data: {
+  name: string;
+  phone: string;
+  pin: string;
+}): Promise<{ success: boolean; profile?: AdminProfile; error?: string }> {
+  const cleanPhone = data.phone.trim().replace(/[^0-9]/g, "");
+  const cleanPin = data.pin.trim().replace(/[^0-9]/g, "");
+
+  if (!data.name.trim()) return { success: false, error: "Admin name cannot be empty." };
+  if (cleanPhone.length !== 10) return { success: false, error: "Admin mobile number must be exactly 10 digits." };
+  if (cleanPin.length !== 6) return { success: false, error: "Admin Security PIN must be exactly 6 digits." };
+
+  if (sql) {
+    try {
+      await sql.query(
+        `UPDATE store_settings 
+         SET admin_name = $1, admin_phone = $2, admin_pin = $3, updated_at = NOW()
+         WHERE id = 1;`,
+        [data.name.trim(), cleanPhone, cleanPin]
+      );
+    } catch (err: any) {
+      console.error("[STORE] updateAdminProfile error:", err);
+    }
+  }
+
+  db.settings.admin_name = data.name.trim();
+  db.settings.admin_phone = cleanPhone;
+  db.settings.admin_pin = cleanPin;
+
+  return {
+    success: true,
+    profile: {
+      name: db.settings.admin_name,
+      email: db.settings.admin_email || "admin@mithaase.in",
+      phone: db.settings.admin_phone,
+      pin: db.settings.admin_pin,
+      role: "super_admin",
+    },
+  };
+}
+
+export async function updateCustomerProfile(
+  email: string,
+  data: {
+    name?: string;
+    phone?: string;
+    password?: string;
+    pin?: string;
+    delivery_address?: string;
+    locality?: string;
+    landmark?: string;
+    delivery_instructions?: string;
+    latitude?: number;
+    longitude?: number;
+    map_url?: string;
+  }
+): Promise<{ success: boolean; customer?: CustomerAccount; error?: string }> {
+  const normEmail = email.trim().toLowerCase();
+  const existing = await findCustomerByEmail(normEmail);
+
+  if (!existing) {
+    return { success: false, error: "Customer account not found." };
+  }
+
+  const name = data.name !== undefined ? data.name.trim() : existing.name;
+  const phone = data.phone !== undefined ? data.phone.trim().replace(/[^0-9]/g, "") : existing.phone;
+  const password = data.password !== undefined && data.password.trim() ? data.password.trim() : existing.password;
+  const pin = data.pin !== undefined && data.pin.trim() ? data.pin.trim() : existing.pin;
+  const delivery_address = data.delivery_address !== undefined ? data.delivery_address.trim() : existing.delivery_address;
+  const locality = data.locality !== undefined ? data.locality.trim() : existing.locality;
+  const landmark = data.landmark !== undefined ? data.landmark.trim() : existing.landmark;
+  const delivery_instructions = data.delivery_instructions !== undefined ? data.delivery_instructions.trim() : existing.delivery_instructions;
+  const latitude = data.latitude !== undefined ? Number(data.latitude) : existing.latitude;
+  const longitude = data.longitude !== undefined ? Number(data.longitude) : existing.longitude;
+  const map_url = data.map_url !== undefined ? data.map_url.trim() : existing.map_url;
+
+  if (sql) {
+    try {
+      const rows = await sql.query(
+        `UPDATE customer_accounts 
+         SET name = $1, phone = $2, password = $3, pin = $4, delivery_address = $5, locality = $6, landmark = $7, delivery_instructions = $8, latitude = $9, longitude = $10, map_url = $11, updated_at = NOW()
+         WHERE LOWER(email) = $12
+         RETURNING *;`,
+        [name, phone, password || null, pin, delivery_address, locality, landmark || null, delivery_instructions || null, latitude, longitude, map_url || null, normEmail]
+      );
+      if (rows && rows.length > 0) {
+        const r = rows[0];
+        const updatedCustomer: CustomerAccount = {
+          id: r.id,
+          email: r.email,
+          phone: r.phone,
+          password: r.password || undefined,
+          pin: r.pin,
+          name: r.name,
+          delivery_address: r.delivery_address,
+          locality: r.locality,
+          landmark: r.landmark || undefined,
+          delivery_instructions: r.delivery_instructions || undefined,
+          latitude: Number(r.latitude) || 28.1907,
+          longitude: Number(r.longitude) || 76.1624,
+          map_url: r.map_url || "",
+          created_at: r.created_at,
+          updated_at: r.updated_at,
+        };
+        const idx = db.customers.findIndex((c) => c.email.toLowerCase() === normEmail);
+        if (idx !== -1) db.customers[idx] = updatedCustomer;
+        return { success: true, customer: updatedCustomer };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || "Failed to update profile." };
+    }
+  }
+
+  const idx = db.customers.findIndex((c) => c.email.toLowerCase() === normEmail);
+  if (idx !== -1) {
+    db.customers[idx] = {
+      ...db.customers[idx],
+      name,
+      phone,
+      password,
+      pin,
+      delivery_address,
+      locality,
+      landmark,
+      delivery_instructions,
+      latitude,
+      longitude,
+      map_url,
+      updated_at: new Date().toISOString(),
+    };
+    return { success: true, customer: { ...db.customers[idx] } };
+  }
+
+  return { success: false, error: "Customer not found." };
+}
+
