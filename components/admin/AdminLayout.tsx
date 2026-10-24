@@ -51,7 +51,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
     enablePollingFallback: true,
     pollingIntervalMs: 5000,
     onEvent: (payload) => {
-      if (payload.type === "order_created" && payload.data) {
+      if (payload.type === "order_created" && payload.data && !payload.data.isFallbackTick) {
         // 1. Play 3-second continuous beep chime
         playBeepNotification(3);
         // 2. Display 10-second alert card

@@ -7,9 +7,9 @@ import { CustomerAuthPortal } from "@/components/auth/CustomerAuthPortal";
 import { Order, StoreSettings } from "@/types";
 import { useUserAuth } from "@/lib/context/user-auth-context";
 import { useStoreSettings } from "@/lib/context/store-context";
-import { AnnouncementBar } from "@/components/storefront/AnnouncementBar";
 import { Navbar } from "@/components/storefront/Navbar";
 import { Footer } from "@/components/storefront/Footer";
+import { useRealtime } from "@/lib/hooks/useRealtime";
 import { OrderReceipt } from "@/components/orders/OrderReceipt";
 import {
   Receipt,
@@ -76,6 +76,18 @@ export default function CustomerOrdersPage() {
       fetchCustomerOrders();
     }
   }, [isAuthenticated, isHydrated, user, fetchCustomerOrders, router]);
+
+  // Real-time synchronization for customer orders
+  useRealtime({
+    events: ["order_created", "order_status_updated"],
+    enablePollingFallback: true,
+    pollingIntervalMs: 3000,
+    onEvent: () => {
+      if (isAuthenticated && user?.email) {
+        fetchCustomerOrders();
+      }
+    },
+  });
 
 
   const filteredOrders = orders.filter((o) => {

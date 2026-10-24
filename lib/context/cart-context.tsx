@@ -116,7 +116,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   // Hook into live product_updated real-time event to update cart prices live
   useRealtime({
     events: ["product_updated"],
+    enablePollingFallback: true,
+    pollingIntervalMs: 5000,
     onEvent: (payload) => {
+      if (payload.data?.isFallbackTick) {
+        syncCartPrices();
+        return;
+      }
       if (payload.type === "product_updated" && payload.data) {
         const prod = payload.data as Product;
         setItems((prev) => {

@@ -22,7 +22,21 @@ export function CategoryGrid({ categories, products }: CategoryGridProps) {
   // Listen for real-time price & product updates pushed by admin
   useRealtime({
     events: ["product_updated"],
-    onEvent: (payload) => {
+    enablePollingFallback: true,
+    pollingIntervalMs: 5000,
+    onEvent: async (payload) => {
+      if (payload.data?.isFallbackTick) {
+        try {
+          const res = await fetch(`/api/products?t=${Date.now()}`);
+          if (res.ok) {
+            const fresh = await res.json();
+            if (Array.isArray(fresh) && fresh.length > 0) setProductList(fresh);
+          }
+        } catch {
+          // ignore
+        }
+        return;
+      }
       if (payload.type === "product_updated" && payload.data) {
         const updated = payload.data as Product;
         setProductList((prev) => {

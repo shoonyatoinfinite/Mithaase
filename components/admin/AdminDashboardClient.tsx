@@ -111,12 +111,12 @@ export function AdminDashboardClient({
     pollingIntervalMs: 6000,
     onEvent: (payload) => {
       fetchLiveMetrics(true);
-      if (payload.type === "order_created") {
+      if (payload.type === "order_created" && !payload.data?.isFallbackTick) {
         setRecentEventAlert(
           `🔔 New Order Received: ${payload.data?.order_number || "Order"} by ${payload.data?.customer_name || "Customer"} (₹${payload.data?.total_amount || ""})`
         );
         setTimeout(() => setRecentEventAlert(null), 6000);
-      } else if (payload.type === "order_status_updated") {
+      } else if (payload.type === "order_status_updated" && !payload.data?.isFallbackTick) {
         setRecentEventAlert(
           `⚡ Order ${payload.data?.order_number || ""} status changed to ${payload.data?.order_status?.replace(/_/g, " ").toUpperCase()}`
         );

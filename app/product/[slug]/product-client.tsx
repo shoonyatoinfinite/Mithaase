@@ -23,7 +23,21 @@ export function ProductDetailClient({ product }: { product: Product }) {
   // Listen for real-time price & product updates
   useRealtime({
     events: ["product_updated"],
-    onEvent: (payload) => {
+    enablePollingFallback: true,
+    pollingIntervalMs: 4000,
+    onEvent: async (payload) => {
+      if (payload.data?.isFallbackTick) {
+        try {
+          const res = await fetch(`/api/products/${currentProduct.id}?t=${Date.now()}`);
+          if (res.ok) {
+            const fresh = await res.json();
+            if (fresh && fresh.id) setCurrentProduct(fresh);
+          }
+        } catch {
+          // ignore
+        }
+        return;
+      }
       if (payload.type === "product_updated" && payload.data && payload.data.id === currentProduct.id) {
         setCurrentProduct(payload.data as Product);
       }

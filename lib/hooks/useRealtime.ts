@@ -69,6 +69,8 @@ class RealtimeClientManager {
         "settings_updated",
         "offline_sale_created",
         "expense_created",
+        "group_delivery_dispatched",
+        "product_updated",
       ];
 
       eventTypes.forEach((type) => {
@@ -105,7 +107,7 @@ class RealtimeClientManager {
             if (this.listeners.size > 0) {
               this.connect();
             }
-          }, 4000);
+          }, 3000);
         }
       };
     } catch {
@@ -162,8 +164,8 @@ interface UseRealtimeOptions {
 export function useRealtime({
   events,
   onEvent,
-  enablePollingFallback = false,
-  pollingIntervalMs = 8000,
+  enablePollingFallback = true,
+  pollingIntervalMs = 3500,
 }: UseRealtimeOptions = {}) {
   const [isConnected, setIsConnected] = useState(false);
   const [lastEvent, setLastEvent] = useState<RealtimeEventPayload | null>(null);
@@ -193,11 +195,17 @@ export function useRealtime({
     if (enablePollingFallback) {
       fallbackTimer = setInterval(() => {
         if (onEventRef.current) {
-          onEventRef.current({
-            type: "order_status_updated",
-            data: { isFallbackTick: true },
-            timestamp: new Date().toISOString(),
-          });
+          const typesToTrigger: RealtimeEventType[] =
+            events && events.length > 0
+              ? events
+              : ["order_status_updated", "product_updated", "settings_updated"];
+          for (const t of typesToTrigger) {
+            onEventRef.current({
+              type: t,
+              data: { isFallbackTick: true },
+              timestamp: new Date().toISOString(),
+            });
+          }
         }
       }, pollingIntervalMs);
     }
