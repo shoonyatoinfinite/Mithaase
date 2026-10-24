@@ -170,20 +170,26 @@ export function PaymentSelectionModal({
   };
 
   // Standard UPI URI format with prefilled payee, UPI ID, amount, and note
-  const upiId = settings.upi_id || "shreeshyam@upi";
+  // Ensure the UPI ID preserves the literal '@' and is not corrupted by '%40' percent-encoding
+  const rawUpiId = (settings.upi_id || "shreeshyam@upi").trim();
+  const upiId = decodeURIComponent(rawUpiId).replace(/%40/g, "@").trim();
   const payeeName = settings.upi_payee_name || "Shree Shyam Sweets";
   const paymentNote = `Mithaase Order - ${customerName.trim() || "Customer"}`;
-  const upiUri = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(
+
+  // NPCI UPI Linking Specification strictly requires 'pa' to contain the literal '@' (e.g. user@bank).
+  // Using encodeURIComponent on pa converts '@' into '%40', which causes BHIM and other UPI apps
+  // to display '%' or '%40' instead of '@', breaking the payee VPA validation.
+  const upiParams = `pa=${upiId}&pn=${encodeURIComponent(
     payeeName
   )}&am=${amount}&cu=INR&tn=${encodeURIComponent(paymentNote)}`;
+
+  const upiUri = `upi://pay?${upiParams}`;
 
   // Dedicated app scheme / intent URLs with verified NPCI and vendor protocols
   const getUpiUrlForApp = (app: "gpay" | "phonepe" | "paytm" | "bhim" | "generic") => {
     const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
     const isIos = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent);
-    const params = `pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(
-      payeeName
-    )}&am=${amount}&cu=INR&tn=${encodeURIComponent(paymentNote)}`;
+    const params = upiParams;
 
     switch (app) {
       case "gpay":
