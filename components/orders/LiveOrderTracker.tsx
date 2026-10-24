@@ -106,11 +106,7 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
   const [pulseNewStatus, setPulseNewStatus] = useState<boolean>(false);
   const [isManualRefreshing, setIsManualRefreshing] = useState<boolean>(false);
 
-  useEffect(() => {
-    if (isHydrated && !isAuthenticated) {
-      router.replace("/#shop");
-    }
-  }, [isHydrated, isAuthenticated, router]);
+  // Tracking page is publicly accessible to any customer with their order link
 
   // Pull latest order state from API
   const refreshOrder = useCallback(async () => {

@@ -56,6 +56,31 @@ function persistProductsToDisk(products: Product[]) {
   }
 }
 
+const ORDERS_OVERRIDE_PATH = path.join(process.cwd(), "lib", "data", "orders-override.json");
+
+function loadOverriddenOrders(): Order[] | null {
+  try {
+    if (fs.existsSync(ORDERS_OVERRIDE_PATH)) {
+      const data = fs.readFileSync(ORDERS_OVERRIDE_PATH, "utf8");
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.error("[STORE] Error loading orders override from disk:", err);
+  }
+  return null;
+}
+
+function persistOrdersToDisk(orders: Order[]) {
+  try {
+    fs.writeFileSync(ORDERS_OVERRIDE_PATH, JSON.stringify(orders, null, 2), "utf8");
+  } catch (err) {
+    console.error("[STORE] Error persisting orders override to disk:", err);
+  }
+}
+
 // In-memory persistent state (shared in Node runtime / development server)
 // Also syncs seamlessly when Supabase client is configured
 declare global {
@@ -76,11 +101,12 @@ declare global {
 
 if (!global.__mithaase_store) {
   const initialLoadedProducts = loadOverriddenProducts() || JSON.parse(JSON.stringify(initialProducts));
+  const initialLoadedOrders = loadOverriddenOrders() || JSON.parse(JSON.stringify(initialOrders));
   global.__mithaase_store = {
     categories: [...initialCategories],
     products: initialLoadedProducts,
     settings: { ...initialSettings },
-    orders: JSON.parse(JSON.stringify(initialOrders)),
+    orders: initialLoadedOrders,
     expenses: JSON.parse(JSON.stringify(initialExpenses)),
     offlineSales: JSON.parse(JSON.stringify(initialOfflineSales)),
     inventoryMovements: JSON.parse(JSON.stringify(initialInventoryMovements)),
@@ -982,7 +1008,7 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
   }
 
   const totalAmount = Math.max(0, subtotal - discountAmount + deliveryCharge);
-  const orderId = `ord-${Date.now()}`;
+  const orderId = crypto.randomUUID();
   const orderNumber = `SSS-${new Date().getFullYear()}-${1000 + db.orders.length + 1}`;
 
   verifiedItems.forEach((it) => (it.order_id = orderId));
@@ -1027,7 +1053,70 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
     updated_at: new Date().toISOString(),
   };
 
+  if (sql) {
+    try {
+      await sql.query(`
+        INSERT INTO orders (
+          id, order_number, customer_name, customer_email, customer_phone,
+          delivery_address, locality, landmark, delivery_instructions,
+          subtotal, discount_amount, delivery_charge, total_amount,
+          coupon_code, payment_method, payment_status, order_status,
+          upi_reference, upi_screenshot, latitude, longitude, map_url, source
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+        );
+      `, [
+        orderId,
+        orderNumber,
+        params.customer_name.trim(),
+        params.customer_email?.trim() || null,
+        params.customer_phone.trim(),
+        params.delivery_address.trim(),
+        params.locality.trim(),
+        params.landmark?.trim() || null,
+        params.delivery_instructions?.trim() || null,
+        subtotal,
+        discountAmount,
+        deliveryCharge,
+        totalAmount,
+        params.coupon_code ? params.coupon_code.toUpperCase().trim() : null,
+        params.payment_method,
+        params.payment_method === "upi" ? "paid" : "unpaid",
+        "pending_confirmation",
+        params.upi_reference || null,
+        params.upi_screenshot || null,
+        params.latitude || null,
+        params.longitude || null,
+        params.map_url || null,
+        "online",
+      ]);
+
+      for (const it of verifiedItems) {
+        const isProdUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(it.product_id || "");
+        await sql.query(`
+          INSERT INTO order_items (
+            id, order_id, product_id, product_name_snapshot,
+            variant_name_snapshot, quantity, unit_price, line_total, image_url
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+        `, [
+          crypto.randomUUID(),
+          orderId,
+          isProdUuid ? it.product_id : null,
+          it.product_name_snapshot,
+          it.variant_name_snapshot,
+          it.quantity,
+          it.unit_price,
+          it.line_total,
+          it.image_url || null,
+        ]);
+      }
+    } catch (err) {
+      console.error("[STORE] createOrder db error:", err);
+    }
+  }
+
   db.orders.unshift(newOrder);
+  persistOrdersToDisk(db.orders);
   return { success: true, order: newOrder };
 }
 
@@ -1084,8 +1173,107 @@ function normalizeOrder(order: Order): Order {
 }
 
 export async function getOrderById(id: string): Promise<Order | null> {
-  const order = db.orders.find((o) => o.id === id || o.order_number === id);
-  return order ? { ...normalizeOrder(order) } : null;
+  if (!id) return null;
+  const cleanId = String(id).trim();
+  const lower = cleanId.toLowerCase();
+
+  // 1. Check in-memory orders (case-insensitive on id and order_number)
+  const memoryMatch = db.orders.find(
+    (o) =>
+      o.id.toLowerCase() === lower ||
+      o.order_number.toLowerCase() === lower ||
+      cleanId === o.id ||
+      cleanId === o.order_number
+  );
+  if (memoryMatch) return { ...normalizeOrder(memoryMatch) };
+
+  // 2. Check Neon DB if sql is available
+  if (sql) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+      const rows = isUuid
+        ? await sql.query(`SELECT * FROM orders WHERE id = $1 LIMIT 1;`, [cleanId])
+        : await sql.query(
+            `SELECT * FROM orders WHERE LOWER(order_number) = $1 OR id::text = $1 LIMIT 1;`,
+            [lower]
+          );
+
+      if (rows && rows.length > 0) {
+        const o = rows[0];
+        const itemRows = await sql.query(
+          `SELECT * FROM order_items WHERE order_id = $1;`,
+          [o.id]
+        );
+        const mappedOrder: Order = {
+          id: o.id,
+          order_number: o.order_number,
+          customer_name: o.customer_name,
+          customer_email: o.customer_email || undefined,
+          customer_phone: o.customer_phone,
+          delivery_address: o.delivery_address,
+          locality: o.locality,
+          landmark: o.landmark || undefined,
+          delivery_instructions: o.delivery_instructions || undefined,
+          subtotal: Number(o.subtotal),
+          discount_amount: Number(o.discount_amount),
+          delivery_charge: Number(o.delivery_charge),
+          total_amount: Number(o.total_amount),
+          coupon_code: o.coupon_code || undefined,
+          payment_method: o.payment_method,
+          payment_status: o.payment_status,
+          order_status: o.order_status,
+          upi_reference: o.upi_reference || undefined,
+          upi_screenshot: o.upi_screenshot || undefined,
+          delivery_proof_photo: o.delivery_proof_photo || undefined,
+          pickup_photo: o.pickup_photo || undefined,
+          latitude: o.latitude ? Number(o.latitude) : undefined,
+          longitude: o.longitude ? Number(o.longitude) : undefined,
+          map_url: o.map_url || undefined,
+          source: o.source || "online",
+          items: (itemRows || []).map((it: any) => ({
+            id: it.id,
+            order_id: it.order_id,
+            product_id: it.product_id,
+            variant_id: it.variant_id,
+            product_name_snapshot: it.product_name_snapshot,
+            variant_name_snapshot: it.variant_name_snapshot,
+            quantity: Number(it.quantity),
+            unit_price: Number(it.unit_price),
+            line_total: Number(it.line_total),
+            image_url: it.image_url,
+          })),
+          status_history: [],
+          created_at: o.created_at ? new Date(o.created_at).toISOString() : new Date().toISOString(),
+          updated_at: o.updated_at ? new Date(o.updated_at).toISOString() : new Date().toISOString(),
+          cancellation_reason: o.cancellation_reason || undefined,
+          refund_status: o.refund_status || undefined,
+          refund_amount: o.refund_amount ? Number(o.refund_amount) : undefined,
+          refund_txn_id: o.refund_txn_id || undefined,
+          refund_screenshot: o.refund_screenshot || undefined,
+        };
+
+        db.orders.unshift(mappedOrder);
+        return normalizeOrder(mappedOrder);
+      }
+    } catch (err) {
+      console.error("[STORE] getOrderById db error:", err);
+    }
+  }
+
+  // 3. Fallback: check disk storage
+  const diskOrders = loadOverriddenOrders();
+  if (diskOrders) {
+    const diskMatch = diskOrders.find(
+      (o) =>
+        o.id.toLowerCase() === lower ||
+        o.order_number.toLowerCase() === lower ||
+        cleanId === o.id ||
+        cleanId === o.order_number
+    );
+    if (diskMatch) return { ...normalizeOrder(diskMatch) };
+  }
+
+  return null;
 }
 
 export async function updateOrderStatus(
