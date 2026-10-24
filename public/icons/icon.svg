@@ -1,0 +1,52 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="75%">
+      <stop offset="0%" stop-color="#3B0820" />
+      <stop offset="60%" stop-color="#24052C" />
+      <stop offset="100%" stop-color="#14021A" />
+    </radialGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F5D061" />
+      <stop offset="50%" stop-color="#D4AF37" />
+      <stop offset="100%" stop-color="#AA8010" />
+    </linearGradient>
+    <radialGradient id="flameGrad" cx="50%" cy="70%" r="70%">
+      <stop offset="0%" stop-color="#FFFDF0" />
+      <stop offset="35%" stop-color="#FFD54F" />
+      <stop offset="70%" stop-color="#FF6F00" />
+      <stop offset="100%" stop-color="#D84315" />
+    </radialGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12.8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112.64" fill="url(#bgGrad)" stroke="url(#goldGrad)" stroke-width="10.24" />
+
+  <g transform="translate(256, 256)">
+    <circle cx="0" cy="-25.6" r="112.64" fill="#F5D061" opacity="0.3" filter="url(#glow)" />
+    
+    <!-- Diya Base -->
+    <path d="M -133.12 40.96 
+             C -107.52 122.88, 107.52 122.88, 133.12 40.96
+             C 61.44 61.44, -61.44 61.44, -133.12 40.96 Z"
+          fill="url(#goldGrad)" />
+    
+    <ellipse cx="0" cy="40.96" rx="128" ry="17.92" fill="#AA8010" opacity="0.6" />
+    <ellipse cx="0" cy="38.4" rx="117.76" ry="12.8" fill="url(#goldGrad)" />
+
+    <!-- Flame Body -->
+    <path d="M 0 -128
+             C 40.96 -81.92, 51.2 -10.24, 0 35.84
+             C -51.2 -10.24, -40.96 -81.92, 0 -128 Z"
+          fill="url(#flameGrad)"
+          filter="url(#glow)" />
+
+    <!-- Inner Flame Heart -->
+    <path d="M 0 -97.28
+             C 17.92 -61.44, 23.04 -10.24, 0 20.48
+             C -23.04 -10.24, -17.92 -61.44, 0 -97.28 Z"
+          fill="#FFFDF5" />
+  </g>
+</svg>

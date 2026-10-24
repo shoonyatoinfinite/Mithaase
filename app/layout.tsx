@@ -5,6 +5,7 @@ import { CartProvider } from "@/lib/context/cart-context";
 import { StoreSettingsProvider } from "@/lib/context/store-context";
 import { UserAuthProvider } from "@/lib/context/user-auth-context";
 import { CustomerAuthModal } from "@/components/storefront/CustomerAuthModal";
+import { PwaRegister } from "@/components/pwa/PwaRegister";
 
 const playfair = Playfair_Display({
   variable: "--font-heading",
@@ -19,7 +20,7 @@ const plusJakarta = Plus_Jakarta_Sans({
 });
 
 export const viewport: Viewport = {
-  themeColor: "#16031E",
+  themeColor: "#3B0820",
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
@@ -46,6 +47,21 @@ export const metadata: Metadata = {
     locale: "en_IN",
     type: "website",
   },
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Mithaasé",
+  },
+  icons: {
+    icon: [
+      { url: "/icons/icon-192x192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512x512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [
+      { url: "/icons/apple-touch-icon.png", sizes: "192x192", type: "image/png" },
+    ],
+  },
 };
 
 export default function RootLayout({
@@ -61,6 +77,7 @@ export default function RootLayout({
           href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
           crossOrigin=""
         />
+        <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
       </head>
       <body className="min-h-screen bg-[#16031E] text-[#FFF8EE] antialiased flex flex-col selection:bg-[#D4AF37] selection:text-[#16031E] overflow-x-hidden max-w-full w-full">
         <UserAuthProvider>
@@ -68,6 +85,7 @@ export default function RootLayout({
             <CartProvider>
               {children}
               <CustomerAuthModal />
+              <PwaRegister />
             </CartProvider>
           </StoreSettingsProvider>
         </UserAuthProvider>
