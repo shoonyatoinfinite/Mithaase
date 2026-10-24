@@ -21,19 +21,35 @@ import {
   Power,
   Receipt,
   EyeOff,
+  RotateCcw,
 } from "lucide-react";
 
 export default function AdminSettingsPage() {
   const { settings, refreshSettings } = useStoreSettings();
   const [formData, setFormData] = useState<StoreSettings>(settings);
+  const [isDirty, setIsDirty] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
   const [newArea, setNewArea] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
+  // Only sync formData from server on initial load or when user has no unsaved local edits
   useEffect(() => {
-    setFormData(settings);
-  }, [settings]);
+    if (!isInitialized && settings) {
+      setFormData(settings);
+      setIsInitialized(true);
+    } else if (!isDirty && settings) {
+      setFormData(settings);
+    }
+  }, [settings, isDirty, isInitialized]);
+
+  const updateField = <K extends keyof StoreSettings>(key: K, value: StoreSettings[K]) => {
+    setFormData((prev) => ({ ...prev, [key]: value }));
+    setIsDirty(true);
+    setSaveSuccess("");
+    setErrorMessage("");
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,10 +65,14 @@ export default function AdminSettingsPage() {
       });
 
       if (res.ok) {
+        const savedData = await res.json();
+        setFormData(savedData);
+        setIsDirty(false);
         setSaveSuccess("Store operating controls updated successfully!");
-        refreshSettings();
+        await refreshSettings();
       } else {
-        setErrorMessage("Failed to save settings.");
+        const errJson = await res.json().catch(() => ({}));
+        setErrorMessage(errJson.error || "Failed to save settings.");
       }
     } catch {
       setErrorMessage("Network error saving settings.");
@@ -64,32 +84,45 @@ export default function AdminSettingsPage() {
   const handleAddArea = () => {
     if (!newArea.trim()) return;
     if (!formData.service_areas.includes(newArea.trim())) {
-      setFormData({
-        ...formData,
-        service_areas: [...formData.service_areas, newArea.trim()],
-      });
+      updateField("service_areas", [...formData.service_areas, newArea.trim()]);
     }
     setNewArea("");
   };
 
   const handleRemoveArea = (areaToRemove: string) => {
-    setFormData({
-      ...formData,
-      service_areas: formData.service_areas.filter((a) => a !== areaToRemove),
-    });
+    updateField(
+      "service_areas",
+      formData.service_areas.filter((a) => a !== areaToRemove)
+    );
+  };
+
+  const handleDiscard = () => {
+    setFormData(settings);
+    setIsDirty(false);
+    setSaveSuccess("Discarded unsaved changes.");
+    setErrorMessage("");
   };
 
   return (
     <AdminLayout>
       <div className="max-w-4xl mx-auto space-y-8">
         {/* Header */}
-        <div className="pb-6 border-b border-white/10">
-          <h1 className="text-2xl sm:text-3xl font-serif font-black text-[#FFF8EE]">
-            Store Operating <span className="gold-gradient-text">Controls</span>
-          </h1>
-          <p className="text-xs sm:text-sm text-[#D3BEB0] mt-1">
-            Permanent store shutoff switch, emergency closure, delivery charges (default ₹21), timings, and shop contact information.
-          </p>
+        <div className="pb-6 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-serif font-black text-[#FFF8EE]">
+              Store Operating <span className="gold-gradient-text">Controls</span>
+            </h1>
+            <p className="text-xs sm:text-sm text-[#D3BEB0] mt-1">
+              Permanent store shutoff switch, emergency closure, delivery charges (default ₹21), timings, and shop contact information.
+            </p>
+          </div>
+
+          {isDirty && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs shrink-0">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <span>Unsaved Changes</span>
+            </div>
+          )}
         </div>
 
         {saveSuccess && (
@@ -140,12 +173,14 @@ export default function AdminSettingsPage() {
                 id="toggle-permanent-shutoff-btn"
                 onClick={() => {
                   const newShutoff = !formData.store_shutoff;
-                  setFormData({
-                    ...formData,
+                  setFormData((prev) => ({
+                    ...prev,
                     store_shutoff: newShutoff,
                     store_status: newShutoff ? "shutoff" : "open",
                     accepts_orders: !newShutoff,
-                  });
+                  }));
+                  setIsDirty(true);
+                  setSaveSuccess("");
                 }}
                 className={`px-5 py-2.5 rounded-full font-bold text-xs flex items-center gap-2 transition-all shadow-lg active:scale-95 shrink-0 ${
                   formData.store_shutoff || formData.store_status === "shutoff"
@@ -184,7 +219,7 @@ export default function AdminSettingsPage() {
               <textarea
                 rows={3}
                 value={formData.shutoff_message || ""}
-                onChange={(e) => setFormData({ ...formData, shutoff_message: e.target.value })}
+                onChange={(e) => updateField("shutoff_message", e.target.value)}
                 placeholder="Our online shopping portal is currently permanently shut off. All product listings and new order bookings are disabled. Customers can log in to view past orders and official receipts."
                 className="w-full bg-[#16031E] border border-white/15 focus:border-red-400 rounded-xl px-4 py-2.5 text-white outline-none resize-none text-xs"
               />
@@ -212,12 +247,14 @@ export default function AdminSettingsPage() {
                     type="button"
                     onClick={() => {
                       const isShutoff = mode.id === "shutoff";
-                      setFormData({
-                        ...formData,
+                      setFormData((prev) => ({
+                        ...prev,
                         store_status: mode.id as any,
                         store_shutoff: isShutoff,
                         accepts_orders: mode.id === "open",
-                      });
+                      }));
+                      setIsDirty(true);
+                      setSaveSuccess("");
                     }}
                     className={`p-3.5 rounded-2xl border text-left transition-all ${
                       formData.store_status === mode.id
@@ -239,7 +276,7 @@ export default function AdminSettingsPage() {
               <textarea
                 rows={2}
                 value={formData.announcement_message}
-                onChange={(e) => setFormData({ ...formData, announcement_message: e.target.value })}
+                onChange={(e) => updateField("announcement_message", e.target.value)}
                 className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-xl px-4 py-2 text-white outline-none resize-none"
               />
             </div>
@@ -251,7 +288,7 @@ export default function AdminSettingsPage() {
               <textarea
                 rows={2}
                 value={formData.closure_message}
-                onChange={(e) => setFormData({ ...formData, closure_message: e.target.value })}
+                onChange={(e) => updateField("closure_message", e.target.value)}
                 className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-xl px-4 py-2 text-white outline-none resize-none"
               />
             </div>
@@ -274,9 +311,7 @@ export default function AdminSettingsPage() {
                   min={0}
                   required
                   value={formData.default_delivery_fee}
-                  onChange={(e) =>
-                    setFormData({ ...formData, default_delivery_fee: Number(e.target.value) })
-                  }
+                  onChange={(e) => updateField("default_delivery_fee", Number(e.target.value))}
                   className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-xl px-4 py-2.5 text-white font-bold text-sm outline-none"
                 />
                 <p className="text-[10px] text-white/50 mt-1">
@@ -292,9 +327,7 @@ export default function AdminSettingsPage() {
                   type="number"
                   min={0}
                   value={formData.minimum_order_value}
-                  onChange={(e) =>
-                    setFormData({ ...formData, minimum_order_value: Number(e.target.value) })
-                  }
+                  onChange={(e) => updateField("minimum_order_value", Number(e.target.value))}
                   className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-xl px-4 py-2.5 text-white font-bold text-sm outline-none"
                 />
                 <p className="text-[10px] text-white/50 mt-1">Set to 0 to allow any order amount.</p>
@@ -319,7 +352,7 @@ export default function AdminSettingsPage() {
                   <input
                     type="text"
                     value={formData.operating_hours}
-                    onChange={(e) => setFormData({ ...formData, operating_hours: e.target.value })}
+                    onChange={(e) => updateField("operating_hours", e.target.value)}
                     placeholder="e.g. 8:00 AM - 10:00 PM"
                     className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-xl px-4 py-2 text-white font-semibold outline-none"
                   />
@@ -334,7 +367,7 @@ export default function AdminSettingsPage() {
                       <button
                         key={preset}
                         type="button"
-                        onClick={() => setFormData({ ...formData, operating_hours: preset })}
+                        onClick={() => updateField("operating_hours", preset)}
                         className={`text-[10px] px-2.5 py-1 rounded-lg border transition-colors ${
                           formData.operating_hours === preset
                             ? "bg-[#D4AF37] text-[#16031E] font-bold border-[#D4AF37]"
@@ -352,7 +385,7 @@ export default function AdminSettingsPage() {
                   <input
                     type="text"
                     value={formData.cutoff_time}
-                    onChange={(e) => setFormData({ ...formData, cutoff_time: e.target.value })}
+                    onChange={(e) => updateField("cutoff_time", e.target.value)}
                     placeholder="e.g. 20:00 (8:00 PM)"
                     className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-xl px-4 py-2 text-white font-semibold outline-none"
                   />
@@ -367,7 +400,7 @@ export default function AdminSettingsPage() {
                       <button
                         key={preset}
                         type="button"
-                        onClick={() => setFormData({ ...formData, cutoff_time: preset })}
+                        onClick={() => updateField("cutoff_time", preset)}
                         className={`text-[10px] px-2.5 py-1 rounded-lg border transition-colors ${
                           formData.cutoff_time === preset
                             ? "bg-[#D4AF37] text-[#16031E] font-bold border-[#D4AF37]"
@@ -437,7 +470,7 @@ export default function AdminSettingsPage() {
                 <input
                   type="text"
                   value={formData.business_phone}
-                  onChange={(e) => setFormData({ ...formData, business_phone: e.target.value })}
+                  onChange={(e) => updateField("business_phone", e.target.value)}
                   className="w-full bg-[#16031E] border border-white/15 rounded-xl px-4 py-2 text-white outline-none"
                 />
               </div>
@@ -447,7 +480,7 @@ export default function AdminSettingsPage() {
                 <input
                   type="text"
                   value={formData.whatsapp_number}
-                  onChange={(e) => setFormData({ ...formData, whatsapp_number: e.target.value })}
+                  onChange={(e) => updateField("whatsapp_number", e.target.value)}
                   className="w-full bg-[#16031E] border border-white/15 rounded-xl px-4 py-2 text-white outline-none"
                 />
               </div>
@@ -459,7 +492,7 @@ export default function AdminSettingsPage() {
                 <input
                   type="text"
                   value={formData.upi_id}
-                  onChange={(e) => setFormData({ ...formData, upi_id: e.target.value })}
+                  onChange={(e) => updateField("upi_id", e.target.value)}
                   placeholder="e.g. shreeshyam@upi"
                   className="w-full bg-[#16031E] border border-white/15 rounded-xl px-4 py-2 text-white font-mono font-bold outline-none"
                 />
@@ -470,7 +503,7 @@ export default function AdminSettingsPage() {
                 <input
                   type="text"
                   value={formData.upi_payee_name}
-                  onChange={(e) => setFormData({ ...formData, upi_payee_name: e.target.value })}
+                  onChange={(e) => updateField("upi_payee_name", e.target.value)}
                   className="w-full bg-[#16031E] border border-white/15 rounded-xl px-4 py-2 text-white outline-none"
                 />
               </div>
@@ -481,21 +514,43 @@ export default function AdminSettingsPage() {
               <input
                 type="text"
                 value={formData.shop_address}
-                onChange={(e) => setFormData({ ...formData, shop_address: e.target.value })}
+                onChange={(e) => updateField("shop_address", e.target.value)}
                 className="w-full bg-[#16031E] border border-white/15 rounded-xl px-4 py-2 text-white outline-none"
               />
             </div>
           </div>
 
-          <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="px-8 py-3.5 rounded-full gold-gradient-btn font-bold text-sm shadow-xl active:scale-95 flex items-center gap-2"
-            >
-              <Save className="w-4 h-4" />
-              <span>{isSaving ? "Saving Settings..." : "Save Operating Controls"}</span>
-            </button>
+          {/* Action Buttons */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
+            <div>
+              {isDirty && (
+                <span className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-full inline-flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span>Unsaved changes in form (background refresh paused)</span>
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+              {isDirty && (
+                <button
+                  type="button"
+                  onClick={handleDiscard}
+                  className="px-5 py-3 rounded-full bg-white/10 hover:bg-white/20 text-white/90 hover:text-white font-bold text-xs transition-all flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Discard Changes</span>
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={isSaving}
+                className="px-8 py-3.5 rounded-full gold-gradient-btn font-bold text-sm shadow-xl active:scale-95 flex items-center gap-2"
+              >
+                <Save className="w-4 h-4" />
+                <span>{isSaving ? "Saving Settings..." : "Save Operating Controls"}</span>
+              </button>
+            </div>
           </div>
         </form>
       </div>

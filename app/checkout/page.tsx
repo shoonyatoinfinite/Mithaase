@@ -115,6 +115,7 @@ export default function CheckoutPage() {
     code: string;
     discount_type: "flat_amount" | "percentage" | "free_delivery";
     discount_amount: number;
+    free_delivery?: boolean;
     description?: string;
   } | null>(null);
   const [couponError, setCouponError] = useState("");
@@ -146,8 +147,8 @@ export default function CheckoutPage() {
         if (Array.isArray(data)) {
           const isReturning = data.length > 0;
           setHasPastOrders(isReturning);
-          // If returning customer had applied FREEDEL, invalidate it
-          if (isReturning && appliedCoupon?.discount_type === "free_delivery") {
+          // ONLY FREEDEL is restricted to new customers on their 1st order!
+          if (isReturning && appliedCoupon?.code?.toUpperCase() === "FREEDEL") {
             setAppliedCoupon(null);
             setCouponError(
               "Free delivery coupon (FREEDEL) is valid only for new customers on their 1st order. Standard delivery fee applies."
@@ -156,19 +157,21 @@ export default function CheckoutPage() {
         }
       })
       .catch(() => {});
-  }, [user?.email, loginEmail, appliedCoupon?.discount_type]);
+  }, [user?.email, loginEmail, appliedCoupon?.code]);
 
   const isReturningUser = hasPastOrders;
   const isFirstOrder = !hasPastOrders;
   const standardDeliveryFee = Number(settings.default_delivery_fee) || 21;
   const initialDeliveryFee = items.length === 0 ? 0 : isFirstOrder ? 0 : standardDeliveryFee;
-  const isFreeDeliveryCoupon = appliedCoupon?.discount_type === "free_delivery";
+  const isFreeDeliveryCoupon = Boolean(
+    appliedCoupon?.free_delivery || appliedCoupon?.discount_type === "free_delivery"
+  );
   const deliveryFee = isFreeDeliveryCoupon ? 0 : initialDeliveryFee;
   const couponDiscountAmount = appliedCoupon ? appliedCoupon.discount_amount : 0;
   const finalTotal =
     items.length === 0
       ? 0
-      : Math.max(0, subtotal + deliveryFee - (isFreeDeliveryCoupon ? 0 : couponDiscountAmount));
+      : Math.max(0, subtotal + deliveryFee - couponDiscountAmount);
 
   // Handler to apply or validate coupon
   const handleApplyCoupon = async (codeToApply?: string) => {
@@ -197,10 +200,17 @@ export default function CheckoutPage() {
         setCouponError(data.error || data.message || "Invalid coupon code");
         setAppliedCoupon(null);
       } else {
+        const isFreeDel = Boolean(
+          data.coupon?.free_delivery ||
+          data.coupon?.discount_type === "free_delivery" ||
+          data.finalDeliveryCharge === 0 ||
+          data.final_delivery_charge === 0
+        );
         setAppliedCoupon({
           code: data.coupon.code,
           discount_type: data.coupon.discount_type,
-          discount_amount: data.discount_amount,
+          discount_amount: data.discount_amount || 0,
+          free_delivery: isFreeDel,
           description: data.coupon.description,
         });
         setCouponInput(data.coupon.code);
@@ -1095,8 +1105,8 @@ export default function CheckoutPage() {
                       )}
                     </div>
 
-                    {/* Coupon Discount Row if flat or percent */}
-                    {appliedCoupon && appliedCoupon.discount_type !== "free_delivery" && couponDiscountAmount > 0 && (
+                    {/* Coupon Discount Row if subtotal is discounted */}
+                    {appliedCoupon && couponDiscountAmount > 0 && (
                       <div className="flex justify-between text-emerald-400 font-bold text-xs sm:text-sm">
                         <span className="flex items-center gap-1">
                           <Sparkles className="w-3.5 h-3.5 text-emerald-400" />

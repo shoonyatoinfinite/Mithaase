@@ -152,6 +152,7 @@ export interface Coupon {
   discount_value: number; // Flat Rs, percentage %, or delivery fee amount
   min_order_amount: number;
   max_discount_amount?: number; // Cap for percentage discounts
+  free_delivery?: boolean; // When true, waives the delivery fee
   usage_count?: number;
   is_active: boolean;
   created_at: string;

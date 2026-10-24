@@ -32,8 +32,9 @@ export default function AdminCouponsPage() {
   // Form State
   const [code, setCode] = useState("");
   const [description, setDescription] = useState("");
-  const [discountType, setDiscountType] = useState<CouponDiscountType>("percentage");
+  const [discountType, setDiscountType] = useState<"percentage" | "flat_amount" | "none">("percentage");
   const [discountValue, setDiscountValue] = useState<number>(10);
+  const [includeFreeDelivery, setIncludeFreeDelivery] = useState<boolean>(false);
   const [minOrderAmount, setMinOrderAmount] = useState<number>(0);
   const [maxDiscountAmount, setMaxDiscountAmount] = useState<number | undefined>(undefined);
   const [isActive, setIsActive] = useState(true);
@@ -66,6 +67,7 @@ export default function AdminCouponsPage() {
     setDescription("");
     setDiscountType("percentage");
     setDiscountValue(10);
+    setIncludeFreeDelivery(false);
     setMinOrderAmount(0);
     setMaxDiscountAmount(undefined);
     setIsActive(true);
@@ -77,8 +79,10 @@ export default function AdminCouponsPage() {
     setEditingCoupon(c);
     setCode(c.code);
     setDescription(c.description || "");
-    setDiscountType(c.discount_type);
-    setDiscountValue(c.discount_value);
+    const isFreeDelOnly = c.discount_type === "free_delivery" && (!c.discount_value || c.discount_value <= 0);
+    setDiscountType(isFreeDelOnly ? "none" : (c.discount_type as any));
+    setDiscountValue(c.discount_value || 0);
+    setIncludeFreeDelivery(Boolean(c.free_delivery || c.discount_type === "free_delivery" || c.code === "FREEDEL"));
     setMinOrderAmount(c.min_order_amount || 0);
     setMaxDiscountAmount(c.max_discount_amount);
     setIsActive(c.is_active);
@@ -96,27 +100,36 @@ export default function AdminCouponsPage() {
       return;
     }
 
-    if (discountType !== "free_delivery" && (!discountValue || discountValue <= 0)) {
-      setFormError("Discount value must be greater than 0.");
+    const hasDiscount = discountType !== "none" && discountValue > 0;
+    if (!hasDiscount && !includeFreeDelivery) {
+      setFormError("Please select a discount value or enable Free Delivery.");
       return;
     }
 
+    const payloadDiscountType: CouponDiscountType = hasDiscount 
+      ? (discountType as "percentage" | "flat_amount") 
+      : "free_delivery";
+    const payloadDiscountValue = hasDiscount ? Number(discountValue) : 0;
+
     setIsSubmitting(true);
     try {
+      const payload = {
+        code: cleanCode,
+        description: description.trim(),
+        discount_type: payloadDiscountType,
+        discount_value: payloadDiscountValue,
+        free_delivery: includeFreeDelivery || payloadDiscountType === "free_delivery",
+        min_order_amount: Number(minOrderAmount) || 0,
+        max_discount_amount: maxDiscountAmount ? Number(maxDiscountAmount) : undefined,
+        is_active: isActive,
+      };
+
       if (editingCoupon) {
         // Update existing coupon
         const res = await fetch(`/api/admin/coupons/${editingCoupon.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            code: cleanCode,
-            description: description.trim(),
-            discount_type: discountType,
-            discount_value: discountType === "free_delivery" ? 0 : Number(discountValue),
-            min_order_amount: Number(minOrderAmount) || 0,
-            max_discount_amount: maxDiscountAmount ? Number(maxDiscountAmount) : undefined,
-            is_active: isActive,
-          }),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to update coupon.");
@@ -126,15 +139,7 @@ export default function AdminCouponsPage() {
         const res = await fetch("/api/admin/coupons", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            code: cleanCode,
-            description: description.trim(),
-            discount_type: discountType,
-            discount_value: discountType === "free_delivery" ? 0 : Number(discountValue),
-            min_order_amount: Number(minOrderAmount) || 0,
-            max_discount_amount: maxDiscountAmount ? Number(maxDiscountAmount) : undefined,
-            is_active: isActive,
-          }),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to create coupon.");
@@ -199,7 +204,7 @@ export default function AdminCouponsPage() {
               </h1>
             </div>
             <p className="text-xs sm:text-sm text-[#D3BEB0] mt-1">
-              Configure festive promo codes, flat ₹ discounts, percentage off, and free delivery
+              Configure promo codes, flat ₹ discounts, percentage off, free delivery, or combined offers
             </p>
           </div>
 
@@ -252,7 +257,7 @@ export default function AdminCouponsPage() {
             <span className="text-2xl font-serif font-black text-emerald-400 mt-1 block">
               {activeCoupons}
             </span>
-            <span className="text-[11px] text-white/50">Currently usable by customers</span>
+            <span className="text-[11px] text-white/40">Ready at checkout</span>
           </div>
 
           <div className="p-4 rounded-2xl bg-[#1C0324] border border-[#D4AF37]/20 shadow-md">
@@ -260,157 +265,168 @@ export default function AdminCouponsPage() {
             <span className="text-2xl font-serif font-black text-[#F5D061] mt-1 block">
               {totalRedemptions}
             </span>
-            <span className="text-[11px] text-[#D4AF37]">Orders placed with coupons</span>
+            <span className="text-[11px] text-white/40">Orders saved money</span>
           </div>
         </div>
 
         {/* Coupons List Table */}
-        <div className="rounded-3xl bg-[#1C0324] border border-[#D4AF37]/30 shadow-xl overflow-hidden">
-          <div className="p-4 sm:p-5 border-b border-white/10 flex items-center justify-between">
-            <div className="flex items-center gap-2">
+        <div className="bg-[#1C0324] border border-[#D4AF37]/20 rounded-3xl p-5 sm:p-6 shadow-xl">
+          <div className="flex items-center justify-between pb-4 mb-4 border-b border-white/10">
+            <h2 className="text-base sm:text-lg font-serif font-bold text-white flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-[#F5D061]" />
-              <h3 className="font-serif font-bold text-white text-base">Configured Coupons</h3>
-            </div>
+              <span>Configured Promo Offers</span>
+            </h2>
             <span className="text-xs text-white/50">{coupons.length} coupons</span>
           </div>
 
           {isLoading ? (
-            <div className="p-12 text-center text-white/60 flex items-center justify-center gap-2">
-              <RefreshCw className="w-5 h-5 animate-spin text-[#D4AF37]" />
+            <div className="py-12 text-center text-white/50 text-xs flex items-center justify-center gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin text-[#F5D061]" />
               <span>Loading coupons...</span>
             </div>
           ) : coupons.length === 0 ? (
-            <div className="p-12 text-center text-white/60 space-y-3">
-              <Ticket className="w-10 h-10 text-white/30 mx-auto" />
-              <p className="text-sm">No coupon codes configured yet.</p>
-              <button
-                onClick={openCreateModal}
-                className="py-2 px-4 rounded-xl gold-gradient-btn text-xs font-bold"
-              >
-                + Create First Coupon
-              </button>
+            <div className="py-12 text-center space-y-2">
+              <Ticket className="w-10 h-10 text-white/20 mx-auto" />
+              <p className="text-sm font-bold text-white">No coupons created yet</p>
+              <p className="text-xs text-white/40">Click Create Coupon to add your first promo offer.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
+              <table className="w-full text-left text-xs">
                 <thead>
-                  <tr className="border-b border-white/10 text-white/60 uppercase tracking-wider text-[11px] bg-white/[0.02]">
-                    <th className="py-3.5 px-4 font-semibold">Code & Type</th>
-                    <th className="py-3.5 px-4 font-semibold">Discount Offer</th>
-                    <th className="py-3.5 px-4 font-semibold">Conditions</th>
-                    <th className="py-3.5 px-4 font-semibold text-center">Uses</th>
-                    <th className="py-3.5 px-4 font-semibold text-center">Status</th>
-                    <th className="py-3.5 px-4 font-semibold text-right">Actions</th>
+                  <tr className="border-b border-white/10 text-white/50 uppercase tracking-wider text-[10px]">
+                    <th className="py-3 px-4">Coupon Code</th>
+                    <th className="py-3 px-4">Offer Breakdown</th>
+                    <th className="py-3 px-4">Conditions</th>
+                    <th className="py-3 px-4 text-center">Uses</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {coupons.map((c) => (
-                    <tr key={c.id} className="hover:bg-white/[0.02] transition-colors">
-                      {/* Code & Type */}
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-[#F5D061] shrink-0 font-bold">
-                            {c.discount_type === "percentage" ? (
-                              <Percent className="w-4 h-4" />
-                            ) : c.discount_type === "free_delivery" ? (
-                              <Truck className="w-4 h-4" />
-                            ) : (
-                              <Banknote className="w-4 h-4" />
+                  {coupons.map((c) => {
+                    const isFreeDel = Boolean(c.free_delivery || c.discount_type === "free_delivery" || c.code === "FREEDEL");
+                    const hasDiscount = c.discount_value > 0 && c.discount_type !== "free_delivery";
+                    return (
+                      <tr key={c.id} className="hover:bg-white/[0.02] transition-colors">
+                        {/* Code & Description */}
+                        <td className="py-3.5 px-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-[#F5D061] shrink-0 font-bold">
+                              %
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono font-bold text-sm text-white tracking-wider block">
+                                  {c.code}
+                                </span>
+                                {c.code.toUpperCase() === "FREEDEL" && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold">
+                                    1st Order Only
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-white/50 block">
+                                {c.description || (
+                                  hasDiscount && isFreeDel
+                                    ? `${c.discount_type === "percentage" ? `${c.discount_value}% OFF` : `₹${c.discount_value} OFF`} + Free Delivery`
+                                    : isFreeDel
+                                    ? "Free Doorstep Delivery"
+                                    : c.discount_type === "percentage"
+                                    ? `${c.discount_value}% Festive Discount`
+                                    : `Flat ₹${c.discount_value} OFF`
+                                )}
+                              </span>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Discount Offer */}
+                        <td className="py-3.5 px-4">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {hasDiscount && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-[#D4AF37]/15 text-[#F5D061] border border-[#D4AF37]/30">
+                                {c.discount_type === "percentage" && `${c.discount_value}% OFF`}
+                                {c.discount_type === "flat_amount" && `₹${c.discount_value} FLAT OFF`}
+                              </span>
+                            )}
+                            {isFreeDel && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                <Truck className="w-3 h-3 text-emerald-400" />
+                                <span>FREE DELIVERY</span>
+                              </span>
                             )}
                           </div>
+                        </td>
+
+                        {/* Conditions */}
+                        <td className="py-3.5 px-4 text-white/70">
                           <div>
-                            <span className="font-mono font-bold text-sm text-white tracking-wider block">
-                              {c.code}
+                            <span>
+                              Min Order:{" "}
+                              <strong className="text-white">
+                                {c.min_order_amount ? `₹${c.min_order_amount}` : "None"}
+                              </strong>
                             </span>
-                            <span className="text-[11px] text-white/50 block">
-                              {c.description || (
-                                c.discount_type === "percentage"
-                                  ? `${c.discount_value}% Festive Discount`
-                                  : c.discount_type === "free_delivery"
-                                  ? "Free Delivery Offer"
-                                  : `Flat ₹${c.discount_value} OFF`
-                              )}
-                            </span>
+                            {c.discount_type === "percentage" && c.max_discount_amount && (
+                              <span className="block text-[11px] text-white/50">
+                                Max Cap: ₹{c.max_discount_amount}
+                              </span>
+                            )}
                           </div>
-                        </div>
-                      </td>
+                        </td>
 
-                      {/* Discount Offer */}
-                      <td className="py-3.5 px-4">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-[#D4AF37]/15 text-[#F5D061] border border-[#D4AF37]/30">
-                          {c.discount_type === "percentage" && `${c.discount_value}% OFF`}
-                          {c.discount_type === "flat_amount" && `₹${c.discount_value} FLAT OFF`}
-                          {c.discount_type === "free_delivery" && "FREE DELIVERY"}
-                        </span>
-                      </td>
-
-                      {/* Conditions */}
-                      <td className="py-3.5 px-4 text-white/70">
-                        <div>
-                          <span>
-                            Min Order:{" "}
-                            <strong className="text-white">
-                              {c.min_order_amount ? `₹${c.min_order_amount}` : "None"}
-                            </strong>
+                        {/* Uses */}
+                        <td className="py-3.5 px-4 text-center">
+                          <span className="px-2.5 py-1 rounded-full bg-white/5 font-mono text-white/80 font-bold">
+                            {c.usage_count || 0}
                           </span>
-                          {c.discount_type === "percentage" && c.max_discount_amount && (
-                            <span className="block text-[11px] text-white/50">
-                              Max Cap: ₹{c.max_discount_amount}
-                            </span>
-                          )}
-                        </div>
-                      </td>
+                        </td>
 
-                      {/* Uses */}
-                      <td className="py-3.5 px-4 text-center">
-                        <span className="px-2.5 py-1 rounded-full bg-white/5 font-mono text-white/80 font-bold">
-                          {c.usage_count || 0}
-                        </span>
-                      </td>
-
-                      {/* Status Toggle */}
-                      <td className="py-3.5 px-4 text-center">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleActive(c)}
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
-                            c.is_active
-                              ? "bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60"
-                              : "bg-white/5 border-white/10 text-white/40 hover:bg-white/10"
-                          }`}
-                        >
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full ${
-                              c.is_active ? "bg-emerald-400 animate-pulse" : "bg-white/30"
+                        {/* Status Toggle */}
+                        <td className="py-3.5 px-4 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleActive(c)}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                              c.is_active
+                                ? "bg-emerald-950/60 border-emerald-500/40 text-emerald-300 hover:bg-emerald-900/60"
+                                : "bg-white/5 border-white/10 text-white/40 hover:bg-white/10"
                             }`}
-                          />
-                          <span>{c.is_active ? "Active" : "Inactive"}</span>
-                        </button>
-                      </td>
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                c.is_active ? "bg-emerald-400 animate-pulse" : "bg-white/30"
+                              }`}
+                            />
+                            <span>{c.is_active ? "Active" : "Inactive"}</span>
+                          </button>
+                        </td>
 
-                      {/* Actions */}
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => openEditModal(c)}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 text-white/80 transition-colors"
-                            title="Edit"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteCoupon(c)}
-                            className="p-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-500/30 transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        {/* Actions */}
+                        <td className="py-3.5 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => openEditModal(c)}
+                              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/80 hover:text-white border border-white/10 transition-colors"
+                              title="Edit"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCoupon(c)}
+                              className="p-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-500/30 transition-colors"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -455,11 +471,11 @@ export default function AdminCouponsPage() {
                     required
                     value={code}
                     onChange={(e) => setCode(e.target.value.toUpperCase())}
-                    placeholder="e.g. SHUBHDIWALI, DIWALI50, FREEDEL"
+                    placeholder="e.g. DIWALI50, SHUBH20, NEWDIS"
                     className="w-full bg-[#110115] border border-white/15 focus:border-[#D4AF37] rounded-xl px-3.5 py-2.5 text-white font-mono uppercase outline-none text-sm"
                   />
                   <span className="text-[10px] text-white/40 mt-1 block">
-                    Customer enters this exact code at checkout.
+                    Customer enters this exact promo code at checkout.
                   </span>
                 </div>
 
@@ -472,20 +488,23 @@ export default function AdminCouponsPage() {
                     type="text"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="e.g. 10% Diwali Discount on orders above ₹200"
+                    placeholder="e.g. Flat ₹50 OFF + FREE Doorstep Delivery on orders above ₹299"
                     className="w-full bg-[#110115] border border-white/15 focus:border-[#D4AF37] rounded-xl px-3.5 py-2 text-white outline-none"
                   />
                 </div>
 
-                {/* Discount Type Selector */}
+                {/* Sweets Discount Type Selector */}
                 <div>
                   <label className="block font-semibold text-white/80 mb-1.5">
-                    Discount Type <span className="text-rose-400">*</span>
+                    Sweets Cart Discount
                   </label>
                   <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
-                      onClick={() => setDiscountType("percentage")}
+                      onClick={() => {
+                        setDiscountType("percentage");
+                        if (!discountValue) setDiscountValue(10);
+                      }}
                       className={`p-3 rounded-xl border text-center transition-all ${
                         discountType === "percentage"
                           ? "bg-[#D4AF37] text-[#16031E] font-bold border-[#F5D061]"
@@ -498,7 +517,10 @@ export default function AdminCouponsPage() {
 
                     <button
                       type="button"
-                      onClick={() => setDiscountType("flat_amount")}
+                      onClick={() => {
+                        setDiscountType("flat_amount");
+                        if (!discountValue) setDiscountValue(50);
+                      }}
                       className={`p-3 rounded-xl border text-center transition-all ${
                         discountType === "flat_amount"
                           ? "bg-[#D4AF37] text-[#16031E] font-bold border-[#F5D061]"
@@ -511,21 +533,25 @@ export default function AdminCouponsPage() {
 
                     <button
                       type="button"
-                      onClick={() => setDiscountType("free_delivery")}
+                      onClick={() => {
+                        setDiscountType("none");
+                        setDiscountValue(0);
+                        setIncludeFreeDelivery(true);
+                      }}
                       className={`p-3 rounded-xl border text-center transition-all ${
-                        discountType === "free_delivery"
+                        discountType === "none"
                           ? "bg-[#D4AF37] text-[#16031E] font-bold border-[#F5D061]"
                           : "bg-white/5 border-white/10 text-white/80 hover:bg-white/10"
                       }`}
                     >
                       <Truck className="w-4 h-4 mx-auto mb-1" />
-                      <span className="block text-[11px]">Free Delivery</span>
+                      <span className="block text-[11px]">No Cart Off</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Discount Value (if not free delivery) */}
-                {discountType !== "free_delivery" && (
+                {/* Discount Value Inputs */}
+                {discountType !== "none" && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block font-semibold text-white/80 mb-1">
@@ -535,7 +561,7 @@ export default function AdminCouponsPage() {
                         type="number"
                         min="1"
                         max={discountType === "percentage" ? 100 : 5000}
-                        value={discountValue}
+                        value={discountValue || ""}
                         onChange={(e) => setDiscountValue(Number(e.target.value))}
                         className="w-full bg-[#110115] border border-white/15 focus:border-[#D4AF37] rounded-xl px-3.5 py-2 text-white outline-none"
                       />
@@ -560,6 +586,56 @@ export default function AdminCouponsPage() {
                     )}
                   </div>
                 )}
+
+                {/* COMBINED OFFER: Free Delivery Toggle Card */}
+                <div
+                  className={`p-3.5 rounded-2xl border transition-all ${
+                    includeFreeDelivery
+                      ? "bg-emerald-950/50 border-emerald-500/50 shadow-md"
+                      : "bg-white/5 border-white/10"
+                  }`}
+                >
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <div className="flex items-center gap-2.5">
+                      <div
+                        className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                          includeFreeDelivery
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : "bg-white/10 text-white/50"
+                        }`}
+                      >
+                        <Truck className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="font-bold text-white text-xs block">
+                          Combine with 100% FREE Doorstep Delivery 🚚
+                        </span>
+                        <span className="text-[10px] text-white/50 block">
+                          Waives the standard ₹21 delivery fee (valid for ALL customers, not just 1st order)
+                        </span>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={includeFreeDelivery}
+                      onChange={(e) => setIncludeFreeDelivery(e.target.checked)}
+                      className="w-5 h-5 rounded text-emerald-500 focus:ring-emerald-500 cursor-pointer shrink-0 ml-3"
+                    />
+                  </label>
+                </div>
+
+                {/* Offer Summary Preview */}
+                <div className="p-3 rounded-xl bg-white/5 border border-[#D4AF37]/30 text-xs text-[#FFF8EE] flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#F5D061] shrink-0" />
+                  <div className="text-[11px]">
+                    <strong className="text-[#F5D061]">Combined Offer Preview: </strong>
+                    {discountType === "percentage" && discountValue > 0 ? `${discountValue}% OFF Subtotal` : ""}
+                    {discountType === "flat_amount" && discountValue > 0 ? `Flat ₹${discountValue} OFF Subtotal` : ""}
+                    {includeFreeDelivery && (discountValue > 0 && discountType !== "none" ? " + " : "")}
+                    {includeFreeDelivery ? "100% FREE Doorstep Delivery (₹21 Saved)" : ""}
+                    {!includeFreeDelivery && discountType === "none" ? "Please select a discount or enable free delivery" : ""}
+                  </div>
+                </div>
 
                 {/* Min Order Value */}
                 <div>

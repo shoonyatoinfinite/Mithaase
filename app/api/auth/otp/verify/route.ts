@@ -46,10 +46,51 @@ export async function POST(req: Request) {
     // OTP matched! Clean up
     otpStore.delete(normalizedEmail);
 
+    // Look up customer from DB to restore their saved profile
+    const { findCustomerByEmail, getOrders } = await import("@/lib/data/store");
+    let customer = await findCustomerByEmail(normalizedEmail);
+    let savedProfile: any = null;
+
+    if (customer) {
+      savedProfile = {
+        customer_name: customer.name,
+        customer_phone: customer.phone,
+        delivery_address: customer.delivery_address,
+        locality: customer.locality,
+        landmark: customer.landmark,
+        delivery_instructions: customer.delivery_instructions,
+        latitude: customer.latitude,
+        longitude: customer.longitude,
+        map_url: customer.map_url,
+        savedAt: customer.updated_at || customer.created_at,
+      };
+    } else {
+      // Fallback: check recent orders
+      const pastOrders = await getOrders(undefined, undefined, normalizedEmail);
+      if (pastOrders && pastOrders.length > 0) {
+        const latest = pastOrders[0];
+        savedProfile = {
+          customer_name: latest.customer_name,
+          customer_phone: latest.customer_phone,
+          delivery_address: latest.delivery_address,
+          locality: latest.locality,
+          landmark: latest.landmark,
+          delivery_instructions: latest.delivery_instructions,
+          latitude: latest.latitude,
+          longitude: latest.longitude,
+          map_url: latest.map_url,
+          savedAt: latest.created_at,
+        };
+      }
+    }
+
     const response = NextResponse.json({
       success: true,
       user: {
         email: normalizedEmail,
+        name: customer?.name || savedProfile?.customer_name,
+        phone: customer?.phone || savedProfile?.customer_phone,
+        savedProfile,
         verifiedAt: new Date().toISOString(),
       },
     });

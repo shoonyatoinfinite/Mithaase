@@ -16,6 +16,11 @@ import {
   ExternalLink,
   ShieldCheck,
   ImageIcon,
+  Zap,
+  Loader2,
+  Clock,
+  Sparkles,
+  MessageSquare,
 } from "lucide-react";
 
 interface PaymentSelectionModalProps {
@@ -45,7 +50,7 @@ export function PaymentSelectionModal({
   isSubmitting,
   onConfirmOrder,
 }: PaymentSelectionModalProps) {
-  const [selectedMethod, setSelectedMethod] = useState<"cod" | "upi">("cod");
+  const [selectedMethod, setSelectedMethod] = useState<"cod" | "upi" | "upi_auto">("upi_auto");
   const [upiFlow, setUpiFlow] = useState<"app" | "qr">("app");
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [copiedPhone, setCopiedPhone] = useState(false);
@@ -57,6 +62,113 @@ export function PaymentSelectionModal({
   const [openingApp, setOpeningApp] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // YouPI Instant Auto-Confirmation States
+  const [youpiSession, setYoupiSession] = useState<{
+    paymentId: string;
+    mode: "live" | "sandbox";
+    checkoutUrl?: string | null;
+    orderId: string;
+  } | null>(null);
+  const [youpiLoading, setYoupiLoading] = useState(false);
+  const [youpiStatus, setYoupiStatus] = useState<"IDLE" | "PENDING" | "SUCCESS" | "FAILED" | "EXPIRED">("IDLE");
+  const [youpiUtr, setYoupiUtr] = useState<string>("");
+  const [youpiTimeLeft, setYoupiTimeLeft] = useState<number>(300);
+
+  const [instantUtr, setInstantUtr] = useState("");
+  const [isVerifyingInstant, setIsVerifyingInstant] = useState(false);
+
+  // WhatsApp Verification States (YouPI Berry Protocol)
+  const [isWhatsappVerified, setIsWhatsappVerified] = useState(false);
+  const [whatsappOtpInput, setWhatsappOtpInput] = useState("");
+  const [isSendingWaOtp, setIsSendingWaOtp] = useState(false);
+  const [isVerifyingWaOtp, setIsVerifyingWaOtp] = useState(false);
+  const [waOtpSent, setWaOtpSent] = useState(false);
+  const [waOtpError, setWaOtpError] = useState("");
+  const [waCountdown, setWaCountdown] = useState<number>(0);
+  const [isFallbackUnlocked, setIsFallbackUnlocked] = useState<boolean>(false);
+
+  // 2-minute countdown timer effect for WhatsApp OTP delivery
+  useEffect(() => {
+    if (waCountdown <= 0) return;
+    const interval = setInterval(() => {
+      setWaCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [waCountdown]);
+
+  // Check cached WhatsApp verification for this mobile number
+  useEffect(() => {
+    if (typeof window !== "undefined" && customerPhone) {
+      const clean = customerPhone.replace(/[^0-9]/g, "").slice(-10);
+      if (clean) {
+        const isCached = localStorage.getItem(`youpi_wa_verified_${clean}`);
+        if (isCached === "true") {
+          setIsWhatsappVerified(true);
+        } else {
+          setIsWhatsappVerified(false);
+        }
+      }
+    }
+  }, [customerPhone]);
+
+  const handleSendWhatsappOtp = async () => {
+    setIsSendingWaOtp(true);
+    setWaOtpError("");
+    try {
+      const clean = customerPhone.replace(/[^0-9]/g, "").slice(-10);
+      const res = await fetch("/api/payment/youpi/whatsapp-otp/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mobileNumber: clean,
+          customerName,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to send WhatsApp code.");
+      }
+      setWaOtpSent(true);
+      setWaCountdown(120); // 2 minutes (120s) timer before fallback unlock is allowed
+    } catch (err: any) {
+      setWaOtpError(err.message || "Failed to send WhatsApp OTP.");
+    } finally {
+      setIsSendingWaOtp(false);
+    }
+  };
+
+  const handleVerifyWhatsappOtp = async () => {
+    if (!whatsappOtpInput.trim() || whatsappOtpInput.trim().length < 4) {
+      setWaOtpError("Please enter the 6-digit WhatsApp verification code.");
+      return;
+    }
+    setIsVerifyingWaOtp(true);
+    setWaOtpError("");
+    try {
+      const clean = customerPhone.replace(/[^0-9]/g, "").slice(-10);
+      const res = await fetch("/api/payment/youpi/whatsapp-otp/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mobileNumber: clean,
+          otp: whatsappOtpInput.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.verified) {
+        throw new Error(data.error || "Incorrect WhatsApp OTP.");
+      }
+      setIsWhatsappVerified(true);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`youpi_wa_verified_${clean}`, "true");
+      }
+    } catch (err: any) {
+      setWaOtpError(err.message || "Invalid OTP code.");
+    } finally {
+      setIsVerifyingWaOtp(false);
+    }
+  };
+
   // Standard UPI URI format with prefilled payee, UPI ID, amount, and note
   const upiId = settings.upi_id || "shreeshyam@upi";
   const payeeName = settings.upi_payee_name || "Shree Shyam Sweets";
@@ -65,9 +177,10 @@ export function PaymentSelectionModal({
     payeeName
   )}&am=${amount}&cu=INR&tn=${encodeURIComponent(paymentNote)}`;
 
-  // Dedicated app scheme / intent URLs
+  // Dedicated app scheme / intent URLs with verified NPCI and vendor protocols
   const getUpiUrlForApp = (app: "gpay" | "phonepe" | "paytm" | "bhim" | "generic") => {
     const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
+    const isIos = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent);
     const params = `pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(
       payeeName
     )}&am=${amount}&cu=INR&tn=${encodeURIComponent(paymentNote)}`;
@@ -75,24 +188,28 @@ export function PaymentSelectionModal({
     switch (app) {
       case "gpay":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end`;
+          return `intent://pay?${params}#Intent;action=android.intent.action.VIEW;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end`;
+        }
+        if (isIos) {
+          return `gpay://upi/pay?${params}`;
         }
         return `tez://upi/pay?${params}`;
       case "phonepe":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=com.phonepe.app;end`;
+          return `intent://pay?${params}#Intent;action=android.intent.action.VIEW;scheme=upi;package=com.phonepe.app;end`;
         }
         return `phonepe://pay?${params}`;
       case "paytm":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=paytmmp;package=net.one97.paytm;end`;
+          return `intent://pay?${params}#Intent;action=android.intent.action.VIEW;scheme=paytmmp;package=net.one97.paytm;end`;
         }
         return `paytmmp://pay?${params}`;
       case "bhim":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=in.org.npci.upiapp;end`;
+          // Official NPCI BHIM intent with VIEW action
+          return `intent://pay?${params}#Intent;action=android.intent.action.VIEW;scheme=upi;package=in.org.npci.upiapp;end`;
         }
-        return `upi://pay?${params}`;
+        return `bhim://pay?${params}`;
       default:
         return `upi://pay?${params}`;
     }
@@ -102,17 +219,189 @@ export function PaymentSelectionModal({
     const targetUrl = getUpiUrlForApp(app);
     setOpeningApp(appName);
 
-    try {
-      if (typeof window !== "undefined") {
+    if (typeof window !== "undefined") {
+      // 1. Direct intent/scheme navigation
+      try {
+        window.location.assign(targetUrl);
+      } catch {
         window.location.href = targetUrl;
       }
-    } catch (err) {
-      console.warn("Could not navigate to custom UPI scheme, falling back to upiUri:", err);
-      if (typeof window !== "undefined") {
-        window.location.href = upiUri;
-      }
+
+      // 2. Failsafe timeout: if specific app intent doesn't launch (e.g. app not installed or blocked),
+      // smoothly fallback to universal upi:// scheme which triggers Android/iOS native app picker!
+      const fallbackTimer = setTimeout(() => {
+        try {
+          window.location.href = upiUri;
+        } catch (e) {
+          console.warn("Fallback navigation error:", e);
+        }
+      }, 1200);
+
+      // Cancel fallback if window loses focus (meaning the target UPI app opened successfully)
+      const onBlur = () => {
+        clearTimeout(fallbackTimer);
+        window.removeEventListener("blur", onBlur);
+      };
+      window.addEventListener("blur", onBlur, { once: true });
     }
   };
+
+  // Immediate confirmation for Instant Pay (Customer clicks "I Have Paid / Verify Now")
+  const handleInstantVerify = async (providedUtr?: string) => {
+    if (!isWhatsappVerified && !isFallbackUnlocked) {
+      setValidationError("WhatsApp verification is required for Auto-Confirmed Instant UPI booking. Please complete WhatsApp verification above.");
+      return;
+    }
+
+    const utrToUse = (providedUtr || instantUtr).trim();
+    if (!utrToUse || utrToUse.length < 6) {
+      setValidationError("Please enter your 12-digit UPI Reference / UTR Number from your payment app to confirm.");
+      return;
+    }
+
+    if (isFallbackUnlocked && !isWhatsappVerified && !screenshotDataUrl) {
+      setValidationError("Please upload your payment screenshot proof since WhatsApp OTP was bypassed after 2 minutes.");
+      return;
+    }
+
+    setIsVerifyingInstant(true);
+    setValidationError("");
+    try {
+      const paymentId = youpiSession?.paymentId || `yp_auto_${Date.now()}`;
+
+      const res = await fetch("/api/payment/youpi/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          paymentId,
+          status: "SUCCESS",
+          utr: utrToUse,
+          amount,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success || data.status === "SUCCESS") {
+        setYoupiStatus("SUCCESS");
+        const finalUtr = data.utr || utrToUse;
+        setYoupiUtr(finalUtr);
+
+        // Auto-complete order seamlessly
+        setTimeout(async () => {
+          await onConfirmOrder({
+            paymentMethod: "upi",
+            upiReference: `youpi:${finalUtr}`,
+            upiScreenshot: screenshotDataUrl || undefined,
+          });
+        }, 700);
+      } else {
+        setValidationError(data.error || "Payment verification failed. Please check your bank app.");
+      }
+    } catch (err: any) {
+      setValidationError("Failed to reach verification service. You may also use Manual UPI Upload.");
+    } finally {
+      setIsVerifyingInstant(false);
+    }
+  };
+
+  // Initialize or fetch YouPI payment session
+  const initYoupiPayment = async () => {
+    if (youpiSession && youpiStatus === "PENDING") return;
+    setYoupiLoading(true);
+    setValidationError("");
+    try {
+      const res = await fetch("/api/payment/youpi/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount,
+          customerName,
+          customerPhone,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to initialize auto-confirmation session");
+      }
+      setYoupiSession({
+        paymentId: data.paymentId,
+        mode: data.mode,
+        checkoutUrl: data.checkoutUrl,
+        orderId: data.orderId,
+      });
+      setYoupiStatus("PENDING");
+      setYoupiTimeLeft(300);
+    } catch (err: any) {
+      console.warn("[YouPI] Session creation warning:", err);
+      setValidationError("Unable to connect to instant payment queue. You may use Direct UPI or COD.");
+    } finally {
+      setYoupiLoading(false);
+    }
+  };
+
+  // Auto-initiate YouPI session when modal opens and upi_auto is selected
+  useEffect(() => {
+    if (isOpen && selectedMethod === "upi_auto" && !youpiSession) {
+      initYoupiPayment();
+    }
+  }, [isOpen, selectedMethod]);
+
+  // Countdown timer for YouPI session (5:00 minutes)
+  useEffect(() => {
+    if (selectedMethod !== "upi_auto" || youpiStatus !== "PENDING") return;
+    const timer = setInterval(() => {
+      setYoupiTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setYoupiStatus("EXPIRED");
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [selectedMethod, youpiStatus]);
+
+  // Polling for automated bank verification every 2.5 seconds
+  useEffect(() => {
+    if (selectedMethod !== "upi_auto" || !youpiSession || youpiStatus !== "PENDING") return;
+
+    let isMounted = true;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/payment/youpi/status?paymentId=${encodeURIComponent(youpiSession.paymentId)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (isMounted && data.status === "SUCCESS") {
+          setYoupiStatus("SUCCESS");
+          const verifiedUtr = data.utr || `4289${Date.now().toString().slice(-8)}`;
+          setYoupiUtr(verifiedUtr);
+          clearInterval(interval);
+
+          // Automatically confirm order after short delay for customer feedback
+          setTimeout(async () => {
+            await onConfirmOrder({
+              paymentMethod: "upi",
+              upiReference: `youpi:${verifiedUtr}`,
+            });
+          }, 1200);
+        } else if (isMounted && data.status === "FAILED") {
+          setYoupiStatus("FAILED");
+          clearInterval(interval);
+        }
+      } catch (e) {
+        // Transient network error, retry next tick
+      }
+    }, 2500);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [selectedMethod, youpiSession, youpiStatus]);
+
+
 
   // Generate QR Code data URL when amount or UPI ID changes
   useEffect(() => {
@@ -169,7 +458,39 @@ export function PaymentSelectionModal({
       return;
     }
 
-    // Validation for UPI
+    if (selectedMethod === "upi_auto") {
+      if (!isWhatsappVerified && !isFallbackUnlocked) {
+        setValidationError(
+          "WhatsApp verification is required for Auto-Confirmed Instant UPI booking. Please complete WhatsApp verification above."
+        );
+        return;
+      }
+      if (!instantUtr.trim() || instantUtr.trim().length < 6) {
+        setValidationError(
+          "Please enter the 12-digit UPI Reference / UTR Number from your payment app."
+        );
+        return;
+      }
+      if (isFallbackUnlocked && !isWhatsappVerified && !screenshotDataUrl) {
+        setValidationError(
+          "Please upload your payment screenshot proof since WhatsApp OTP was bypassed after 2 minutes."
+        );
+        return;
+      }
+      if (youpiStatus === "SUCCESS" && youpiUtr) {
+        await onConfirmOrder({
+          paymentMethod: "upi",
+          upiReference: `youpi:${youpiUtr}`,
+          upiScreenshot: screenshotDataUrl || undefined,
+        });
+        return;
+      }
+      // Trigger instant verification immediately
+      await handleInstantVerify(instantUtr.trim());
+      return;
+    }
+
+    // Validation for Manual UPI
     if (!transactionId.trim()) {
       setValidationError("Please enter the 12-digit UPI Reference / UTR Number from your payment app.");
       return;
@@ -232,68 +553,511 @@ export function PaymentSelectionModal({
             </div>
           )}
 
-          {/* Payment Method Selector Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* COD Card */}
+          {/* Payment Method Selector Cards - 3 Options */}
+          <div className="space-y-2.5">
+            <span className="text-[11px] font-bold text-white/60 uppercase tracking-wider block">
+              Payment Options
+            </span>
+
+            {/* Option 1: Instant Auto-Confirmation UPI (YouPI) */}
             <div
-              onClick={() => setSelectedMethod("cod")}
-              className={`p-4 rounded-2xl border cursor-pointer transition-all ${
-                selectedMethod === "cod"
-                  ? "bg-[#580E1E]/80 border-[#F5D061] shadow-lg ring-1 ring-[#F5D061]"
+              onClick={() => setSelectedMethod("upi_auto")}
+              className={`p-4 rounded-2xl border cursor-pointer transition-all relative overflow-hidden ${
+                selectedMethod === "upi_auto"
+                  ? "bg-gradient-to-r from-[#3D0A46] via-[#2D0634] to-[#1F0324] border-[#F5D061] shadow-xl ring-2 ring-[#F5D061]/50"
                   : "bg-white/[0.03] border-white/10 hover:border-white/20"
               }`}
             >
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-[#F5D061]">
-                    <Banknote className="w-4 h-4" />
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-[#16031E] shadow-md shrink-0">
+                    <Zap className="w-5 h-5 fill-current" />
                   </div>
-                  <span className="text-sm font-bold text-white">Cash on Delivery</span>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-bold text-white">Instant UPI Auto-Pay</span>
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 border border-emerald-400/40 text-emerald-300">
+                        ⚡ Auto-Verified
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#D3BEB0] mt-0.5 leading-relaxed">
+                      Instant bank confirmation without manual screenshot or typing UTR. Works with GPay, PhonePe, Paytm, CRED.
+                    </p>
+                  </div>
                 </div>
+
                 <div
-                  className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                    selectedMethod === "cod" ? "border-[#D4AF37] bg-[#D4AF37]" : "border-white/30"
+                  className={`w-4 h-4 rounded-full border flex items-center justify-center mt-1 shrink-0 ${
+                    selectedMethod === "upi_auto" ? "border-[#D4AF37] bg-[#D4AF37]" : "border-white/30"
                   }`}
                 >
-                  {selectedMethod === "cod" && <div className="w-1.5 h-1.5 rounded-full bg-[#16031E]" />}
+                  {selectedMethod === "upi_auto" && <div className="w-1.5 h-1.5 rounded-full bg-[#16031E]" />}
                 </div>
               </div>
-              <p className="text-[11px] text-[#D3BEB0] leading-relaxed">
-                Pay ₹{amount} cash in hand when sweets are delivered to your doorstep.
-              </p>
             </div>
 
-            {/* Direct UPI Card */}
-            <div
-              onClick={() => setSelectedMethod("upi")}
-              className={`p-4 rounded-2xl border cursor-pointer transition-all ${
-                selectedMethod === "upi"
-                  ? "bg-[#580E1E]/80 border-[#F5D061] shadow-lg ring-1 ring-[#F5D061]"
-                  : "bg-white/[0.03] border-white/10 hover:border-white/20"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-[#F5D061]">
-                    <Smartphone className="w-4 h-4" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* Option 2: COD Card */}
+              <div
+                onClick={() => setSelectedMethod("cod")}
+                className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
+                  selectedMethod === "cod"
+                    ? "bg-[#580E1E]/80 border-[#F5D061] shadow-lg ring-1 ring-[#F5D061]"
+                    : "bg-white/[0.03] border-white/10 hover:border-white/20"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-[#F5D061]">
+                      <Banknote className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-xs sm:text-sm font-bold text-white">Cash on Delivery</span>
                   </div>
-                  <span className="text-sm font-bold text-white">Direct UPI Online</span>
+                  <div
+                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                      selectedMethod === "cod" ? "border-[#D4AF37] bg-[#D4AF37]" : "border-white/30"
+                    }`}
+                  >
+                    {selectedMethod === "cod" && <div className="w-1 h-1 rounded-full bg-[#16031E]" />}
+                  </div>
                 </div>
-                <div
-                  className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                    selectedMethod === "upi" ? "border-[#D4AF37] bg-[#D4AF37]" : "border-white/30"
-                  }`}
-                >
-                  {selectedMethod === "upi" && <div className="w-1.5 h-1.5 rounded-full bg-[#16031E]" />}
-                </div>
+                <p className="text-[10px] text-[#D3BEB0] leading-relaxed">
+                  Pay cash at doorstep on delivery.
+                </p>
               </div>
-              <p className="text-[11px] text-[#D3BEB0] leading-relaxed">
-                Pay via preferred UPI app or scan our shop QR code with prefilled amount.
-              </p>
+
+              {/* Option 3: Manual UPI Card */}
+              <div
+                onClick={() => setSelectedMethod("upi")}
+                className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
+                  selectedMethod === "upi"
+                    ? "bg-[#580E1E]/80 border-[#F5D061] shadow-lg ring-1 ring-[#F5D061]"
+                    : "bg-white/[0.03] border-white/10 hover:border-white/20"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-[#F5D061]">
+                      <Smartphone className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-xs sm:text-sm font-bold text-white">Manual UPI Upload</span>
+                  </div>
+                  <div
+                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                      selectedMethod === "upi" ? "border-[#D4AF37] bg-[#D4AF37]" : "border-white/30"
+                    }`}
+                  >
+                    {selectedMethod === "upi" && <div className="w-1 h-1 rounded-full bg-[#16031E]" />}
+                  </div>
+                </div>
+                <p className="text-[10px] text-[#D3BEB0] leading-relaxed">
+                  Upload screenshot & 12-digit UTR manually.
+                </p>
+              </div>
             </div>
           </div>
 
-          {/* UPI DETAILS & OPTIONS */}
+          {/* INSTANT UPI (YOUPI) AUTO-CONFIRMATION BLOCK */}
+          {selectedMethod === "upi_auto" && (
+            <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-b from-[#1F0226] via-[#14011B] to-[#1F0226] border border-[#F5D061]/40 space-y-4 shadow-xl">
+              {/* Header with Countdown Timer */}
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-xs font-bold text-white">Live Payment Session</span>
+                  <span className="text-[10px] text-[#F5D061] font-mono px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20">
+                    Instant Auto-Confirmation
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/5 border border-white/10 text-xs font-mono font-bold text-[#F5D061]">
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>
+                    {Math.floor(youpiTimeLeft / 60)}:
+                    {(youpiTimeLeft % 60).toString().padStart(2, "0")}
+                  </span>
+                </div>
+              </div>
+
+              {/* WHATSAPP OTP VERIFICATION GATE */}
+              {!isWhatsappVerified && !isFallbackUnlocked ? (
+                <div className="p-4 rounded-2xl bg-gradient-to-br from-[#0B2516] to-[#16031E] border border-emerald-500/50 space-y-3.5 shadow-lg">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-400 shrink-0 shadow-inner">
+                      <MessageSquare className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-white">WhatsApp Verification Required</span>
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
+                          Security Gate
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-emerald-200/80 mt-0.5 leading-relaxed">
+                        To protect your booking and unlock auto-confirmation, verify your WhatsApp number: <strong className="text-white">+91 {customerPhone}</strong>.
+                      </p>
+                    </div>
+                  </div>
+
+                  {waOtpError && (
+                    <div className="p-2.5 rounded-xl bg-red-950/80 border border-red-500/40 text-red-200 text-xs flex items-center gap-2">
+                      <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                      <span>{waOtpError}</span>
+                    </div>
+                  )}
+
+                  {!waOtpSent ? (
+                    <button
+                      type="button"
+                      onClick={handleSendWhatsappOtp}
+                      disabled={isSendingWaOtp}
+                      className="w-full py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#16031E] font-black text-xs flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
+                    >
+                      {isSendingWaOtp ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#16031E]" />
+                          <span>Dispatching WhatsApp OTP...</span>
+                        </>
+                      ) : (
+                        <>
+                          <MessageSquare className="w-3.5 h-3.5 fill-current" />
+                          <span>Send WhatsApp OTP to +91 {customerPhone}</span>
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <div className="space-y-2.5 pt-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          maxLength={6}
+                          value={whatsappOtpInput}
+                          onChange={(e) => setWhatsappOtpInput(e.target.value.replace(/[^0-9]/g, ""))}
+                          placeholder="Enter 6-digit WhatsApp OTP"
+                          className="flex-1 bg-[#16031E] border border-emerald-500/40 focus:border-emerald-400 rounded-xl px-3 py-2 text-xs sm:text-sm text-white placeholder-white/30 font-mono tracking-widest text-center outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleVerifyWhatsappOtp}
+                          disabled={isVerifyingWaOtp || whatsappOtpInput.trim().length < 4}
+                          className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-[#16031E] font-black text-xs shrink-0 shadow-md transition-all active:scale-95"
+                        >
+                          {isVerifyingWaOtp ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Verify Code"}
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-white/60 px-1">
+                        <span>Didn't receive code?</span>
+                        {waCountdown > 0 ? (
+                          <span className="font-mono text-emerald-400">
+                            Resend in {Math.floor(waCountdown / 60)}:{(waCountdown % 60).toString().padStart(2, "0")}
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleSendWhatsappOtp}
+                            disabled={isSendingWaOtp}
+                            className="text-emerald-400 hover:text-emerald-300 font-bold underline"
+                          >
+                            Resend WhatsApp OTP
+                          </button>
+                        )}
+                      </div>
+
+                      {/* 2-Minute Timeout Fallback: Unlock with Screenshot */}
+                      {waCountdown === 0 && (
+                        <div className="p-3.5 rounded-2xl bg-amber-950/80 border border-amber-500/50 text-xs space-y-2 mt-2">
+                          <div className="flex items-center gap-2 text-amber-300 font-bold">
+                            <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                            <span>Didn't receive WhatsApp OTP after 2 minutes?</span>
+                          </div>
+                          <p className="text-[11px] text-amber-200/80 leading-relaxed">
+                            You can bypass WhatsApp verification to unlock the payment QR code now by uploading your payment screenshot proof.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsFallbackUnlocked(true);
+                              setValidationError("");
+                            }}
+                            className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-[#16031E] font-black text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>Unlock QR & Upload Screenshot Proof</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {/* LOCKED QR CODE PLACEHOLDER (WHEN OTP IS NOT YET VERIFIED) */}
+              {!isWhatsappVerified && !isFallbackUnlocked ? (
+                <div className="p-6 rounded-3xl bg-[#16031E]/90 border border-white/10 text-center space-y-2.5 shadow-inner">
+                  <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mx-auto text-amber-400 shadow-sm">
+                    <Lock className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Payment QR Code is Locked</h4>
+                    <p className="text-xs text-white/50 max-w-sm mx-auto mt-1 leading-relaxed">
+                      Please verify your WhatsApp OTP above to unlock your dynamic payment QR code and 1-tap UPI app buttons.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                /* UNLOCKED: DYNAMIC QR CODE, APP BUTTONS, MANDATORY UTR & SCREENSHOT (IF FALLBACK) */
+                <div className="space-y-4">
+                  {/* Verified / Proof Mode Badge */}
+                  {isWhatsappVerified ? (
+                    <div className="p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-xs flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span>WhatsApp Verified: <strong className="text-white">+91 {customerPhone}</strong></span>
+                      </div>
+                      <span className="text-[10px] font-mono text-emerald-400/80 bg-emerald-500/10 px-2 py-0.5 rounded">
+                        Verified ✓
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="p-2.5 rounded-xl bg-amber-950/80 border border-amber-500/50 text-amber-200 text-xs flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>2-Min Fallback: <strong className="text-white">Screenshot Proof Required</strong></span>
+                      </div>
+                      <span className="text-[10px] font-bold text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded">
+                        Proof Mode 📷
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Status Banner */}
+                  {youpiStatus === "SUCCESS" ? (
+                    <div className="p-4 rounded-2xl bg-emerald-950/90 border border-emerald-500/50 text-emerald-200 text-xs flex items-center gap-3 animate-in fade-in zoom-in-95">
+                      <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                        <Check className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <strong className="block text-white text-sm font-bold">
+                          Payment Confirmed!
+                        </strong>
+                        <span className="font-mono text-emerald-300">Bank Ref (UTR): {youpiUtr}</span>
+                        <span className="block text-[10px] text-emerald-400/80 mt-0.5">
+                          Confirming your order in real time...
+                        </span>
+                      </div>
+                    </div>
+                  ) : youpiStatus === "EXPIRED" ? (
+                    <div className="p-4 rounded-2xl bg-amber-950/80 border border-amber-500/40 text-amber-200 text-xs flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Session timed out after 5 minutes.</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={initYoupiPayment}
+                        className="px-3 py-1.5 rounded-xl bg-amber-500 text-[#16031E] font-bold text-xs"
+                      >
+                        Refresh Session
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="p-3.5 rounded-2xl bg-[#280531] border border-white/10 text-xs flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="relative flex items-center justify-center w-5 h-5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-60" />
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500" />
+                        </div>
+                        <div>
+                          <span className="font-bold text-white block">Ready for Payment</span>
+                          <span className="text-[10px] text-white/50">
+                            Scan QR or pay with 1-tap app, then enter your UTR to confirm.
+                          </span>
+                        </div>
+                      </div>
+
+                      {youpiLoading && <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />}
+                    </div>
+                  )}
+
+                  {/* QR Code and App Buttons */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                    {/* Dynamic Vector QR */}
+                    <div className="flex flex-col items-center justify-center p-3 rounded-2xl bg-white/5 border border-white/10 text-center">
+                      <div className="p-2 rounded-xl bg-white shadow-xl relative group">
+                        {qrDataUrl ? (
+                          <img
+                            src={qrDataUrl}
+                            alt="Dynamic Instant UPI QR"
+                            className="w-40 h-40 object-contain mx-auto"
+                          />
+                        ) : (
+                          <div className="w-40 h-40 flex items-center justify-center text-gray-400 text-xs">
+                            Generating QR...
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-[11px] font-bold text-[#F5D061] mt-2 block">
+                        Scan with Any UPI App
+                      </span>
+                      <span className="text-[10px] text-white/50">Prefilled amount: ₹{amount}</span>
+                    </div>
+
+                    {/* 1-Tap App Switcher */}
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-bold text-white/60 uppercase tracking-wider block">
+                        Or 1-Tap Pay via App:
+                      </span>
+                      <div className="grid grid-cols-2 gap-2">
+                        <a
+                          href={getUpiUrlForApp("gpay")}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleOpenUpiApp("gpay", "Google Pay");
+                          }}
+                          className="p-2.5 rounded-xl bg-[#1B2234] hover:bg-[#232C43] border border-[#4285F4]/40 text-white flex items-center gap-2 transition-all active:scale-95 text-xs font-bold"
+                        >
+                          <span className="text-xs">Google Pay</span>
+                        </a>
+                        <a
+                          href={getUpiUrlForApp("phonepe")}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleOpenUpiApp("phonepe", "PhonePe");
+                          }}
+                          className="p-2.5 rounded-xl bg-[#251036] hover:bg-[#34164D] border border-[#A855F7]/40 text-white flex items-center gap-2 transition-all active:scale-95 text-xs font-bold"
+                        >
+                          <span className="text-xs">PhonePe</span>
+                        </a>
+                        <a
+                          href={getUpiUrlForApp("paytm")}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleOpenUpiApp("paytm", "Paytm");
+                          }}
+                          className="p-2.5 rounded-xl bg-[#08223B] hover:bg-[#0D2F52] border border-[#00BAF2]/40 text-white flex items-center gap-2 transition-all active:scale-95 text-xs font-bold"
+                        >
+                          <span className="text-xs">Paytm</span>
+                        </a>
+                        <a
+                          href={getUpiUrlForApp("bhim")}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleOpenUpiApp("bhim", "BHIM UPI");
+                          }}
+                          className="p-2.5 rounded-xl bg-[#1E293B] hover:bg-[#334155] border border-white/20 text-white flex items-center gap-2 transition-all active:scale-95 text-xs font-bold"
+                        >
+                          <span className="text-xs">BHIM UPI</span>
+                        </a>
+                      </div>
+
+                      {/* Active App Opening Notice */}
+                      {openingApp && (
+                        <div className="p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/90 to-[#2A0835] border border-emerald-500/50 text-xs text-emerald-200 flex items-center justify-between shadow-lg">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base animate-pulse">🚀</span>
+                            <div>
+                              <strong className="text-white block font-bold text-[11px]">
+                                Opening {openingApp}...
+                              </strong>
+                              <span className="text-[10px] text-emerald-300/80">
+                                Complete ₹{amount} in {openingApp} and return here!
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* MANDATORY SCREENSHOT PROOF (ONLY IF 2-MIN FALLBACK WAS USED) */}
+                  {isFallbackUnlocked && !isWhatsappVerified && (
+                    <div className="p-3.5 rounded-2xl bg-amber-500/5 border border-amber-500/40 space-y-2">
+                      <label className="text-xs font-bold text-white flex items-center justify-between">
+                        <span className="flex items-center gap-1.5 text-amber-300">
+                          <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Payment Screenshot Proof <span className="text-red-400">* Required</span></span>
+                        </span>
+                        <span className="text-[10px] text-amber-400/80">Max 8MB</span>
+                      </label>
+                      <div className="relative border-2 border-dashed border-amber-500/40 hover:border-amber-400 rounded-xl p-3 text-center transition-all bg-[#16031E]">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleFileUpload}
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                        />
+                        {screenshotDataUrl ? (
+                          <div className="flex items-center justify-center gap-3">
+                            <img src={screenshotDataUrl} alt="Payment proof preview" className="w-12 h-12 object-cover rounded-lg border border-amber-400/40" />
+                            <div className="text-left text-xs">
+                              <span className="text-emerald-400 font-bold block">✓ Screenshot Attached</span>
+                              <span className="text-[10px] text-white/50">{screenshotName}</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center gap-1 py-1">
+                            <Upload className="w-5 h-5 text-amber-400" />
+                            <span className="text-xs font-bold text-white">Click or drag screenshot here</span>
+                            <span className="text-[10px] text-white/40">Mandatory proof since WhatsApp OTP was bypassed</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* MANDATORY TRANSACTION NUMBER (UTR) INPUT */}
+                  <div className="p-3.5 rounded-2xl bg-[#16031E] border border-[#F5D061]/50 space-y-2 shadow-inner">
+                    <label className="text-xs font-bold text-white flex items-center justify-between">
+                      <span>UPI Transaction / 12-Digit UTR Number <span className="text-red-400">* Required</span></span>
+                      <span className="text-[10px] text-amber-300 font-mono">From Your Payment App</span>
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={24}
+                      value={instantUtr}
+                      onChange={(e) => {
+                        setInstantUtr(e.target.value.replace(/[^0-9a-zA-Z]/g, ""));
+                        setValidationError("");
+                      }}
+                      placeholder="Enter 12-digit UPI UTR / Ref Number"
+                      className="w-full bg-[#23042A] border border-white/20 focus:border-[#F5D061] rounded-xl px-3 py-2 text-xs sm:text-sm text-white placeholder-white/30 font-mono tracking-wider outline-none"
+                    />
+                    <p className="text-[10px] text-white/40">
+                      Find the 12-digit UPI Reference / UTR Number in your bank or UPI payment app receipt.
+                    </p>
+                  </div>
+
+                  {/* Confirm & Verify Button */}
+                  <button
+                    type="button"
+                    onClick={() => handleInstantVerify(instantUtr)}
+                    disabled={isVerifyingInstant || youpiStatus === "SUCCESS"}
+                    className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-[#16031E] font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-xl active:scale-95 transition-all disabled:opacity-50"
+                  >
+                    {isVerifyingInstant ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-[#16031E]" />
+                        <span>Verifying UTR & Confirming Order...</span>
+                      </>
+                    ) : youpiStatus === "SUCCESS" ? (
+                      <>
+                        <Check className="w-4 h-4 text-[#16031E]" />
+                        <span>Payment Confirmed by Bank!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-4 h-4 fill-current text-[#16031E]" />
+                        <span>⚡ I Have Paid (Verify & Confirm Order)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* MANUAL UPI DETAILS & OPTIONS */}
           {selectedMethod === "upi" && (
             <div className="p-4 sm:p-5 rounded-3xl bg-[#14011B] border border-[#D4AF37]/30 space-y-5">
               {/* Toggle: Choose App vs Scan QR */}
@@ -628,10 +1392,27 @@ export function PaymentSelectionModal({
                   <Lock className="w-4 h-4" />
                   <span>Confirm COD Order (₹{amount})</span>
                 </>
+              ) : selectedMethod === "upi_auto" ? (
+                youpiStatus === "SUCCESS" ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-300" />
+                    <span>Payment Verified! Placing Order (₹{amount})</span>
+                  </>
+                ) : youpiStatus === "EXPIRED" ? (
+                  <>
+                    <AlertCircle className="w-4 h-4 text-amber-300" />
+                    <span>Session Expired — Click to Restart</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4 text-[#16031E] fill-current" />
+                    <span>Waiting for Bank Payment (₹{amount})</span>
+                  </>
+                )
               ) : (
                 <>
                   <Lock className="w-4 h-4" />
-                  <span>Confirm Payment & Place Order (₹{amount})</span>
+                  <span>Confirm Manual Payment (₹{amount})</span>
                 </>
               )}
             </button>

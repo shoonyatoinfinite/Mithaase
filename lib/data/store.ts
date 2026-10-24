@@ -213,6 +213,15 @@ export async function updateStoreSettings(updates: Partial<StoreSettings>): Prom
 
   if (sql) {
     try {
+      // Ensure columns exist in database
+      await sql.query(`
+        ALTER TABLE store_settings 
+        ADD COLUMN IF NOT EXISTS upi_id VARCHAR(100) DEFAULT 'shreeshyam@upi',
+        ADD COLUMN IF NOT EXISTS upi_payee_name VARCHAR(100) DEFAULT 'Shree Shyam Sweets';
+      `).catch(() => {});
+
+      const serviceAreasJson = updates.service_areas ? JSON.stringify(updates.service_areas) : null;
+
       await sql.query(
         `UPDATE store_settings SET
           store_name = COALESCE($1, store_name),
@@ -231,25 +240,31 @@ export async function updateStoreSettings(updates: Partial<StoreSettings>): Prom
           closure_message = COALESCE($14, closure_message),
           store_shutoff = COALESCE($15, store_shutoff),
           shutoff_message = COALESCE($16, shutoff_message),
+          upi_id = COALESCE($17, upi_id),
+          upi_payee_name = COALESCE($18, upi_payee_name),
+          service_areas = COALESCE($19::jsonb, service_areas),
           updated_at = NOW()
         WHERE id = 1;`,
         [
-          updates.store_name,
-          updates.brand_tagline,
-          updates.store_status,
-          updates.accepts_orders,
-          updates.default_delivery_fee,
-          updates.minimum_order_value,
-          updates.same_day_delivery_enabled,
-          updates.operating_hours,
-          updates.cutoff_time,
-          updates.business_phone,
-          updates.whatsapp_number,
-          updates.shop_address,
-          updates.announcement_message,
-          updates.closure_message,
-          updates.store_shutoff,
-          updates.shutoff_message,
+          updates.store_name !== undefined ? updates.store_name : null,
+          updates.brand_tagline !== undefined ? updates.brand_tagline : null,
+          updates.store_status !== undefined ? updates.store_status : null,
+          updates.accepts_orders !== undefined ? updates.accepts_orders : null,
+          updates.default_delivery_fee !== undefined ? updates.default_delivery_fee : null,
+          updates.minimum_order_value !== undefined ? updates.minimum_order_value : null,
+          updates.same_day_delivery_enabled !== undefined ? updates.same_day_delivery_enabled : null,
+          updates.operating_hours !== undefined ? updates.operating_hours : null,
+          updates.cutoff_time !== undefined ? updates.cutoff_time : null,
+          updates.business_phone !== undefined ? updates.business_phone : null,
+          updates.whatsapp_number !== undefined ? updates.whatsapp_number : null,
+          updates.shop_address !== undefined ? updates.shop_address : null,
+          updates.announcement_message !== undefined ? updates.announcement_message : null,
+          updates.closure_message !== undefined ? updates.closure_message : null,
+          updates.store_shutoff !== undefined ? updates.store_shutoff : null,
+          updates.shutoff_message !== undefined ? updates.shutoff_message : null,
+          updates.upi_id !== undefined ? updates.upi_id : null,
+          updates.upi_payee_name !== undefined ? updates.upi_payee_name : null,
+          serviceAreasJson,
         ]
       );
     } catch (err) {
@@ -776,6 +791,21 @@ export async function adjustVariantStock(
               WHERE id = $2;
             `, [nextStock, variantId]);
           }
+
+          await sql.query(`
+            INSERT INTO inventory_movements (id, variant_id, product_name, variant_name, movement_type, quantity_change, stock_after, reason, created_by, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW());
+          `, [
+            crypto.randomUUID(),
+            isVarUuid ? variantId : null,
+            product.name,
+            variant.variant_name,
+            movementType,
+            quantityChange,
+            nextStock,
+            reason,
+            createdBy,
+          ]).catch(() => {});
         } catch (err) {
           console.error("[STORE] adjustVariantStock db error:", err);
         }
@@ -983,23 +1013,28 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
   let discountAmount = 0;
 
   if (params.coupon_code) {
-    const cp = db.coupons.find(
-      (c) => c.code.toUpperCase() === params.coupon_code?.toUpperCase() && c.is_active
-    );
-    if (cp) {
-      if (cp.discount_type === "free_delivery" || cp.code.toUpperCase() === "FREEDEL") {
-        if (!isFirstTimeCustomer) {
-          return {
-            success: false,
-            error: "Free delivery coupon (FREEDEL) is valid only for new customers on their 1st order. Standard flat delivery fee applies.",
-          };
-        }
+    const cp = await getCouponByCode(params.coupon_code);
+    if (cp && cp.is_active) {
+      const isFreeDelivery = Boolean(
+        cp.free_delivery || cp.discount_type === "free_delivery" || cp.code.toUpperCase() === "FREEDEL"
+      );
+
+      // ONLY FREEDEL is restricted to new customers on their 1st order!
+      if (cp.code.toUpperCase() === "FREEDEL" && !isFirstTimeCustomer) {
+        return {
+          success: false,
+          error: "Free delivery coupon (FREEDEL) is valid only for new customers on their 1st order. Standard flat delivery fee applies.",
+        };
+      }
+
+      if (isFreeDelivery) {
         deliveryCharge = 0;
-        discountAmount = 0; // Free delivery waives the delivery fee; sweets subtotal is NOT discounted
-      } else if (cp.discount_type === "percentage") {
+      }
+
+      if (cp.discount_type === "percentage" && cp.discount_value > 0) {
         const pct = Math.round((subtotal * cp.discount_value) / 100);
         discountAmount = cp.max_discount_amount ? Math.min(cp.max_discount_amount, pct) : pct;
-      } else if (cp.discount_type === "flat_amount") {
+      } else if (cp.discount_type === "flat_amount" && cp.discount_value > 0) {
         discountAmount = Math.min(subtotal, cp.discount_value);
       }
     }
@@ -1110,6 +1145,45 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
           it.image_url || null,
         ]);
       }
+
+      // 1. Insert initial order status history into Postgres
+      await sql.query(`
+        INSERT INTO order_status_history (id, order_id, previous_status, new_status, changed_by, note, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW());
+      `, [crypto.randomUUID(), orderId, "pending_confirmation", "pending_confirmation", "Customer", "Order placed online"]);
+
+      // 2. Auto-save customer profile into customer_accounts table
+      if (params.customer_phone || params.customer_email) {
+        const custEmail = (params.customer_email || `cust_${params.customer_phone.replace(/[^0-9]/g, "")}@mithaase.in`).toLowerCase().trim();
+        const cleanPhone = params.customer_phone.replace(/[^0-9]/g, "");
+        await sql.query(`
+          INSERT INTO customer_accounts (email, phone, name, delivery_address, locality, landmark, delivery_instructions, latitude, longitude, map_url, pin, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+          ON CONFLICT (email) DO UPDATE SET
+            phone = EXCLUDED.phone,
+            name = EXCLUDED.name,
+            delivery_address = EXCLUDED.delivery_address,
+            locality = EXCLUDED.locality,
+            landmark = COALESCE(EXCLUDED.landmark, customer_accounts.landmark),
+            delivery_instructions = COALESCE(EXCLUDED.delivery_instructions, customer_accounts.delivery_instructions),
+            latitude = COALESCE(EXCLUDED.latitude, customer_accounts.latitude),
+            longitude = COALESCE(EXCLUDED.longitude, customer_accounts.longitude),
+            map_url = COALESCE(EXCLUDED.map_url, customer_accounts.map_url),
+            updated_at = NOW();
+        `, [
+          custEmail,
+          cleanPhone,
+          params.customer_name.trim(),
+          params.delivery_address.trim(),
+          params.locality.trim(),
+          params.landmark?.trim() || null,
+          params.delivery_instructions?.trim() || null,
+          params.latitude || 28.1907,
+          params.longitude || 76.1624,
+          params.map_url || null,
+          "123456",
+        ]).catch((e: any) => console.warn("[STORE] customer_accounts upsert warning:", e));
+      }
     } catch (err) {
       console.error("[STORE] createOrder db error:", err);
     }
@@ -1151,6 +1225,21 @@ export async function getOrders(
           });
         }
 
+        const historyRows = await sql.query(`SELECT * FROM order_status_history ORDER BY created_at ASC;`).catch(() => []);
+        const historyByOrderId: Record<string, OrderStatusHistory[]> = {};
+        for (const h of historyRows || []) {
+          if (!historyByOrderId[h.order_id]) historyByOrderId[h.order_id] = [];
+          historyByOrderId[h.order_id].push({
+            id: String(h.id),
+            order_id: h.order_id,
+            previous_status: h.previous_status,
+            new_status: h.new_status,
+            changed_by: h.changed_by || "System",
+            note: h.note || "",
+            created_at: new Date(h.created_at).toISOString(),
+          });
+        }
+
         const dbMapped: Order[] = rows.map((o: any) => ({
           id: o.id,
           order_number: o.order_number,
@@ -1185,7 +1274,7 @@ export async function getOrders(
           map_url: o.map_url || undefined,
           source: o.source || "online",
           items: itemsByOrderId[o.id] || [],
-          status_history: [],
+          status_history: historyByOrderId[o.id] || [],
           created_at: o.created_at ? new Date(o.created_at).toISOString() : new Date().toISOString(),
           updated_at: o.updated_at ? new Date(o.updated_at).toISOString() : new Date().toISOString(),
           cancellation_reason: o.cancellation_reason || undefined,
@@ -1284,6 +1373,10 @@ export async function getOrderById(id: string): Promise<Order | null> {
           `SELECT * FROM order_items WHERE order_id = $1;`,
           [o.id]
         );
+        const historyRows = await sql.query(
+          `SELECT * FROM order_status_history WHERE order_id = $1 ORDER BY created_at ASC;`,
+          [o.id]
+        ).catch(() => []);
         const mappedOrder: Order = {
           id: o.id,
           order_number: o.order_number,
@@ -1329,7 +1422,15 @@ export async function getOrderById(id: string): Promise<Order | null> {
             line_total: Number(it.line_total),
             image_url: it.image_url,
           })),
-          status_history: [],
+          status_history: (historyRows || []).map((h: any) => ({
+            id: String(h.id),
+            order_id: h.order_id,
+            previous_status: h.previous_status,
+            new_status: h.new_status,
+            changed_by: h.changed_by || "System",
+            note: h.note || "",
+            created_at: new Date(h.created_at).toISOString(),
+          })),
           created_at: o.created_at ? new Date(o.created_at).toISOString() : new Date().toISOString(),
           updated_at: o.updated_at ? new Date(o.updated_at).toISOString() : new Date().toISOString(),
           cancellation_reason: o.cancellation_reason || undefined,
@@ -1496,6 +1597,12 @@ export async function updateOrderStatus(
           order.pickup_photo || null,
         ]
       );
+
+      // Record status transition in order_status_history
+      await sql.query(`
+        INSERT INTO order_status_history (id, order_id, previous_status, new_status, changed_by, note, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW());
+      `, [crypto.randomUUID(), order.id, prevStatus, newStatus, changedBy, note || `Status changed to ${newStatus}`]).catch(() => {});
     } catch (err) {
       console.error("[STORE] updateOrderStatus sql error:", err);
     }
@@ -1721,8 +1828,9 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
     );
   }
 
+  const saleUuid = crypto.randomUUID();
   const newSale: OfflineSale = {
-    id: saleId,
+    id: saleUuid,
     sale_number: saleNumber,
     subtotal,
     discount_amount: discount,
@@ -1735,22 +1843,87 @@ export async function createOfflineSale(params: CreateOfflineSaleParams): Promis
     created_at: new Date().toISOString(),
   };
 
+  if (sql) {
+    try {
+      await sql.query(`
+        INSERT INTO offline_sales (id, sale_number, customer_name, customer_phone, subtotal, discount_amount, total_amount, payment_method, created_by, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW());
+      `, [
+        saleUuid,
+        newSale.sale_number,
+        newSale.customer_name || null,
+        newSale.customer_phone || null,
+        newSale.subtotal,
+        newSale.discount_amount,
+        newSale.total_amount,
+        newSale.payment_method,
+        newSale.created_by,
+      ]);
+    } catch (err) {
+      console.error("[STORE] createOfflineSale db error:", err);
+    }
+  }
+
   db.offlineSales.unshift(newSale);
   return { success: true, sale: newSale };
 }
 
 export async function getOfflineSales(): Promise<OfflineSale[]> {
+  if (sql) {
+    try {
+      const rows = await sql.query(`SELECT * FROM offline_sales ORDER BY created_at DESC;`);
+      if (rows && rows.length > 0) {
+        return rows.map((s: any) => ({
+          id: String(s.id),
+          sale_number: s.sale_number,
+          subtotal: Number(s.subtotal),
+          discount_amount: Number(s.discount_amount),
+          total_amount: Number(s.total_amount),
+          payment_method: s.payment_method,
+          customer_name: s.customer_name || undefined,
+          customer_phone: s.customer_phone || undefined,
+          items: [],
+          created_by: s.created_by || "Counter Staff",
+          created_at: new Date(s.created_at).toISOString(),
+        }));
+      }
+    } catch (err) {
+      console.error("[STORE] getOfflineSales db error:", err);
+    }
+  }
   return [...db.offlineSales];
 }
 
 // 6. EXPENSES
 export async function getExpenses(): Promise<Expense[]> {
+  if (sql) {
+    try {
+      const rows = await sql.query(`SELECT * FROM expenses ORDER BY expense_date DESC, created_at DESC;`);
+      if (rows && rows.length > 0) {
+        return rows.map((e: any) => ({
+          id: String(e.id),
+          title: e.title,
+          category: e.category,
+          amount: Number(e.amount),
+          payment_method: e.payment_method,
+          expense_date: e.expense_date ? new Date(e.expense_date).toISOString().split("T")[0] : "",
+          description: e.description || "",
+          receipt_url: e.receipt_url || undefined,
+          created_by: e.created_by,
+          created_at: new Date(e.created_at).toISOString(),
+        }));
+      }
+    } catch (err) {
+      console.error("[STORE] getExpenses db error:", err);
+    }
+  }
   return [...db.expenses];
 }
 
 export async function createExpense(input: Partial<Expense>): Promise<Expense> {
+  const expenseId = crypto.randomUUID();
   const expense: Expense = {
-    id: `exp-${Date.now()}`,
+    id: expenseId,
     title: input.title || "Expense",
     category: input.category || "Raw materials",
     amount: Number(input.amount) || 0,
@@ -1761,12 +1934,59 @@ export async function createExpense(input: Partial<Expense>): Promise<Expense> {
     created_by: input.created_by || "Admin",
     created_at: new Date().toISOString(),
   };
+
+  if (sql) {
+    try {
+      await sql.query(`
+        INSERT INTO expenses (id, title, category, amount, payment_method, expense_date, description, receipt_url, created_by, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW());
+      `, [
+        expenseId,
+        expense.title,
+        expense.category,
+        expense.amount,
+        expense.payment_method,
+        expense.expense_date,
+        expense.description,
+        expense.receipt_url || null,
+        expense.created_by,
+      ]);
+    } catch (err) {
+      console.error("[STORE] createExpense db error:", err);
+    }
+  }
+
   db.expenses.unshift(expense);
   return expense;
 }
 
 // 7. INVENTORY MOVEMENTS
 export async function getInventoryMovements(): Promise<InventoryMovement[]> {
+  if (sql) {
+    try {
+      const rows = await sql.query(`
+        SELECT id, variant_id, product_name, variant_name, movement_type, quantity_change, stock_after, reason, created_by, created_at
+        FROM inventory_movements
+        ORDER BY created_at DESC;
+      `);
+      if (rows && rows.length > 0) {
+        return rows.map((r: any) => ({
+          id: String(r.id),
+          variant_id: r.variant_id || "",
+          product_name: r.product_name,
+          variant_name: r.variant_name,
+          movement_type: r.movement_type,
+          quantity_change: Number(r.quantity_change),
+          stock_after: Number(r.stock_after),
+          reason: r.reason,
+          created_by: r.created_by,
+          created_at: new Date(r.created_at).toISOString(),
+        }));
+      }
+    } catch (err) {
+      console.error("[STORE] getInventoryMovements db error:", err);
+    }
+  }
   return [...db.inventoryMovements];
 }
 
@@ -1999,6 +2219,30 @@ export async function registerCustomer(
 
 // 9. COUPONS & DISCOUNTS
 export async function getCoupons(onlyActive = false): Promise<Coupon[]> {
+  if (sql) {
+    try {
+      const query = onlyActive
+        ? `SELECT * FROM coupons WHERE is_active = true ORDER BY created_at DESC;`
+        : `SELECT * FROM coupons ORDER BY created_at DESC;`;
+      const rows = await sql.query(query);
+      if (rows && rows.length > 0) {
+        return rows.map((c: any) => ({
+          id: String(c.id),
+          code: c.code,
+          description: c.description || "",
+          discount_type: c.discount_type,
+          discount_value: Number(c.discount_value),
+          min_order_amount: Number(c.min_order_amount || 0),
+          max_discount_amount: c.max_discount_amount ? Number(c.max_discount_amount) : undefined,
+          free_delivery: Boolean(c.free_delivery || c.discount_type === "free_delivery" || c.code === "FREEDEL"),
+          is_active: Boolean(c.is_active),
+          created_at: new Date(c.created_at).toISOString(),
+        }));
+      }
+    } catch (err) {
+      console.error("[STORE] getCoupons db error:", err);
+    }
+  }
   if (onlyActive) {
     return db.coupons.filter((c) => c.is_active);
   }
@@ -2008,6 +2252,28 @@ export async function getCoupons(onlyActive = false): Promise<Coupon[]> {
 export async function getCouponByCode(code: string): Promise<Coupon | null> {
   if (!code || typeof code !== "string") return null;
   const norm = code.trim().toUpperCase();
+  if (sql) {
+    try {
+      const rows = await sql.query(`SELECT * FROM coupons WHERE UPPER(code) = $1 LIMIT 1;`, [norm]);
+      if (rows && rows.length > 0) {
+        const c = rows[0];
+        return {
+          id: String(c.id),
+          code: c.code,
+          description: c.description || "",
+          discount_type: c.discount_type,
+          discount_value: Number(c.discount_value),
+          min_order_amount: Number(c.min_order_amount || 0),
+          max_discount_amount: c.max_discount_amount ? Number(c.max_discount_amount) : undefined,
+          free_delivery: Boolean(c.free_delivery || c.discount_type === "free_delivery" || c.code === "FREEDEL"),
+          is_active: Boolean(c.is_active),
+          created_at: new Date(c.created_at).toISOString(),
+        };
+      }
+    } catch (err) {
+      console.error("[STORE] getCouponByCode db error:", err);
+    }
+  }
   const c = db.coupons.find((x) => x.code.toUpperCase() === norm);
   return c ? { ...c } : null;
 }
@@ -2019,24 +2285,50 @@ export async function createCoupon(data: {
   discount_value: number;
   min_order_amount: number;
   max_discount_amount?: number;
+  free_delivery?: boolean;
   is_active?: boolean;
 }): Promise<{ success: boolean; coupon?: Coupon; error?: string }> {
   const normalized = data.code.trim().toUpperCase();
-  if (db.coupons.some((c) => c.code.toUpperCase() === normalized)) {
+  const existing = await getCouponByCode(normalized);
+  if (existing) {
     return { success: false, error: "Coupon code already exists." };
   }
 
+  const id = crypto.randomUUID();
+  const isFreeDel = Boolean(data.free_delivery || data.discount_type === "free_delivery" || normalized === "FREEDEL");
   const newCoupon: Coupon = {
-    id: `coup-${Date.now()}`,
+    id,
     code: normalized,
     description: data.description.trim(),
     discount_type: data.discount_type,
     discount_value: Number(data.discount_value) || 0,
     min_order_amount: Number(data.min_order_amount) || 0,
     max_discount_amount: data.max_discount_amount ? Number(data.max_discount_amount) : undefined,
+    free_delivery: isFreeDel,
     is_active: data.is_active ?? true,
     created_at: new Date().toISOString(),
   };
+
+  if (sql) {
+    try {
+      await sql.query(`
+        INSERT INTO coupons (id, code, description, discount_type, discount_value, min_order_amount, max_discount_amount, free_delivery, is_active, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW());
+      `, [
+        id,
+        newCoupon.code,
+        newCoupon.description,
+        newCoupon.discount_type,
+        newCoupon.discount_value,
+        newCoupon.min_order_amount,
+        newCoupon.max_discount_amount || null,
+        newCoupon.free_delivery,
+        newCoupon.is_active,
+      ]);
+    } catch (err) {
+      console.error("[STORE] createCoupon db error:", err);
+    }
+  }
 
   db.coupons.unshift(newCoupon);
   return { success: true, coupon: newCoupon };
@@ -2046,6 +2338,65 @@ export async function updateCoupon(
   id: string,
   updates: Partial<Coupon>
 ): Promise<{ success: boolean; coupon?: Coupon; error?: string }> {
+  if (sql) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      if (isUuid) {
+        if (updates.code) {
+          const norm = updates.code.trim().toUpperCase();
+          const dup = await sql.query(`SELECT id FROM coupons WHERE UPPER(code) = $1 AND id <> $2 LIMIT 1;`, [norm, id]);
+          if (dup && dup.length > 0) {
+            return { success: false, error: "Another coupon with this code already exists." };
+          }
+        }
+        await sql.query(`
+          UPDATE coupons SET
+            code = COALESCE($1, code),
+            description = COALESCE($2, description),
+            discount_type = COALESCE($3, discount_type),
+            discount_value = COALESCE($4, discount_value),
+            min_order_amount = COALESCE($5, min_order_amount),
+            max_discount_amount = $6,
+            free_delivery = COALESCE($7, free_delivery),
+            is_active = COALESCE($8, is_active)
+          WHERE id = $9;
+        `, [
+          updates.code ? updates.code.trim().toUpperCase() : null,
+          updates.description !== undefined ? updates.description.trim() : null,
+          updates.discount_type || null,
+          updates.discount_value !== undefined ? Number(updates.discount_value) : null,
+          updates.min_order_amount !== undefined ? Number(updates.min_order_amount) : null,
+          updates.max_discount_amount !== undefined ? Number(updates.max_discount_amount) : null,
+          updates.free_delivery !== undefined ? updates.free_delivery : null,
+          updates.is_active !== undefined ? updates.is_active : null,
+          id,
+        ]);
+
+        const updated = await sql.query(`SELECT * FROM coupons WHERE id = $1 LIMIT 1;`, [id]);
+        if (updated && updated.length > 0) {
+          const c = updated[0];
+          const mapped: Coupon = {
+            id: String(c.id),
+            code: c.code,
+            description: c.description,
+            discount_type: c.discount_type,
+            discount_value: Number(c.discount_value),
+            min_order_amount: Number(c.min_order_amount),
+            max_discount_amount: c.max_discount_amount ? Number(c.max_discount_amount) : undefined,
+            free_delivery: Boolean(c.free_delivery || c.discount_type === "free_delivery" || c.code === "FREEDEL"),
+            is_active: Boolean(c.is_active),
+            created_at: new Date(c.created_at).toISOString(),
+          };
+          const memIdx = db.coupons.findIndex((cp) => cp.id === id);
+          if (memIdx !== -1) db.coupons[memIdx] = mapped;
+          return { success: true, coupon: mapped };
+        }
+      }
+    } catch (err) {
+      console.error("[STORE] updateCoupon db error:", err);
+    }
+  }
+
   const coupon = db.coupons.find((c) => c.id === id);
   if (!coupon) return { success: false, error: "Coupon not found" };
 
@@ -2061,18 +2412,29 @@ export async function updateCoupon(
   if (updates.discount_value !== undefined) coupon.discount_value = Number(updates.discount_value);
   if (updates.min_order_amount !== undefined) coupon.min_order_amount = Number(updates.min_order_amount);
   if (updates.max_discount_amount !== undefined) coupon.max_discount_amount = Number(updates.max_discount_amount);
+  if (updates.free_delivery !== undefined) coupon.free_delivery = updates.free_delivery;
   if (updates.is_active !== undefined) coupon.is_active = updates.is_active;
 
   return { success: true, coupon: { ...coupon } };
 }
 
 export async function deleteCoupon(id: string): Promise<boolean> {
+  if (sql) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      if (isUuid) {
+        await sql.query(`DELETE FROM coupons WHERE id = $1;`, [id]);
+      }
+    } catch (err) {
+      console.error("[STORE] deleteCoupon db error:", err);
+    }
+  }
   const idx = db.coupons.findIndex((c) => c.id === id);
   if (idx !== -1) {
     db.coupons.splice(idx, 1);
     return true;
   }
-  return false;
+  return true;
 }
 
 export async function validateAndCalculateCoupon(
@@ -2104,8 +2466,9 @@ export async function validateAndCalculateCoupon(
     };
   }
 
-  // Free delivery coupon (FREEDEL / discount_type: "free_delivery") is only for NEW users on 1st order!
-  if (coupon.discount_type === "free_delivery" || coupon.code.toUpperCase() === "FREEDEL") {
+  // ONLY the specific promo code FREEDEL is strictly restricted to new users on their 1st order!
+  // Any other free delivery coupon created by admin is fully valid for all customers!
+  if (coupon.code.toUpperCase() === "FREEDEL") {
     let isReturning = false;
     const cleanPhone = (customerPhone || "").replace(/[^0-9]/g, "");
     const cleanEmail = (customerEmail || "").trim().toLowerCase();
@@ -2148,27 +2511,40 @@ export async function validateAndCalculateCoupon(
     }
   }
 
+  const offersFreeDelivery = Boolean(
+    coupon.free_delivery || coupon.discount_type === "free_delivery" || coupon.code.toUpperCase() === "FREEDEL"
+  );
   let discount = 0;
-  let newDeliveryCharge = deliveryCharge;
+  let newDeliveryCharge = offersFreeDelivery ? 0 : deliveryCharge;
 
-  if (coupon.discount_type === "free_delivery") {
-    discount = deliveryCharge;
-    newDeliveryCharge = 0;
-  } else if (coupon.discount_type === "percentage") {
+  // Calculate discount on subtotal if coupon has discount value
+  if (coupon.discount_type === "percentage" && coupon.discount_value > 0) {
     discount = Math.round((subtotal * coupon.discount_value) / 100);
     if (coupon.max_discount_amount && coupon.max_discount_amount > 0) {
       discount = Math.min(coupon.max_discount_amount, discount);
     }
-  } else if (coupon.discount_type === "flat_amount") {
+  } else if (coupon.discount_type === "flat_amount" && coupon.discount_value > 0) {
     discount = Math.min(subtotal, coupon.discount_value);
+  }
+
+  let successMsg = `Coupon ${coupon.code} applied!`;
+  if (offersFreeDelivery && discount > 0) {
+    successMsg = `Coupon ${coupon.code} applied: ₹${discount} discount + FREE Delivery!`;
+  } else if (offersFreeDelivery) {
+    successMsg = `Coupon ${coupon.code} applied: FREE Delivery!`;
+  } else if (discount > 0) {
+    successMsg = `Coupon ${coupon.code} applied! Saved ₹${discount}.`;
   }
 
   return {
     valid: true,
-    coupon,
+    coupon: {
+      ...coupon,
+      free_delivery: offersFreeDelivery,
+    },
     discountAmount: discount,
     finalDeliveryCharge: newDeliveryCharge,
-    message: `Coupon ${coupon.code} applied! Saved ₹${discount}.`,
+    message: successMsg,
   };
 }
 

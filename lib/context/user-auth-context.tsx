@@ -83,51 +83,56 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
   const openAuthModal = useCallback(() => setIsAuthModalOpen(true), []);
   const closeAuthModal = useCallback(() => setIsAuthModalOpen(false), []);
 
-  // Hydrate local session and check Neon Auth active session
+  // Hydrate local session and sync fresh profile from PostgreSQL
   useEffect(() => {
     async function initAuth() {
       try {
+        let activeEmail: string | null = null;
         const stored = localStorage.getItem(AUTH_STORAGE_KEY);
         if (stored) {
           const parsed = JSON.parse(stored);
           setUser(parsed);
+          if (parsed.email) activeEmail = parsed.email;
         }
 
-        // Check if there is an active session from Neon Auth
+        // Check customer session cookie if localStorage is empty (e.g. after browser reopen or update)
+        if (!activeEmail && typeof document !== "undefined") {
+          const cookieMatch = document.cookie.match(/mithaase_customer_session=([^;]+)/);
+          if (cookieMatch && cookieMatch[1]) {
+            activeEmail = decodeURIComponent(cookieMatch[1]);
+          }
+        }
+
+        // Check if there is an active session from Neon Auth / Google
         try {
           const session = await authClient.getSession();
           if (session?.data?.user?.email) {
-            const googleEmail = session.data.user.email;
-            // Fetch saved profile from database
-            const res = await fetch(`/api/auth/customer/google-sync?email=${encodeURIComponent(googleEmail)}`);
-            if (res.ok) {
-              const data = await res.json();
-              if (data.exists && data.customer) {
-                const updatedUser: CustomerUser = {
-                  email: data.customer.email,
-                  name: data.customer.name,
-                  phone: data.customer.phone,
-                  authProvider: "google",
-                  savedProfile: {
-                    customer_name: data.customer.name,
-                    customer_phone: data.customer.phone,
-                    delivery_address: data.customer.delivery_address,
-                    locality: data.customer.locality,
-                    landmark: data.customer.landmark,
-                    delivery_instructions: data.customer.delivery_instructions,
-                    latitude: data.customer.latitude,
-                    longitude: data.customer.longitude,
-                    map_url: data.customer.map_url,
-                    savedAt: data.customer.updated_at || data.customer.created_at,
-                  },
-                };
-                setUser(updatedUser);
-                localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updatedUser));
-              }
-            }
+            activeEmail = session.data.user.email;
           }
         } catch {
           // Neon Auth session check silent fallback
+        }
+
+        // Always sync the latest customer delivery profile from the database so it NEVER resets
+        if (activeEmail) {
+          try {
+            const res = await fetch(`/api/auth/customer/profile?email=${encodeURIComponent(activeEmail)}`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data.success && data.user) {
+                const refreshedUser: CustomerUser = {
+                  email: data.user.email,
+                  name: data.user.name,
+                  phone: data.user.phone,
+                  savedProfile: data.user.savedProfile,
+                };
+                setUser(refreshedUser);
+                localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(refreshedUser));
+              }
+            }
+          } catch (e) {
+            console.warn("Could not sync customer profile from DB:", e);
+          }
         }
       } catch {
         // ignore
@@ -183,7 +188,7 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
 
       const verifiedUser: CustomerUser = {
         ...data.user,
-        savedProfile: existingProfile,
+        savedProfile: data.user?.savedProfile || existingProfile,
       };
 
       setUser(verifiedUser);
@@ -332,9 +337,9 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
 
   const saveProfile = useCallback((profile: SavedDeliveryProfile) => {
     setUser((prev) => {
-      if (!prev) return prev;
+      const activeEmail = prev?.email || (typeof window !== "undefined" ? sessionStorage.getItem("mithaase_user_email") || "" : "");
       const updated: CustomerUser = {
-        ...prev,
+        ...(prev || { email: activeEmail }),
         savedProfile: profile,
       };
       try {
@@ -342,6 +347,27 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
       } catch {
         // ignore
       }
+
+      // Persist directly to PostgreSQL database
+      if (activeEmail || profile.customer_phone) {
+        fetch("/api/auth/customer/profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: activeEmail,
+            phone: profile.customer_phone,
+            name: profile.customer_name,
+            delivery_address: profile.delivery_address,
+            locality: profile.locality,
+            landmark: profile.landmark,
+            delivery_instructions: profile.delivery_instructions,
+            latitude: profile.latitude,
+            longitude: profile.longitude,
+            map_url: profile.map_url,
+          }),
+        }).catch((err) => console.warn("Error auto-persisting profile to DB:", err));
+      }
+
       return updated;
     });
   }, []);
