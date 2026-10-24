@@ -1,1 +1,3 @@
-export { default, dynamic, revalidate } from "../../order-confirmation/[orderId]/page";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export { default } from "../../order-confirmation/[orderId]/page";
