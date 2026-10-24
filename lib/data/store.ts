@@ -240,6 +240,28 @@ export async function getCategories(): Promise<Category[]> {
   if (settings.store_shutoff || settings.store_status === "shutoff") {
     return [];
   }
+  if (sql) {
+    try {
+      const rows = await sql.query(`
+        SELECT id, name, slug, description, display_order, is_active 
+        FROM categories 
+        WHERE is_active = true 
+        ORDER BY display_order ASC;
+      `);
+      if (rows && rows.length > 0) {
+        return rows.map((r: any) => ({
+          id: r.id,
+          name: r.name,
+          slug: r.slug,
+          description: r.description || "",
+          display_order: Number(r.display_order) || 0,
+          is_active: Boolean(r.is_active),
+        }));
+      }
+    } catch (err) {
+      console.error("[STORE] getCategories db error:", err);
+    }
+  }
   return [...db.categories].sort((a, b) => a.display_order - b.display_order);
 }
 
@@ -249,6 +271,71 @@ export async function getProducts(categoryId?: string): Promise<Product[]> {
   if (settings.store_shutoff || settings.store_status === "shutoff") {
     return [];
   }
+  if (sql) {
+    try {
+      const prods = await sql.query(`
+        SELECT 
+          p.id, p.name, p.slug, p.description, p.category_id,
+          c.name as category_name,
+          p.image_url, p.is_active, p.is_featured, p.badge,
+          p.is_seasonal_special, p.special_start_date, p.special_end_date,
+          p.created_at, p.updated_at
+        FROM products p
+        LEFT JOIN categories c ON p.category_id = c.id
+        WHERE p.is_active = true
+        ORDER BY p.created_at ASC;
+      `);
+      const variants = await sql.query(`
+        SELECT 
+          id, product_id, variant_name, unit, price,
+          stock_quantity, reserved_quantity, low_stock_threshold, is_active
+        FROM product_variants
+        WHERE is_active = true
+        ORDER BY price ASC;
+      `);
+
+      if (prods && prods.length > 0) {
+        const mapped: Product[] = prods.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          slug: p.slug,
+          description: p.description || "",
+          category_id: p.category_id,
+          category_name: p.category_name || "Mithai",
+          image_url: p.image_url,
+          is_active: Boolean(p.is_active),
+          is_featured: Boolean(p.is_featured),
+          badge: p.badge || undefined,
+          is_seasonal_special: Boolean(p.is_seasonal_special),
+          special_start_date: p.special_start_date ? new Date(p.special_start_date).toISOString() : undefined,
+          special_end_date: p.special_end_date ? new Date(p.special_end_date).toISOString() : undefined,
+          variants: variants
+            .filter((v: any) => v.product_id === p.id)
+            .map((v: any) => ({
+              id: v.id,
+              product_id: p.id,
+              variant_name: v.variant_name,
+              unit: v.unit,
+              price: Number(v.price),
+              stock_quantity: Number(v.stock_quantity),
+              low_stock_threshold: Number(v.low_stock_threshold),
+              is_active: Boolean(v.is_active),
+            })),
+          created_at: p.created_at ? new Date(p.created_at).toISOString() : new Date().toISOString(),
+          updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : new Date().toISOString(),
+        }));
+
+        db.products = mapped;
+        if (categoryId) {
+          return mapped.filter((p) => p.category_id === categoryId);
+        }
+        return mapped;
+      }
+    } catch (err) {
+      console.error("[STORE] getProducts db error:", err);
+    }
+  }
+
   let list = db.products.filter((p) => p.is_active);
   if (categoryId) {
     list = list.filter((p) => p.category_id === categoryId);
@@ -257,26 +344,246 @@ export async function getProducts(categoryId?: string): Promise<Product[]> {
 }
 
 export async function getAllProductsAdmin(): Promise<Product[]> {
+  if (sql) {
+    try {
+      const prods = await sql.query(`
+        SELECT 
+          p.id, p.name, p.slug, p.description, p.category_id,
+          c.name as category_name,
+          p.image_url, p.is_active, p.is_featured, p.badge,
+          p.is_seasonal_special, p.special_start_date, p.special_end_date,
+          p.created_at, p.updated_at
+        FROM products p
+        LEFT JOIN categories c ON p.category_id = c.id
+        ORDER BY p.created_at ASC;
+      `);
+      const variants = await sql.query(`
+        SELECT 
+          id, product_id, variant_name, unit, price,
+          stock_quantity, reserved_quantity, low_stock_threshold, is_active
+        FROM product_variants
+        ORDER BY price ASC;
+      `);
+
+      if (prods && prods.length > 0) {
+        const mapped: Product[] = prods.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          slug: p.slug,
+          description: p.description || "",
+          category_id: p.category_id,
+          category_name: p.category_name || "Mithai",
+          image_url: p.image_url,
+          is_active: Boolean(p.is_active),
+          is_featured: Boolean(p.is_featured),
+          badge: p.badge || undefined,
+          is_seasonal_special: Boolean(p.is_seasonal_special),
+          special_start_date: p.special_start_date ? new Date(p.special_start_date).toISOString() : undefined,
+          special_end_date: p.special_end_date ? new Date(p.special_end_date).toISOString() : undefined,
+          variants: variants
+            .filter((v: any) => v.product_id === p.id)
+            .map((v: any) => ({
+              id: v.id,
+              product_id: p.id,
+              variant_name: v.variant_name,
+              unit: v.unit,
+              price: Number(v.price),
+              stock_quantity: Number(v.stock_quantity),
+              low_stock_threshold: Number(v.low_stock_threshold),
+              is_active: Boolean(v.is_active),
+            })),
+          created_at: p.created_at ? new Date(p.created_at).toISOString() : new Date().toISOString(),
+          updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : new Date().toISOString(),
+        }));
+
+        db.products = mapped;
+        return mapped;
+      }
+    } catch (err) {
+      console.error("[STORE] getAllProductsAdmin db error:", err);
+    }
+  }
   return [...db.products];
 }
 
 export async function getProductBySlug(slug: string): Promise<Product | null> {
+  if (sql) {
+    try {
+      const prods = await sql.query(`
+        SELECT 
+          p.id, p.name, p.slug, p.description, p.category_id,
+          c.name as category_name,
+          p.image_url, p.is_active, p.is_featured, p.badge,
+          p.is_seasonal_special, p.special_start_date, p.special_end_date,
+          p.created_at, p.updated_at
+        FROM products p
+        LEFT JOIN categories c ON p.category_id = c.id
+        WHERE p.slug = $1
+        LIMIT 1;
+      `, [slug]);
+
+      if (prods && prods.length > 0) {
+        const p = prods[0];
+        const variants = await sql.query(`
+          SELECT id, product_id, variant_name, unit, price, stock_quantity, low_stock_threshold, is_active
+          FROM product_variants
+          WHERE product_id = $1
+          ORDER BY price ASC;
+        `, [p.id]);
+
+        return {
+          id: p.id,
+          name: p.name,
+          slug: p.slug,
+          description: p.description || "",
+          category_id: p.category_id,
+          category_name: p.category_name || "Mithai",
+          image_url: p.image_url,
+          is_active: Boolean(p.is_active),
+          is_featured: Boolean(p.is_featured),
+          badge: p.badge || undefined,
+          is_seasonal_special: Boolean(p.is_seasonal_special),
+          special_start_date: p.special_start_date ? new Date(p.special_start_date).toISOString() : undefined,
+          special_end_date: p.special_end_date ? new Date(p.special_end_date).toISOString() : undefined,
+          variants: variants.map((v: any) => ({
+            id: v.id,
+            product_id: p.id,
+            variant_name: v.variant_name,
+            unit: v.unit,
+            price: Number(v.price),
+            stock_quantity: Number(v.stock_quantity),
+            low_stock_threshold: Number(v.low_stock_threshold),
+            is_active: Boolean(v.is_active),
+          })),
+          created_at: p.created_at ? new Date(p.created_at).toISOString() : new Date().toISOString(),
+          updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : new Date().toISOString(),
+        };
+      }
+    } catch (err) {
+      console.error("[STORE] getProductBySlug db error:", err);
+    }
+  }
   const prod = db.products.find((p) => p.slug === slug);
   return prod ? { ...prod } : null;
 }
 
 export async function getProductById(id: string): Promise<Product | null> {
-  const prod = db.products.find((p) => p.id === id);
+  if (sql) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      const prods = isUuid
+        ? await sql.query(`
+            SELECT p.*, c.name as category_name
+            FROM products p
+            LEFT JOIN categories c ON p.category_id = c.id
+            WHERE p.id = $1 LIMIT 1;
+          `, [id])
+        : await sql.query(`
+            SELECT p.*, c.name as category_name
+            FROM products p
+            LEFT JOIN categories c ON p.category_id = c.id
+            WHERE p.slug = $1 LIMIT 1;
+          `, [id]);
+
+      if (prods && prods.length > 0) {
+        const p = prods[0];
+        const variants = await sql.query(`
+          SELECT id, product_id, variant_name, unit, price, stock_quantity, low_stock_threshold, is_active
+          FROM product_variants
+          WHERE product_id = $1
+          ORDER BY price ASC;
+        `, [p.id]);
+
+        return {
+          id: p.id,
+          name: p.name,
+          slug: p.slug,
+          description: p.description || "",
+          category_id: p.category_id,
+          category_name: p.category_name || "Mithai",
+          image_url: p.image_url,
+          is_active: Boolean(p.is_active),
+          is_featured: Boolean(p.is_featured),
+          badge: p.badge || undefined,
+          is_seasonal_special: Boolean(p.is_seasonal_special),
+          special_start_date: p.special_start_date ? new Date(p.special_start_date).toISOString() : undefined,
+          special_end_date: p.special_end_date ? new Date(p.special_end_date).toISOString() : undefined,
+          variants: variants.map((v: any) => ({
+            id: v.id,
+            product_id: p.id,
+            variant_name: v.variant_name,
+            unit: v.unit,
+            price: Number(v.price),
+            stock_quantity: Number(v.stock_quantity),
+            low_stock_threshold: Number(v.low_stock_threshold),
+            is_active: Boolean(v.is_active),
+          })),
+          created_at: p.created_at ? new Date(p.created_at).toISOString() : new Date().toISOString(),
+          updated_at: p.updated_at ? new Date(p.updated_at).toISOString() : new Date().toISOString(),
+        };
+      }
+    } catch (err) {
+      console.error("[STORE] getProductById db error:", err);
+    }
+  }
+  const prod = db.products.find((p) => p.id === id || p.slug === id);
   return prod ? { ...prod } : null;
 }
 
 export async function createProduct(input: Partial<Product>): Promise<Product> {
-  const id = `prod-${Date.now()}`;
   const slug = (input.name || "sweet")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 
+  if (sql) {
+    try {
+      const res = await sql.query(`
+        INSERT INTO products (name, slug, description, category_id, image_url, is_active, is_featured, badge)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING id;
+      `, [
+        input.name || "Special Sweets",
+        slug,
+        input.description || "",
+        input.category_id,
+        input.image_url || "/images/hero_diwali_sweets.jpg",
+        input.is_active ?? true,
+        input.is_featured ?? false,
+        input.badge || null,
+      ]);
+
+      const prodId = res[0].id;
+
+      if (input.variants && input.variants.length > 0) {
+        for (const v of input.variants) {
+          await sql.query(`
+            INSERT INTO product_variants (product_id, variant_name, unit, price, stock_quantity, low_stock_threshold, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6, $7);
+          `, [
+            prodId,
+            v.variant_name || "500g",
+            v.unit || "Box",
+            Number(v.price) || 0,
+            Number(v.stock_quantity) || 0,
+            Number(v.low_stock_threshold) || 5,
+            v.is_active ?? true,
+          ]);
+        }
+      }
+
+      const created = await getProductById(prodId);
+      if (created) {
+        db.products.unshift(created);
+        persistProductsToDisk(db.products);
+        return created;
+      }
+    } catch (err) {
+      console.error("[STORE] createProduct db error:", err);
+    }
+  }
+
+  const id = `prod-${Date.now()}`;
   const newProd: Product = {
     id,
     name: input.name || "Special Sweets",
@@ -308,7 +615,103 @@ export async function createProduct(input: Partial<Product>): Promise<Product> {
 }
 
 export async function updateProduct(id: string, updates: Partial<Product>): Promise<Product | null> {
-  const index = db.products.findIndex((p) => p.id === id);
+  if (sql) {
+    try {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      let prodId = id;
+
+      if (isUuid) {
+        await sql.query(`
+          UPDATE products SET
+            name = COALESCE($2, name),
+            description = COALESCE($3, description),
+            image_url = COALESCE($4, image_url),
+            badge = COALESCE($5, badge),
+            updated_at = NOW()
+          WHERE id = $1;
+        `, [
+          id,
+          updates.name || null,
+          updates.description || null,
+          updates.image_url || null,
+          updates.badge !== undefined ? updates.badge : null,
+        ]);
+      } else {
+        const check = await sql.query(`SELECT id FROM products WHERE slug = $1 OR name = $1 LIMIT 1;`, [id]);
+        if (check && check.length > 0) {
+          prodId = check[0].id;
+          await sql.query(`
+            UPDATE products SET
+              name = COALESCE($2, name),
+              description = COALESCE($3, description),
+              image_url = COALESCE($4, image_url),
+              badge = COALESCE($5, badge),
+              updated_at = NOW()
+            WHERE id = $1;
+          `, [
+            prodId,
+            updates.name || null,
+            updates.description || null,
+            updates.image_url || null,
+            updates.badge !== undefined ? updates.badge : null,
+          ]);
+        }
+      }
+
+      // Update variant prices and quantities directly in the database table!
+      if (updates.variants && Array.isArray(updates.variants)) {
+        for (const v of updates.variants) {
+          const isVarUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.id);
+          if (isVarUuid) {
+            await sql.query(`
+              UPDATE product_variants SET
+                price = $1,
+                stock_quantity = $2,
+                low_stock_threshold = $3,
+                updated_at = NOW()
+              WHERE id = $4;
+            `, [
+              Number(v.price),
+              Number(v.stock_quantity),
+              Number(v.low_stock_threshold) || 5,
+              v.id,
+            ]);
+          } else {
+            await sql.query(`
+              UPDATE product_variants SET
+                price = $1,
+                stock_quantity = $2,
+                low_stock_threshold = $3,
+                updated_at = NOW()
+              WHERE product_id = $4 AND variant_name = $5;
+            `, [
+              Number(v.price),
+              Number(v.stock_quantity),
+              Number(v.low_stock_threshold) || 5,
+              prodId,
+              v.variant_name,
+            ]);
+          }
+        }
+      }
+
+      const fresh = await getProductById(prodId);
+      if (fresh) {
+        const idx = db.products.findIndex((p) => p.id === prodId || p.slug === fresh.slug || p.id === id);
+        if (idx !== -1) {
+          db.products[idx] = fresh;
+        } else {
+          db.products.unshift(fresh);
+        }
+        persistProductsToDisk(db.products);
+        return fresh;
+      }
+    } catch (err) {
+      console.error("[STORE] updateProduct db error:", err);
+    }
+  }
+
+  const index = db.products.findIndex((p) => p.id === id || p.slug === id);
   if (index === -1) return null;
 
   db.products[index] = {
@@ -336,6 +739,21 @@ export async function adjustVariantStock(
         return { success: false, newStock: variant.stock_quantity, error: "Stock cannot become negative" };
       }
       variant.stock_quantity = nextStock;
+
+      if (sql) {
+        try {
+          const isVarUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(variantId);
+          if (isVarUuid) {
+            await sql.query(`
+              UPDATE product_variants 
+              SET stock_quantity = $1, updated_at = NOW() 
+              WHERE id = $2;
+            `, [nextStock, variantId]);
+          }
+        } catch (err) {
+          console.error("[STORE] adjustVariantStock db error:", err);
+        }
+      }
       
       const movement: InventoryMovement = {
         id: `im-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -407,11 +825,13 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
     };
   }
 
+  const allProducts = await getAllProductsAdmin();
+
   // 2. Validate maximum total order weight (Max 20 kg standard limit)
   let totalOrderWeightKg = 0;
   for (const item of params.items) {
-    const prod = db.products.find((p) => p.id === item.productId);
-    const vr = prod?.variants.find((v) => v.id === item.variantId);
+    const prod = allProducts.find((p) => p.id === item.productId || p.slug === item.productId);
+    const vr = prod?.variants.find((v) => v.id === item.variantId || v.variant_name === item.variantId);
     if (vr) {
       totalOrderWeightKg += parseItemWeightInKg(vr.variant_name) * item.quantity;
     }
@@ -430,7 +850,7 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
   const stockDeductions: Array<{ variant: ProductVariant; product: Product; qty: number }> = [];
 
   for (const item of params.items) {
-    const product = db.products.find((p) => p.id === item.productId && p.is_active);
+    const product = allProducts.find((p) => (p.id === item.productId || p.slug === item.productId) && p.is_active);
     if (!product) {
       return { success: false, error: `Product not found or unavailable.` };
     }
@@ -446,7 +866,7 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
       }
     }
 
-    const variant = product.variants.find((v) => v.id === item.variantId && v.is_active);
+    const variant = product.variants.find((v) => (v.id === item.variantId || v.variant_name === item.variantId) && v.is_active);
     if (!variant) {
       return { success: false, error: `Selected portion/variant for ${product.name} is unavailable.` };
     }
@@ -954,11 +1374,12 @@ export interface CreateOfflineSaleParams {
 
 export async function createOfflineSale(params: CreateOfflineSaleParams): Promise<{ success: boolean; sale?: OfflineSale; error?: string }> {
   let subtotal = 0;
-  const saleItems = [];
+  const saleItems: any[] = [];
+  const allProducts = await getAllProductsAdmin();
 
   for (const item of params.items) {
-    const product = db.products.find((p) => p.id === item.productId);
-    const variant = product?.variants.find((v) => v.id === item.variantId);
+    const product = allProducts.find((p) => p.id === item.productId || p.slug === item.productId);
+    const variant = product?.variants.find((v) => v.id === item.variantId || v.variant_name === item.variantId);
     if (!product || !variant) {
       return { success: false, error: "Invalid product item" };
     }
