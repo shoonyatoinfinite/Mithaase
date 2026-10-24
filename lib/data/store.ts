@@ -1173,6 +1173,13 @@ export async function getOrders(
           upi_screenshot: o.upi_screenshot || undefined,
           delivery_proof_photo: o.delivery_proof_photo || undefined,
           pickup_photo: o.pickup_photo || undefined,
+          delivery_queued: Boolean(o.delivery_queued),
+          delivery_group_id: o.delivery_group_id || undefined,
+          delivered_at: o.delivered_at ? new Date(o.delivered_at).toISOString() : undefined,
+          delivered_lat: o.delivered_lat ? Number(o.delivered_lat) : undefined,
+          delivered_lng: o.delivered_lng ? Number(o.delivered_lng) : undefined,
+          delivered_location_name: o.delivered_location_name || undefined,
+          delivered_map_url: o.delivered_map_url || undefined,
           latitude: o.latitude ? Number(o.latitude) : undefined,
           longitude: o.longitude ? Number(o.longitude) : undefined,
           map_url: o.map_url || undefined,
@@ -1299,6 +1306,13 @@ export async function getOrderById(id: string): Promise<Order | null> {
           upi_screenshot: o.upi_screenshot || undefined,
           delivery_proof_photo: o.delivery_proof_photo || undefined,
           pickup_photo: o.pickup_photo || undefined,
+          delivery_queued: Boolean(o.delivery_queued),
+          delivery_group_id: o.delivery_group_id || undefined,
+          delivered_at: o.delivered_at ? new Date(o.delivered_at).toISOString() : undefined,
+          delivered_lat: o.delivered_lat ? Number(o.delivered_lat) : undefined,
+          delivered_lng: o.delivered_lng ? Number(o.delivered_lng) : undefined,
+          delivered_location_name: o.delivered_location_name || undefined,
+          delivered_map_url: o.delivered_map_url || undefined,
           latitude: o.latitude ? Number(o.latitude) : undefined,
           longitude: o.longitude ? Number(o.longitude) : undefined,
           map_url: o.map_url || undefined,
@@ -1462,8 +1476,9 @@ export async function updateOrderStatus(
           delivered_location_name = COALESCE($10, delivered_location_name),
           delivered_map_url = COALESCE($11, delivered_map_url),
           payment_status = $12,
+          pickup_photo = COALESCE($14, pickup_photo),
           updated_at = NOW()
-        WHERE id = $13 OR order_number = $13;`,
+        WHERE LOWER(id) = LOWER($13) OR LOWER(order_number) = LOWER($13) OR id = $13 OR order_number = $13;`,
         [
           order.order_status,
           order.cancellation_reason || null,
@@ -1478,11 +1493,20 @@ export async function updateOrderStatus(
           order.delivered_map_url || null,
           order.payment_status,
           orderId,
+          order.pickup_photo || null,
         ]
       );
     } catch (err) {
       console.error("[STORE] updateOrderStatus sql error:", err);
     }
+  }
+
+  // Update in-memory orders array
+  const memIdx = db.orders.findIndex((o) => o.id === order.id || o.order_number === order.order_number);
+  if (memIdx !== -1) {
+    db.orders[memIdx] = { ...order };
+  } else {
+    db.orders.unshift({ ...order });
   }
 
   return { success: true, order };

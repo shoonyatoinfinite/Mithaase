@@ -43,8 +43,10 @@ export async function GET(req: Request) {
       return NextResponse.json(orders);
     }
 
+    const isRiderRequest = hasRiderSession || req.headers.get("x-role") === "rider" || searchParams.get("role") === "rider";
+
     // 2. If querying all orders without email (Staff Admin/Rider):
-    if (!hasAdminSession && !hasRiderSession) {
+    if (!hasAdminSession && !hasRiderSession && !isRiderRequest) {
       // If customer is querying without email param, return only their own orders if authenticated
       if (authenticatedCustomerEmail || authHeaderEmail) {
         const userEmail = authenticatedCustomerEmail || authHeaderEmail;
@@ -60,8 +62,6 @@ export async function GET(req: Request) {
     }
 
     const orders = await getOrders(status, search, undefined);
-
-    const isRiderRequest = hasRiderSession || req.headers.get("x-role") === "rider" || searchParams.get("role") === "rider";
 
     // If request comes from a rider session (and not admin):
     // 1. Strictly filter out any orders that have not been packed & called by admin (e.g. pending, confirmed, preparing, or queued)
