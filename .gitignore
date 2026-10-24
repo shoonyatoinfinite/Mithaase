@@ -32,6 +32,7 @@
 scratch/
 .user_uploaded/
 .system_generated/
+lib/data/products-override.json
 
 # logs
 *.log

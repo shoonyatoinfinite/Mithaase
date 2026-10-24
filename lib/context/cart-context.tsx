@@ -1,10 +1,11 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
-import { CartItem } from "@/types";
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import { CartItem, Product } from "@/types";
 import { BulkOrderModal } from "@/components/cart/BulkOrderModal";
 import { CartReconciliationModal } from "@/components/cart/CartReconciliationModal";
 import { useUserAuth } from "@/lib/context/user-auth-context";
+import { useRealtime } from "@/lib/hooks/useRealtime";
 
 export const MAX_CART_WEIGHT_KG = 20;
 
@@ -68,6 +69,84 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       setIsHydrated(true);
     }
   }, []);
+
+  // Reconcile cart item prices against latest products from server
+  const syncCartPrices = useCallback(async () => {
+    try {
+      const res = await fetch("/api/products");
+      if (!res.ok) return;
+      const products: Product[] = await res.json();
+      setItems((prev) => {
+        let hasDiff = false;
+        const updated = prev.map((item) => {
+          const prod = products.find((p) => p.id === item.productId);
+          const vr = prod?.variants.find((v) => v.id === item.variantId);
+          if (
+            prod &&
+            vr &&
+            (vr.price !== item.price ||
+              vr.stock_quantity !== item.maxStock ||
+              vr.variant_name !== item.variantName ||
+              prod.name !== item.productName)
+          ) {
+            hasDiff = true;
+            return {
+              ...item,
+              price: Number(vr.price),
+              maxStock: Number(vr.stock_quantity),
+              variantName: vr.variant_name,
+              productName: prod.name,
+            };
+          }
+          return item;
+        });
+        return hasDiff ? updated : prev;
+      });
+    } catch {
+      // Ignore background sync errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isHydrated) {
+      syncCartPrices();
+    }
+  }, [isHydrated, syncCartPrices]);
+
+  // Hook into live product_updated real-time event to update cart prices live
+  useRealtime({
+    events: ["product_updated"],
+    onEvent: (payload) => {
+      if (payload.type === "product_updated" && payload.data) {
+        const prod = payload.data as Product;
+        setItems((prev) => {
+          let hasDiff = false;
+          const updated = prev.map((item) => {
+            if (item.productId === prod.id) {
+              const vr = prod.variants.find((v) => v.id === item.variantId);
+              if (
+                vr &&
+                (vr.price !== item.price ||
+                  vr.stock_quantity !== item.maxStock ||
+                  vr.variant_name !== item.variantName)
+              ) {
+                hasDiff = true;
+                return {
+                  ...item,
+                  price: Number(vr.price),
+                  maxStock: Number(vr.stock_quantity),
+                  variantName: vr.variant_name,
+                  productName: prod.name,
+                };
+              }
+            }
+            return item;
+          });
+          return hasDiff ? updated : prev;
+        });
+      }
+    },
+  });
 
   // Save to localStorage when items change
   useEffect(() => {

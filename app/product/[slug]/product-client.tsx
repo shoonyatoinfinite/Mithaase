@@ -1,19 +1,36 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Product, ProductVariant } from "@/types";
 import { useCart } from "@/lib/context/cart-context";
 import { useStoreSettings } from "@/lib/context/store-context";
 import { StoreClosedModal } from "@/components/storefront/StoreClosedModal";
 import { ShoppingBag, Check, Plus, Minus, Sparkles, AlertCircle, ArrowRight } from "lucide-react";
+import { useRealtime } from "@/lib/hooks/useRealtime";
 
 export function ProductDetailClient({ product }: { product: Product }) {
   const router = useRouter();
   const { addItem, items } = useCart();
   const { settings, isStoreClosed } = useStoreSettings();
   const [isStoreClosedModalOpen, setIsStoreClosedModalOpen] = useState(false);
-  const activeVariants = product.variants.filter((v) => v.is_active);
+  const [currentProduct, setCurrentProduct] = useState<Product>(product);
+
+  useEffect(() => {
+    setCurrentProduct(product);
+  }, [product]);
+
+  // Listen for real-time price & product updates
+  useRealtime({
+    events: ["product_updated"],
+    onEvent: (payload) => {
+      if (payload.type === "product_updated" && payload.data && payload.data.id === currentProduct.id) {
+        setCurrentProduct(payload.data as Product);
+      }
+    },
+  });
+
+  const activeVariants = currentProduct.variants.filter((v) => v.is_active);
   // Default to 1kg variant if available, otherwise fallback to first variant
   const default1kg =
     activeVariants.find(
@@ -33,10 +50,10 @@ export function ProductDetailClient({ product }: { product: Product }) {
 
   // Real-time cart reflection for this product
   const inCartItemForVariant = items.find(
-    (it) => it.productId === product.id && it.variantId === selectedVariant?.id
+    (it) => it.productId === currentProduct.id && it.variantId === selectedVariant?.id
   );
   const totalInCartForProduct = items
-    .filter((it) => it.productId === product.id)
+    .filter((it) => it.productId === currentProduct.id)
     .reduce((sum, it) => sum + it.quantity, 0);
 
   const isOutOfStock = !selectedVariant || selectedVariant.stock_quantity <= 0;
@@ -49,13 +66,13 @@ export function ProductDetailClient({ product }: { product: Product }) {
     if (!selectedVariant || isOutOfStock) return;
     addItem(
       {
-        productId: product.id,
+        productId: currentProduct.id,
         variantId: selectedVariant.id,
-        productName: product.name,
+        productName: currentProduct.name,
         variantName: selectedVariant.variant_name,
         unit: selectedVariant.unit,
         price: selectedVariant.price,
-        imageUrl: product.image_url,
+        imageUrl: currentProduct.image_url,
         maxStock: selectedVariant.stock_quantity,
       },
       quantity
@@ -78,21 +95,21 @@ export function ProductDetailClient({ product }: { product: Product }) {
       {/* Category & Badge */}
       <div className="flex items-center gap-2 mb-3">
         <span className="text-xs font-bold uppercase tracking-wider text-[#D4AF37]">
-          {product.category_name || "Mithai"}
+          {currentProduct.category_name || "Mithai"}
         </span>
-        {product.badge && (
+        {currentProduct.badge && (
           <span className="px-2.5 py-0.5 rounded-full bg-[#881337] text-[#F5D061] text-[10px] font-bold uppercase tracking-wider">
-            {product.badge}
+            {currentProduct.badge}
           </span>
         )}
       </div>
 
       <h1 className="text-3xl sm:text-5xl font-serif font-black text-[#FFF8EE] mb-4">
-        {product.name}
+        {currentProduct.name}
       </h1>
 
       <p className="text-sm sm:text-base text-[#D3BEB0] leading-relaxed mb-6">
-        {product.description}
+        {currentProduct.description}
       </p>
 
       {/* Variant Selector */}
@@ -112,7 +129,7 @@ export function ProductDetailClient({ product }: { product: Product }) {
             {activeVariants.map((v) => {
               const isSelected = selectedVariantId === v.id;
               const inCartQtyForV = items.find(
-                (it) => it.productId === product.id && it.variantId === v.id
+                (it) => it.productId === currentProduct.id && it.variantId === v.id
               )?.quantity;
               return (
                 <button

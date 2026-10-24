@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { Product } from "@/types";
 import { useCart } from "@/lib/context/cart-context";
 import { Diya } from "@/components/animations/Diya";
 import { Sparkles, ShoppingBag, Flame, Clock, Gift, Check } from "lucide-react";
+import { useRealtime } from "@/lib/hooks/useRealtime";
 
 interface DiwaliSpecialsProps {
   products: Product[];
@@ -15,10 +16,33 @@ interface DiwaliSpecialsProps {
 export function DiwaliSpecials({ products }: DiwaliSpecialsProps) {
   const { addItem, items } = useCart();
   const [addedVariantId, setAddedVariantId] = useState<string | null>(null);
+  const [productList, setProductList] = useState<Product[]>(products);
 
-  // Find Hamper & Paneer Sabji
-  const hamper = products.find((p) => p.slug === "shubh-deepawali-royal-hamper") || products[0];
-  const paneerSabji = products.find((p) => p.slug === "diwali-special-paneer-sabji") || products[products.length - 1];
+  useEffect(() => {
+    setProductList(products);
+  }, [products]);
+
+  // Listen for real-time price & product updates pushed by admin
+  useRealtime({
+    events: ["product_updated"],
+    onEvent: (payload) => {
+      if (payload.type === "product_updated" && payload.data) {
+        const updated = payload.data as Product;
+        setProductList((prev) => {
+          const exists = prev.some((p) => p.id === updated.id);
+          if (exists) {
+            return prev.map((p) => (p.id === updated.id ? updated : p));
+          } else {
+            return [updated, ...prev];
+          }
+        });
+      }
+    },
+  });
+
+  // Find Hamper & Paneer Sabji from updated productList
+  const hamper = productList.find((p) => p.slug === "shubh-deepawali-royal-hamper") || productList[0];
+  const paneerSabji = productList.find((p) => p.slug === "diwali-special-paneer-sabji") || productList[productList.length - 1];
 
   const inCartHamper = hamper ? items.find((it) => it.productId === hamper.id) : null;
 

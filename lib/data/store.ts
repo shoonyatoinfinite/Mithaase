@@ -28,6 +28,33 @@ import {
   initialCoupons,
 } from "./initial-data";
 import { sql } from "@/lib/neon/db";
+import fs from "fs";
+import path from "path";
+
+const PRODUCTS_OVERRIDE_PATH = path.join(process.cwd(), "lib", "data", "products-override.json");
+
+function loadOverriddenProducts(): Product[] | null {
+  try {
+    if (fs.existsSync(PRODUCTS_OVERRIDE_PATH)) {
+      const data = fs.readFileSync(PRODUCTS_OVERRIDE_PATH, "utf8");
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.error("[STORE] Error loading products override from disk:", err);
+  }
+  return null;
+}
+
+function persistProductsToDisk(products: Product[]) {
+  try {
+    fs.writeFileSync(PRODUCTS_OVERRIDE_PATH, JSON.stringify(products, null, 2), "utf8");
+  } catch (err) {
+    console.error("[STORE] Error persisting products override to disk:", err);
+  }
+}
 
 // In-memory persistent state (shared in Node runtime / development server)
 // Also syncs seamlessly when Supabase client is configured
@@ -48,9 +75,10 @@ declare global {
 }
 
 if (!global.__mithaase_store) {
+  const initialLoadedProducts = loadOverriddenProducts() || JSON.parse(JSON.stringify(initialProducts));
   global.__mithaase_store = {
     categories: [...initialCategories],
-    products: JSON.parse(JSON.stringify(initialProducts)),
+    products: initialLoadedProducts,
     settings: { ...initialSettings },
     orders: JSON.parse(JSON.stringify(initialOrders)),
     expenses: JSON.parse(JSON.stringify(initialExpenses)),
@@ -275,6 +303,7 @@ export async function createProduct(input: Partial<Product>): Promise<Product> {
   };
 
   db.products.unshift(newProd);
+  persistProductsToDisk(db.products);
   return newProd;
 }
 
@@ -288,6 +317,7 @@ export async function updateProduct(id: string, updates: Partial<Product>): Prom
     updated_at: new Date().toISOString(),
   };
 
+  persistProductsToDisk(db.products);
   return db.products[index];
 }
 
@@ -320,6 +350,7 @@ export async function adjustVariantStock(
         created_at: new Date().toISOString(),
       };
       db.inventoryMovements.unshift(movement);
+      persistProductsToDisk(db.products);
       return { success: true, newStock: nextStock };
     }
   }

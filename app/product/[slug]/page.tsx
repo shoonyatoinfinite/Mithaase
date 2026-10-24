@@ -11,6 +11,8 @@ import { Diya } from "@/components/animations/Diya";
 import { ProductDetailClient } from "./product-client";
 import { ChevronRight, ArrowLeft, ShieldCheck, Clock, Truck } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function ProductDetailPage({
   params,

@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { getProducts, getAllProductsAdmin, createProduct } from "@/lib/data/store";
+import { broadcastRealtimeEvent } from "@/lib/events/broadcast";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET(req: Request) {
   try {
@@ -26,6 +31,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Name and description are required" }, { status: 400 });
     }
     const created = await createProduct(body);
+
+    try {
+      revalidatePath("/", "page");
+      revalidatePath("/admin/products", "page");
+      revalidatePath("/api/products");
+    } catch (err) {
+      console.error("[API] revalidatePath error:", err);
+    }
+
+    broadcastRealtimeEvent("product_updated", created);
+
     return NextResponse.json(created, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: "Failed to create product" }, { status: 500 });

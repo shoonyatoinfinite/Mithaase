@@ -13,6 +13,8 @@ import { MoneyRain } from "@/components/animations/MoneyRain";
 import { getCategories, getProducts, getStoreSettings } from "@/lib/data/store";
 import { StoreShutoffNotice } from "@/components/storefront/StoreShutoffNotice";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function HomePage() {
   const [categories, products, settings] = await Promise.all([

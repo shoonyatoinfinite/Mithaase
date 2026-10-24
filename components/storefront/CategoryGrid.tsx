@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Category, Product } from "@/types";
 import { ProductCard } from "@/components/products/ProductCard";
 import { Sparkles, Filter } from "lucide-react";
+import { useRealtime } from "@/lib/hooks/useRealtime";
 
 interface CategoryGridProps {
   categories: Category[];
@@ -12,11 +13,34 @@ interface CategoryGridProps {
 
 export function CategoryGrid({ categories, products }: CategoryGridProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [productList, setProductList] = useState<Product[]>(products);
+
+  useEffect(() => {
+    setProductList(products);
+  }, [products]);
+
+  // Listen for real-time price & product updates pushed by admin
+  useRealtime({
+    events: ["product_updated"],
+    onEvent: (payload) => {
+      if (payload.type === "product_updated" && payload.data) {
+        const updated = payload.data as Product;
+        setProductList((prev) => {
+          const exists = prev.some((p) => p.id === updated.id);
+          if (exists) {
+            return prev.map((p) => (p.id === updated.id ? updated : p));
+          } else {
+            return [updated, ...prev];
+          }
+        });
+      }
+    },
+  });
 
   const filteredProducts =
     selectedCategory === "all"
-      ? products
-      : products.filter((p) => p.category_id === selectedCategory);
+      ? productList
+      : productList.filter((p) => p.category_id === selectedCategory);
 
   return (
     <section id="shop" className="py-16 sm:py-20 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full overflow-hidden">
@@ -45,10 +69,10 @@ export function CategoryGrid({ categories, products }: CategoryGridProps) {
                 : "bg-[#25072F] text-[#D3BEB0] border-white/10 hover:border-white/20 hover:text-white"
             }`}
           >
-            All Sweets ({products.length})
+            All Sweets ({productList.length})
           </button>
           {categories.map((cat) => {
-            const count = products.filter((p) => p.category_id === cat.id).length;
+            const count = productList.filter((p) => p.category_id === cat.id).length;
             if (count === 0) return null;
             return (
               <button

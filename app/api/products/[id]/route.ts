@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { getProductById, updateProduct } from "@/lib/data/store";
+import { broadcastRealtimeEvent } from "@/lib/events/broadcast";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(
   _req: Request,
@@ -28,6 +32,20 @@ export async function PUT(
     if (!updated) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
+
+    // Invalidate Next.js cache so user-side pages immediately serve the updated price
+    try {
+      revalidatePath("/", "page");
+      revalidatePath("/admin/products", "page");
+      revalidatePath(`/product/${updated.slug}`, "page");
+      revalidatePath("/api/products");
+    } catch (err) {
+      console.error("[API] revalidatePath error:", err);
+    }
+
+    // Broadcast realtime event to all listening user clients and admin dashboard
+    broadcastRealtimeEvent("product_updated", updated);
+
     return NextResponse.json(updated);
   } catch (error) {
     return NextResponse.json({ error: "Failed to update product" }, { status: 500 });

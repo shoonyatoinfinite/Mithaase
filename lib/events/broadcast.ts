@@ -20,7 +20,8 @@ export type RealtimeEventType =
   | "settings_updated"
   | "offline_sale_created"
   | "expense_created"
-  | "group_delivery_dispatched";
+  | "group_delivery_dispatched"
+  | "product_updated";
 
 export interface RealtimeEventPayload {
   type: RealtimeEventType;
