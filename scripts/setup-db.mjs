@@ -107,7 +107,7 @@ async function main() {
 
   await sql.query(`
     CREATE TABLE IF NOT EXISTS orders (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      id VARCHAR(100) PRIMARY KEY,
       order_number VARCHAR(50) NOT NULL UNIQUE,
       customer_name VARCHAR(150) NOT NULL,
       customer_email VARCHAR(255),
@@ -140,8 +140,8 @@ async function main() {
 
   await sql.query(`
     CREATE TABLE IF NOT EXISTS order_items (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      id VARCHAR(100) PRIMARY KEY,
+      order_id VARCHAR(100) NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
       product_id UUID REFERENCES products(id) ON DELETE SET NULL,
       variant_id UUID REFERENCES product_variants(id) ON DELETE SET NULL,
       product_name_snapshot VARCHAR(200) NOT NULL,
@@ -157,8 +157,8 @@ async function main() {
 
   await sql.query(`
     CREATE TABLE IF NOT EXISTS order_status_history (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      id VARCHAR(100) PRIMARY KEY,
+      order_id VARCHAR(100) NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
       previous_status VARCHAR(30) NOT NULL,
       new_status VARCHAR(30) NOT NULL,
       changed_by VARCHAR(100) NOT NULL DEFAULT 'system',

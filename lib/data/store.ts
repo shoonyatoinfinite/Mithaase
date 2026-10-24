@@ -1126,6 +1126,82 @@ export async function getOrders(
   emailFilter?: string
 ): Promise<Order[]> {
   let list = [...db.orders];
+
+  if (sql) {
+    try {
+      const rows = await sql.query(`
+        SELECT * FROM orders ORDER BY created_at DESC;
+      `);
+      if (rows && rows.length > 0) {
+        const itemRows = await sql.query(`SELECT * FROM order_items;`);
+        const itemsByOrderId: Record<string, OrderItem[]> = {};
+        for (const it of itemRows || []) {
+          if (!itemsByOrderId[it.order_id]) itemsByOrderId[it.order_id] = [];
+          itemsByOrderId[it.order_id].push({
+            id: it.id,
+            order_id: it.order_id,
+            product_id: it.product_id,
+            variant_id: it.variant_id,
+            product_name_snapshot: it.product_name_snapshot,
+            variant_name_snapshot: it.variant_name_snapshot,
+            quantity: Number(it.quantity),
+            unit_price: Number(it.unit_price),
+            line_total: Number(it.line_total),
+            image_url: it.image_url,
+          });
+        }
+
+        const dbMapped: Order[] = rows.map((o: any) => ({
+          id: o.id,
+          order_number: o.order_number,
+          customer_name: o.customer_name,
+          customer_email: o.customer_email || undefined,
+          customer_phone: o.customer_phone,
+          delivery_address: o.delivery_address,
+          locality: o.locality,
+          landmark: o.landmark || undefined,
+          delivery_instructions: o.delivery_instructions || undefined,
+          subtotal: Number(o.subtotal),
+          discount_amount: Number(o.discount_amount),
+          delivery_charge: Number(o.delivery_charge),
+          total_amount: Number(o.total_amount),
+          coupon_code: o.coupon_code || undefined,
+          payment_method: o.payment_method,
+          payment_status: o.payment_status,
+          order_status: o.order_status,
+          upi_reference: o.upi_reference || undefined,
+          upi_screenshot: o.upi_screenshot || undefined,
+          delivery_proof_photo: o.delivery_proof_photo || undefined,
+          pickup_photo: o.pickup_photo || undefined,
+          latitude: o.latitude ? Number(o.latitude) : undefined,
+          longitude: o.longitude ? Number(o.longitude) : undefined,
+          map_url: o.map_url || undefined,
+          source: o.source || "online",
+          items: itemsByOrderId[o.id] || [],
+          status_history: [],
+          created_at: o.created_at ? new Date(o.created_at).toISOString() : new Date().toISOString(),
+          updated_at: o.updated_at ? new Date(o.updated_at).toISOString() : new Date().toISOString(),
+          cancellation_reason: o.cancellation_reason || undefined,
+          refund_status: o.refund_status || undefined,
+          refund_amount: o.refund_amount ? Number(o.refund_amount) : undefined,
+          refund_txn_id: o.refund_txn_id || undefined,
+          refund_screenshot: o.refund_screenshot || undefined,
+        }));
+
+        const dbIds = new Set(dbMapped.map((o) => o.id));
+        const merged = [...dbMapped];
+        for (const mem of db.orders) {
+          if (!dbIds.has(mem.id)) {
+            merged.push(mem);
+          }
+        }
+        list = merged;
+      }
+    } catch (err) {
+      console.error("[STORE] getOrders db error:", err);
+    }
+  }
+
   if (emailFilter) {
     const norm = emailFilter.toLowerCase().trim();
     const cleanPhone = norm.replace(/[^0-9]/g, "");
@@ -1190,13 +1266,10 @@ export async function getOrderById(id: string): Promise<Order | null> {
   // 2. Check Neon DB if sql is available
   if (sql) {
     try {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
-      const rows = isUuid
-        ? await sql.query(`SELECT * FROM orders WHERE id = $1 LIMIT 1;`, [cleanId])
-        : await sql.query(
-            `SELECT * FROM orders WHERE LOWER(order_number) = $1 OR id::text = $1 LIMIT 1;`,
-            [lower]
-          );
+      const rows = await sql.query(
+        `SELECT * FROM orders WHERE LOWER(id) = $1 OR LOWER(order_number) = $1 OR id = $2 OR order_number = $2 LIMIT 1;`,
+        [lower, cleanId]
+      );
 
       if (rows && rows.length > 0) {
         const o = rows[0];
@@ -1291,7 +1364,7 @@ export async function updateOrderStatus(
     delivered_map_url?: string;
   }
 ): Promise<{ success: boolean; order?: Order; error?: string }> {
-  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId);
+  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId) || (await getOrderById(orderId));
   if (!order) return { success: false, error: "Order not found" };
 
   if (deliveryProofPhoto) {
@@ -1422,7 +1495,7 @@ export async function processOrderRefund(
   refundNote?: string,
   processedBy = "Admin"
 ): Promise<{ success: boolean; order?: Order; error?: string }> {
-  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId);
+  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId) || (await getOrderById(orderId));
   if (!order) return { success: false, error: "Order not found." };
 
   if (order.order_status !== "cancelled") {
@@ -1492,12 +1565,23 @@ export async function updatePaymentStatus(
   newStatus: PaymentStatus,
   upiRef?: string
 ): Promise<{ success: boolean; order?: Order }> {
-  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId);
+  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId) || (await getOrderById(orderId));
   if (!order) return { success: false };
 
   order.payment_status = newStatus;
   if (upiRef) order.upi_reference = upiRef;
   order.updated_at = new Date().toISOString();
+
+  if (sql) {
+    try {
+      await sql.query(
+        `UPDATE orders SET payment_status = $1, upi_reference = COALESCE($2, upi_reference), updated_at = NOW() WHERE id = $3 OR order_number = $3;`,
+        [newStatus, upiRef || null, orderId]
+      );
+    } catch (err) {
+      console.error("[STORE] updatePaymentStatus sql error:", err);
+    }
+  }
   return { success: true, order };
 }
 
