@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -29,6 +29,14 @@ export default function CartPage() {
   } = useCart();
   const { settings, isStoreClosed, isStoreShutoff } = useStoreSettings();
   const [isStoreClosedModalOpen, setIsStoreClosedModalOpen] = useState(false);
+  const [isSessionExpiredNotice, setIsSessionExpiredNotice] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.search.includes("sessionExpired=1")) {
+      setIsSessionExpiredNotice(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
 
   const deliveryFee = subtotal > 0 ? Number(settings.default_delivery_fee) || 21 : 0;
   const finalTotal = subtotal > 0 ? subtotal + deliveryFee : 0;
@@ -38,6 +46,23 @@ export default function CartPage() {
       <Navbar />
 
       <main className="flex-1 pt-24 pb-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto w-full">
+        {/* Session Expired Notice */}
+        {isSessionExpiredNotice && (
+          <div className="mb-6 p-4 rounded-2xl bg-amber-950/90 border-2 border-amber-500/60 text-amber-200 text-xs sm:text-sm flex items-center justify-between gap-3 shadow-xl animate-in fade-in">
+            <div className="flex items-center gap-3">
+              <Clock className="w-5 h-5 text-amber-400 shrink-0 animate-pulse" />
+              <span>
+                <strong>Payment Session Timed Out:</strong> Your 5-minute payment session expired and was cancelled. Your cart items are preserved. Please proceed to checkout when ready.
+              </span>
+            </div>
+            <button
+              onClick={() => setIsSessionExpiredNotice(false)}
+              className="text-white/60 hover:text-white text-xs px-2.5 py-1 rounded-lg bg-black/40 hover:bg-black/60 shrink-0 transition-colors"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         <div className="flex items-center justify-between mb-8 pb-4 border-b border-white/10">
           <div>
             <h1 className="text-3xl sm:text-4xl font-serif font-black text-[#FFF8EE]">

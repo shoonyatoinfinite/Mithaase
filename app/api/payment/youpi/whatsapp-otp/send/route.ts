@@ -37,7 +37,10 @@ export async function POST(req: Request) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mobileNumber: cleanMobile,
-          displayName: body.customerName || "Mithaase Customer",
+          name: (body.customerName || "").trim(),
+          fullName: (body.customerName || "").trim(),
+          customerName: (body.customerName || "").trim(),
+          displayName: (body.customerName || "").trim(),
         }),
         signal: controller.signal,
       });

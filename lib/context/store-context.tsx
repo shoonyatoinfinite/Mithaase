@@ -44,12 +44,9 @@ export function StoreSettingsProvider({ children }: { children: React.ReactNode 
   // Hook into live settings_updated event
   useRealtime({
     events: ["settings_updated"],
-    enablePollingFallback: true,
-    pollingIntervalMs: 4000,
+    enablePollingFallback: false,
     onEvent: (payload) => {
-      if (payload.data?.isFallbackTick) {
-        refreshSettings();
-      } else if (payload.data) {
+      if (payload.data) {
         setSettings(payload.data);
       } else {
         refreshSettings();

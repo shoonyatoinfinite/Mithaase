@@ -21,6 +21,7 @@ import {
   Bike,
   ShieldCheck,
   ArrowRight,
+  Phone,
 } from "lucide-react";
 
 interface LiveOrderTrackerProps {
@@ -37,7 +38,22 @@ const statusSteps: { key: OrderStatus; label: string; desc: string }[] = [
   { key: "delivered", label: "Delivered", desc: "Delivered fresh for Diwali" },
 ];
 
-function getOrderStatusHeadline(status: OrderStatus) {
+function getOrderStatusHeadline(status: OrderStatus, order?: Order) {
+  const isManualUpiPending =
+    order &&
+    order.payment_method === "upi" &&
+    (!order.upi_reference?.startsWith("youpi:") || order.payment_status === "pending_verification") &&
+    status === "pending_confirmation";
+
+  if (isManualUpiPending) {
+    return {
+      title: "Manual Payment Received —",
+      highlight: "Awaiting Admin Verification",
+      desc: "Your order is NOT placed yet. Our admin is verifying your payment reference number. Once verified, your order will be confirmed and sent to the halwai workshop.",
+      iconColor: "text-amber-400 bg-amber-950/80 border-amber-400",
+    };
+  }
+
   switch (status) {
     case "pending_confirmation":
       return {
@@ -172,7 +188,11 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
   const isDelivered = order.order_status === "delivered";
   const isPaid = order.payment_status === "paid";
   const isCancelled = order.order_status === "cancelled";
-  const headline = getOrderStatusHeadline(order.order_status);
+  const isManualUpiPending =
+    order.payment_method === "upi" &&
+    (!order.upi_reference?.startsWith("youpi:") || order.payment_status === "pending_verification") &&
+    order.order_status === "pending_confirmation";
+  const headline = getOrderStatusHeadline(order.order_status, order);
 
   const cleanPhone = settings.whatsapp_number.replace(/[^0-9]/g, "");
   const whatsappTrackUrl = `https://wa.me/${cleanPhone}?text=Hello%20Shree%20Shyam%20Sweets,%20I%20am%20inquiring%20about%20my%20order%20${order.order_number}`;
@@ -202,6 +222,8 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
             <Bike className="w-8 h-8 sm:w-10 sm:h-10 animate-pulse" />
           ) : order.order_status === "preparing" ? (
             <Package className="w-8 h-8 sm:w-10 sm:h-10" />
+          ) : isManualUpiPending ? (
+            <Clock className="w-8 h-8 sm:w-10 sm:h-10 text-amber-400 animate-pulse" />
           ) : (
             <CheckCircle2 className="w-8 h-8 sm:w-10 sm:h-10" />
           )}
@@ -223,6 +245,57 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
           <span className="text-white/50">Order Reference:</span>
           <strong className="text-[#F5D061] font-mono tracking-wider">{order.order_number}</strong>
         </div>
+
+        {/* MANUAL UPI URGENT ADMIN CONTACT & NOTICE BANNER */}
+        {isManualUpiPending && (
+          <div className="mt-5 p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-amber-950/90 via-[#22071F] to-amber-950/90 border-2 border-amber-400/60 shadow-2xl text-left space-y-3.5">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-400/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shrink-0 shadow-inner">
+                <Clock className="w-5 h-5 animate-pulse text-amber-400" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm sm:text-base font-bold text-white">
+                    Admin Verification Required Before Order Placement
+                  </h3>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                    Awaiting Verification
+                  </span>
+                </div>
+                <p className="text-xs text-amber-200/90 leading-relaxed">
+                  You submitted manual UPI Ref: <strong className="text-[#F5D061] font-mono">{order.upi_reference || "N/A"}</strong>. This order is <strong>not automatically confirmed</strong>. It will be accepted into the kitchen only after admin verification.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-[#16031E] border border-amber-400/30 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div>
+                <span className="text-xs font-bold text-white block">Need your sweets urgently?</span>
+                <span className="text-[11px] text-white/60">Contact the store admin right away to fast-track verification & batching</span>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <a
+                  href={`tel:${settings.business_phone || "9306859388"}`}
+                  className="flex-1 sm:flex-none py-2 px-4 rounded-xl bg-amber-400 hover:bg-amber-300 text-[#16031E] font-bold text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
+                >
+                  <Phone className="w-3.5 h-3.5 text-[#16031E]" />
+                  <span>Call Admin</span>
+                </a>
+                <a
+                  href={`https://wa.me/91${(settings.business_phone || "9306859388").replace(/[^0-9]/g, "")}?text=${encodeURIComponent(
+                    `Hello Admin, I have submitted a manual UPI payment of ₹${order.total_amount} with Ref No: ${order.upi_reference} for Order ${order.order_number}. I need it urgently, please verify my payment and confirm the order.`
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 sm:flex-none py-2 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  <span>WhatsApp Admin</span>
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Live Sync Status Bar */}

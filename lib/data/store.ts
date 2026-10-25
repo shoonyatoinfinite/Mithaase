@@ -28,6 +28,7 @@ import {
   initialCoupons,
 } from "./initial-data";
 import { sql } from "@/lib/neon/db";
+import { serverCache } from "@/lib/cache/server-cache";
 import fs from "fs";
 import path from "path";
 
@@ -165,6 +166,11 @@ const db = global.__mithaase_store;
 
 // 1. SETTINGS
 export async function getStoreSettings(): Promise<StoreSettings> {
+  const cached = serverCache.get<StoreSettings>("store_settings");
+  if (cached) {
+    return { ...cached };
+  }
+
   if (sql) {
     try {
       const rows = await sql.query(`SELECT * FROM store_settings WHERE id = 1 LIMIT 1;`);
@@ -205,11 +211,14 @@ export async function getStoreSettings(): Promise<StoreSettings> {
       console.error("[STORE] getStoreSettings error:", err);
     }
   }
-  return { ...db.settings };
+  const result = { ...db.settings };
+  serverCache.set("store_settings", result, 60, ["settings"]);
+  return result;
 }
 
 export async function updateStoreSettings(updates: Partial<StoreSettings>): Promise<StoreSettings> {
   db.settings = { ...db.settings, ...updates };
+  serverCache.invalidateTag("settings");
 
   if (sql) {
     try {
@@ -277,6 +286,11 @@ export async function updateStoreSettings(updates: Partial<StoreSettings>): Prom
 
 // 2. CATEGORIES
 export async function getCategories(): Promise<Category[]> {
+  const cached = serverCache.get<Category[]>("categories");
+  if (cached) {
+    return [...cached];
+  }
+
   const settings = await getStoreSettings();
   if (settings.store_shutoff || settings.store_status === "shutoff") {
     return [];
@@ -290,7 +304,7 @@ export async function getCategories(): Promise<Category[]> {
         ORDER BY display_order ASC;
       `);
       if (rows && rows.length > 0) {
-        return rows.map((r: any) => ({
+        const mapped = rows.map((r: any) => ({
           id: r.id,
           name: r.name,
           slug: r.slug,
@@ -298,16 +312,26 @@ export async function getCategories(): Promise<Category[]> {
           display_order: Number(r.display_order) || 0,
           is_active: Boolean(r.is_active),
         }));
+        serverCache.set("categories", mapped, 60, ["categories"]);
+        return mapped;
       }
     } catch (err) {
       console.error("[STORE] getCategories db error:", err);
     }
   }
-  return [...db.categories].sort((a, b) => a.display_order - b.display_order);
+  const result = [...db.categories].sort((a, b) => a.display_order - b.display_order);
+  serverCache.set("categories", result, 60, ["categories"]);
+  return result;
 }
 
 // 3. PRODUCTS
 export async function getProducts(categoryId?: string): Promise<Product[]> {
+  const cacheKey = `products_${categoryId || "all"}`;
+  const cached = serverCache.get<Product[]>(cacheKey);
+  if (cached) {
+    return [...cached];
+  }
+
   const settings = await getStoreSettings();
   if (settings.store_shutoff || settings.store_status === "shutoff") {
     return [];
@@ -367,10 +391,9 @@ export async function getProducts(categoryId?: string): Promise<Product[]> {
         }));
 
         db.products = mapped;
-        if (categoryId) {
-          return mapped.filter((p) => p.category_id === categoryId);
-        }
-        return mapped;
+        const res = categoryId ? mapped.filter((p) => p.category_id === categoryId) : mapped;
+        serverCache.set(cacheKey, res, 60, ["products"]);
+        return res;
       }
     } catch (err) {
       console.error("[STORE] getProducts db error:", err);
@@ -381,6 +404,7 @@ export async function getProducts(categoryId?: string): Promise<Product[]> {
   if (categoryId) {
     list = list.filter((p) => p.category_id === categoryId);
   }
+  serverCache.set(cacheKey, list, 60, ["products"]);
   return list;
 }
 
@@ -1048,13 +1072,26 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
 
   verifiedItems.forEach((it) => (it.order_id = orderId));
 
+  const isAutoConfirmedUpi =
+    params.payment_method === "upi" && Boolean(params.upi_reference?.startsWith("youpi:"));
+
+  const initialPaymentStatus: PaymentStatus = isAutoConfirmedUpi
+    ? "paid"
+    : params.payment_method === "upi"
+    ? "pending_verification"
+    : "unpaid";
+
   const initialStatusHistory: OrderStatusHistory = {
     id: `hist-${Date.now()}`,
     order_id: orderId,
     previous_status: "pending_confirmation",
     new_status: "pending_confirmation",
     changed_by: "Customer",
-    note: "Order placed online",
+    note: isAutoConfirmedUpi
+      ? "Order placed online with instant YouPI confirmation"
+      : params.payment_method === "upi"
+      ? "Order submitted with manual UPI reference — Awaiting admin verification before order confirmation"
+      : "Order placed online with Cash on Delivery",
     created_at: new Date().toISOString(),
   };
 
@@ -1074,7 +1111,7 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
     total_amount: totalAmount,
     coupon_code: params.coupon_code ? params.coupon_code.toUpperCase().trim() : undefined,
     payment_method: params.payment_method,
-    payment_status: params.payment_method === "upi" ? "paid" : "unpaid",
+    payment_status: initialPaymentStatus,
     order_status: "pending_confirmation",
     upi_reference: params.upi_reference,
     upi_screenshot: params.upi_screenshot,
@@ -1191,6 +1228,7 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
 
   db.orders.unshift(newOrder);
   persistOrdersToDisk(db.orders);
+  serverCache.invalidateTag("orders");
   return { success: true, order: newOrder };
 }
 
@@ -1199,15 +1237,65 @@ export async function getOrders(
   searchQuery?: string,
   emailFilter?: string
 ): Promise<Order[]> {
+  const cacheKey = `orders_${statusFilter || "all"}_${emailFilter || "all"}_${searchQuery || ""}`;
+  const cached = serverCache.get<Order[]>(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   let list = [...db.orders];
 
   if (sql) {
     try {
+      const conditions: string[] = [];
+      const params: any[] = [];
+
+      if (emailFilter) {
+        const norm = emailFilter.toLowerCase().trim();
+        const cleanPhone = norm.replace(/[^0-9]/g, "");
+        if (cleanPhone.length >= 10) {
+          params.push(norm, `%${cleanPhone}%`);
+          conditions.push(`(LOWER(customer_email) = $1 OR customer_phone LIKE $2 OR LOWER(order_number) = $1 OR id = $1)`);
+        } else {
+          params.push(norm);
+          conditions.push(`(LOWER(customer_email) = $1 OR LOWER(order_number) = $1 OR id = $1)`);
+        }
+      }
+
+      if (statusFilter && statusFilter !== "all") {
+        if (statusFilter === "current" || statusFilter === "active") {
+          conditions.push(`order_status NOT IN ('delivered', 'cancelled')`);
+        } else if (statusFilter === "queued") {
+          conditions.push(`delivery_queued = true AND order_status NOT IN ('delivered', 'cancelled')`);
+        } else {
+          params.push(statusFilter);
+          conditions.push(`order_status = $${params.length}`);
+        }
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
       const rows = await sql.query(`
-        SELECT * FROM orders ORDER BY created_at DESC;
-      `);
+        SELECT 
+          id, order_number, customer_name, customer_email, customer_phone,
+          delivery_address, locality, landmark, delivery_instructions,
+          subtotal, discount_amount, delivery_charge, total_amount, coupon_code,
+          payment_method, payment_status, order_status, upi_reference,
+          delivery_queued, delivery_group_id, delivered_at, delivered_lat, delivered_lng,
+          delivered_location_name, delivered_map_url, latitude, longitude, map_url,
+          source, cancellation_reason, refund_status, refund_amount, refund_txn_id,
+          created_at, updated_at
+        FROM orders 
+        ${whereClause}
+        ORDER BY created_at DESC
+        LIMIT 60;
+      `, params);
+
       if (rows && rows.length > 0) {
-        const itemRows = await sql.query(`SELECT * FROM order_items;`);
+        const orderIds = rows.map((r: any) => r.id);
+        const itemRows = await sql.query(`
+          SELECT * FROM order_items WHERE order_id = ANY($1);
+        `, [orderIds]).catch(() => []);
+
         const itemsByOrderId: Record<string, OrderItem[]> = {};
         for (const it of itemRows || []) {
           if (!itemsByOrderId[it.order_id]) itemsByOrderId[it.order_id] = [];
@@ -1225,7 +1313,10 @@ export async function getOrders(
           });
         }
 
-        const historyRows = await sql.query(`SELECT * FROM order_status_history ORDER BY created_at ASC;`).catch(() => []);
+        const historyRows = await sql.query(`
+          SELECT * FROM order_status_history WHERE order_id = ANY($1) ORDER BY created_at ASC;
+        `, [orderIds]).catch(() => []);
+
         const historyByOrderId: Record<string, OrderStatusHistory[]> = {};
         for (const h of historyRows || []) {
           if (!historyByOrderId[h.order_id]) historyByOrderId[h.order_id] = [];
@@ -1259,9 +1350,6 @@ export async function getOrders(
           payment_status: o.payment_status,
           order_status: o.order_status,
           upi_reference: o.upi_reference || undefined,
-          upi_screenshot: o.upi_screenshot || undefined,
-          delivery_proof_photo: o.delivery_proof_photo || undefined,
-          pickup_photo: o.pickup_photo || undefined,
           delivery_queued: Boolean(o.delivery_queued),
           delivery_group_id: o.delivery_group_id || undefined,
           delivered_at: o.delivered_at ? new Date(o.delivered_at).toISOString() : undefined,
@@ -1281,7 +1369,6 @@ export async function getOrders(
           refund_status: o.refund_status || undefined,
           refund_amount: o.refund_amount ? Number(o.refund_amount) : undefined,
           refund_txn_id: o.refund_txn_id || undefined,
-          refund_screenshot: o.refund_screenshot || undefined,
         }));
 
         const dbIds = new Set(dbMapped.map((o) => o.id));
@@ -1328,7 +1415,10 @@ export async function getOrders(
         o.locality.toLowerCase().includes(q)
     );
   }
-  return list.map(normalizeOrder);
+
+  const normalized = list.map(normalizeOrder);
+  serverCache.set(cacheKey, normalized, 10, ["orders"]);
+  return normalized;
 }
 
 function normalizeOrder(order: Order): Order {
@@ -1616,6 +1706,7 @@ export async function updateOrderStatus(
     db.orders.unshift({ ...order });
   }
 
+  serverCache.invalidateTag("orders");
   return { success: true, order };
 }
 
@@ -1688,6 +1779,7 @@ export async function processOrderRefund(
     }
   }
 
+  serverCache.invalidateTag("orders");
   return { success: true, order };
 }
 
@@ -1713,6 +1805,7 @@ export async function updatePaymentStatus(
       console.error("[STORE] updatePaymentStatus sql error:", err);
     }
   }
+  serverCache.invalidateTag("orders");
   return { success: true, order };
 }
 
@@ -1728,6 +1821,7 @@ export async function setOrderDeliveryQueue(
   if (groupId !== undefined) order.delivery_group_id = groupId;
   if (!queued) order.delivery_group_id = undefined;
   order.updated_at = new Date().toISOString();
+  serverCache.invalidateTag("orders");
   return { success: true, order };
 }
 

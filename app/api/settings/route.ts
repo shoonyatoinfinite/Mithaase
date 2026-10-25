@@ -3,16 +3,13 @@ import { getStoreSettings, updateStoreSettings } from "@/lib/data/store";
 import { broadcastRealtimeEvent } from "@/lib/events/broadcast";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
 export async function GET() {
   try {
     const settings = await getStoreSettings();
     return NextResponse.json(settings, {
       headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
-        Pragma: "no-cache",
-        Expires: "0",
+        "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
       },
     });
   } catch (error) {

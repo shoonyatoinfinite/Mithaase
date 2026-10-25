@@ -14,7 +14,7 @@ interface RealtimeListener {
 class RealtimeClientManager {
   private eventSource: EventSource | null = null;
   private listeners: Map<string, RealtimeListener> = new Map();
-  private isConnected = false;
+  public isConnected = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private closeGraceTimer: NodeJS.Timeout | null = null;
 
@@ -164,8 +164,8 @@ interface UseRealtimeOptions {
 export function useRealtime({
   events,
   onEvent,
-  enablePollingFallback = true,
-  pollingIntervalMs = 3500,
+  enablePollingFallback = false,
+  pollingIntervalMs = 15000,
 }: UseRealtimeOptions = {}) {
   const [isConnected, setIsConnected] = useState(false);
   const [lastEvent, setLastEvent] = useState<RealtimeEventPayload | null>(null);
@@ -177,23 +177,25 @@ export function useRealtime({
   useEffect(() => {
     const id = `listener_${Math.random().toString(36).substring(2, 9)}`;
 
-    const unsubscribe = clientManager.subscribe({
-      id,
-      events,
-      callback: (payload) => {
-        setLastEvent(payload);
-        if (onEventRef.current) {
-          onEventRef.current(payload);
-        }
-      },
-      onConnectionChange: (connected) => {
-        setIsConnected(connected);
-      },
-    });
-
     let fallbackTimer: NodeJS.Timeout | null = null;
-    if (enablePollingFallback) {
+
+    const stopFallback = () => {
+      if (fallbackTimer) {
+        clearInterval(fallbackTimer);
+        fallbackTimer = null;
+      }
+    };
+
+    const startFallback = () => {
+      if (fallbackTimer || !enablePollingFallback) return;
       fallbackTimer = setInterval(() => {
+        // Stop polling if SSE is active or document is hidden in background tab
+        if (typeof document !== "undefined" && document.hidden) return;
+        if (clientManager.isConnected) {
+          stopFallback();
+          return;
+        }
+
         if (onEventRef.current) {
           const typesToTrigger: RealtimeEventType[] =
             events && events.length > 0
@@ -207,12 +209,36 @@ export function useRealtime({
             });
           }
         }
-      }, pollingIntervalMs);
+      }, Math.max(pollingIntervalMs, 12000)); // Minimum 12s interval when disconnected
+    };
+
+    const unsubscribe = clientManager.subscribe({
+      id,
+      events,
+      callback: (payload) => {
+        setLastEvent(payload);
+        if (onEventRef.current) {
+          onEventRef.current(payload);
+        }
+      },
+      onConnectionChange: (connected) => {
+        setIsConnected(connected);
+        if (connected) {
+          stopFallback();
+        } else {
+          startFallback();
+        }
+      },
+    });
+
+    // Only start fallback if currently disconnected
+    if (!clientManager.isConnected) {
+      startFallback();
     }
 
     return () => {
       unsubscribe();
-      if (fallbackTimer) clearInterval(fallbackTimer);
+      stopFallback();
     };
   }, [eventsKey, enablePollingFallback, pollingIntervalMs]);
 

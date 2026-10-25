@@ -68,13 +68,8 @@ export function Navbar({ hideAnnouncement = false }: NavbarProps) {
   // Real-time synchronization of customer active order
   useRealtime({
     events: ["order_created", "order_status_updated"],
-    enablePollingFallback: true,
-    pollingIntervalMs: 3000,
+    enablePollingFallback: false,
     onEvent: (payload) => {
-      if (payload.data?.isFallbackTick) {
-        fetchActiveCustomerOrder();
-        return;
-      }
       if (payload.data && user?.email) {
         const targetEmail = (payload.data.customer_email || "").toLowerCase().trim();
         const myEmail = user.email.toLowerCase().trim();

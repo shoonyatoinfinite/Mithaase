@@ -4,7 +4,6 @@ import { getProducts, getAllProductsAdmin, createProduct } from "@/lib/data/stor
 import { broadcastRealtimeEvent } from "@/lib/events/broadcast";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 0;
 
 export async function GET(req: Request) {
   try {
@@ -14,11 +13,17 @@ export async function GET(req: Request) {
 
     if (admin) {
       const products = await getAllProductsAdmin();
-      return NextResponse.json(products);
+      return NextResponse.json(products, {
+        headers: { "Cache-Control": "private, no-cache, no-store" },
+      });
     }
 
     const products = await getProducts(categoryId);
-    return NextResponse.json(products);
+    return NextResponse.json(products, {
+      headers: {
+        "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60",
+      },
+    });
   } catch (error) {
     return NextResponse.json({ error: "Failed to fetch products" }, { status: 500 });
   }

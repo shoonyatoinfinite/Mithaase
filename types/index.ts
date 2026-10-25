@@ -10,6 +10,7 @@ export type OrderStatus =
 export type PaymentStatus =
   | 'unpaid'
   | 'pending'
+  | 'pending_verification'
   | 'paid'
   | 'failed'
   | 'refunded';
