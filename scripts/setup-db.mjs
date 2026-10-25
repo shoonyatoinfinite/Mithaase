@@ -136,6 +136,22 @@ async function main() {
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+
+  await sql.query(`
+    ALTER TABLE orders 
+      ADD COLUMN IF NOT EXISTS delivery_queued BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS delivery_group_id VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS delivered_lat NUMERIC(10, 6),
+      ADD COLUMN IF NOT EXISTS delivered_lng NUMERIC(10, 6),
+      ADD COLUMN IF NOT EXISTS delivered_location_name VARCHAR(150),
+      ADD COLUMN IF NOT EXISTS delivered_map_url TEXT,
+      ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
+      ADD COLUMN IF NOT EXISTS refund_status VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(10, 2),
+      ADD COLUMN IF NOT EXISTS refund_txn_id VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS refund_screenshot TEXT;
+  `);
   console.log("✓ orders table ready");
 
   await sql.query(`
@@ -194,7 +210,7 @@ async function main() {
       quantity_change INT NOT NULL,
       stock_after INT NOT NULL,
       reason TEXT NOT NULL,
-      related_order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
+      related_order_id VARCHAR(100) REFERENCES orders(id) ON DELETE SET NULL,
       related_sale_id UUID REFERENCES offline_sales(id) ON DELETE SET NULL,
       created_by VARCHAR(100) DEFAULT 'system',
       created_at TIMESTAMPTZ DEFAULT NOW()
@@ -252,6 +268,21 @@ async function main() {
     );
   `);
   console.log("✓ customer_accounts table ready");
+
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS media_assets (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      mime_type VARCHAR(100) NOT NULL DEFAULT 'image/jpeg',
+      file_name VARCHAR(255),
+      size_bytes INT NOT NULL DEFAULT 0,
+      data_base64 TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+  await sql.query(`
+    CREATE INDEX IF NOT EXISTS idx_media_assets_created ON media_assets(created_at DESC);
+  `);
+  console.log("✓ media_assets table ready (Neon Object Storage)");
 
   // Insert default settings
   await sql.query(`

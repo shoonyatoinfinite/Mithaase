@@ -429,7 +429,7 @@ export function PaymentSelectionModal({
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -440,6 +440,24 @@ export function PaymentSelectionModal({
 
     setScreenshotName(file.name);
     setValidationError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/media/upload", {
+        method: "POST",
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url) {
+          setScreenshotDataUrl(data.url);
+          return;
+        }
+      }
+    } catch {
+      // Fallback to base64 if network error
+    }
 
     const reader = new FileReader();
     reader.onload = (event) => {

@@ -5,6 +5,7 @@ import { Category, Product } from "@/types";
 import { ProductCard } from "@/components/products/ProductCard";
 import { Sparkles, Filter } from "lucide-react";
 import { useRealtime } from "@/lib/hooks/useRealtime";
+import { saveCatalogToCache } from "@/lib/cache/indexed-db";
 
 interface CategoryGridProps {
   categories: Category[];
@@ -17,7 +18,10 @@ export function CategoryGrid({ categories, products }: CategoryGridProps) {
 
   useEffect(() => {
     setProductList(products);
-  }, [products]);
+    if (products.length > 0) {
+      saveCatalogToCache(products, categories, Date.now().toString());
+    }
+  }, [products, categories]);
 
   // Listen for real-time price & product updates pushed by admin
   useRealtime({
@@ -28,11 +32,11 @@ export function CategoryGrid({ categories, products }: CategoryGridProps) {
         const updated = payload.data as Product;
         setProductList((prev) => {
           const exists = prev.some((p) => p.id === updated.id);
-          if (exists) {
-            return prev.map((p) => (p.id === updated.id ? updated : p));
-          } else {
-            return [updated, ...prev];
-          }
+          const next = exists
+            ? prev.map((p) => (p.id === updated.id ? updated : p))
+            : [updated, ...prev];
+          saveCatalogToCache(next, categories, Date.now().toString());
+          return next;
         });
       }
     },

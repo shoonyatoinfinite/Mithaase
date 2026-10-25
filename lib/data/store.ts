@@ -31,6 +31,47 @@ import { sql } from "@/lib/neon/db";
 import { serverCache } from "@/lib/cache/server-cache";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
+
+/**
+ * Offloads Base64 data URLs to Neon media_assets table (Object Storage)
+ * and returns the permanent CDN-cached media link `/api/media/[id]`.
+ * Prevents heavy Base64 strings from bloating orders and products tables.
+ */
+export async function persistMediaAsset(
+  dataUriOrBase64?: string | null,
+  fileName = "upload.jpg"
+): Promise<string | undefined> {
+  if (!dataUriOrBase64) return undefined;
+  if (!dataUriOrBase64.startsWith("data:image/")) {
+    return dataUriOrBase64;
+  }
+
+  try {
+    const mimeMatch = dataUriOrBase64.match(/^data:([^;]+);base64,/);
+    const mimeType = mimeMatch ? mimeMatch[1] : "image/jpeg";
+    const cleanBase64 = dataUriOrBase64.replace(/^data:[^;]+;base64,/, "");
+    const sizeBytes = Math.floor((cleanBase64.length * 3) / 4);
+    const mediaId = crypto.randomUUID();
+
+    if (sql) {
+      await sql.query(`
+        INSERT INTO media_assets (id, mime_type, file_name, size_bytes, data_base64)
+        VALUES ($1, $2, $3, $4, $5);
+      `, [mediaId, mimeType, fileName, sizeBytes, cleanBase64]).catch((err: any) => {
+        console.warn("[MEDIA] Background save warning:", err);
+      });
+    }
+
+    const buffer = Buffer.from(cleanBase64, "base64");
+    serverCache.set(`media_${mediaId}`, { mimeType, buffer }, 3600, ["media"]);
+
+    return `/api/media/${mediaId}`;
+  } catch (err) {
+    console.warn("[MEDIA] persistMediaAsset error:", err);
+    return dataUriOrBase64;
+  }
+}
 
 const PRODUCTS_OVERRIDE_PATH = path.join(process.cwd(), "lib", "data", "products-override.json");
 
@@ -641,6 +682,8 @@ export async function createProduct(input: Partial<Product>): Promise<Product> {
       if (created) {
         db.products.unshift(created);
         persistProductsToDisk(db.products);
+        serverCache.invalidateTag("products");
+        serverCache.set("catalog_version", Date.now().toString());
         return created;
       }
     } catch (err) {
@@ -676,6 +719,8 @@ export async function createProduct(input: Partial<Product>): Promise<Product> {
 
   db.products.unshift(newProd);
   persistProductsToDisk(db.products);
+  serverCache.invalidateTag("products");
+  serverCache.set("catalog_version", Date.now().toString());
   return newProd;
 }
 
@@ -769,6 +814,8 @@ export async function updateProduct(id: string, updates: Partial<Product>): Prom
           db.products.unshift(fresh);
         }
         persistProductsToDisk(db.products);
+        serverCache.invalidateTag("products");
+        serverCache.set("catalog_version", Date.now().toString());
         return fresh;
       }
     } catch (err) {
@@ -786,6 +833,8 @@ export async function updateProduct(id: string, updates: Partial<Product>): Prom
   };
 
   persistProductsToDisk(db.products);
+  serverCache.invalidateTag("products");
+  serverCache.set("catalog_version", Date.now().toString());
   return db.products[index];
 }
 
@@ -1095,6 +1144,10 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
     created_at: new Date().toISOString(),
   };
 
+  const persistedScreenshot = params.upi_screenshot
+    ? await persistMediaAsset(params.upi_screenshot, "upi_payment.jpg")
+    : undefined;
+
   const newOrder: Order = {
     id: orderId,
     order_number: orderNumber,
@@ -1114,7 +1167,7 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
     payment_status: initialPaymentStatus,
     order_status: "pending_confirmation",
     upi_reference: params.upi_reference,
-    upi_screenshot: params.upi_screenshot,
+    upi_screenshot: persistedScreenshot,
     latitude: params.latitude,
     longitude: params.longitude,
     map_url: params.map_url,
@@ -1573,9 +1626,11 @@ export async function updateOrderStatus(
   if (!order) return { success: false, error: "Order not found" };
 
   if (deliveryProofPhoto) {
+    deliveryProofPhoto = await persistMediaAsset(deliveryProofPhoto, "delivery_proof.jpg");
     order.delivery_proof_photo = deliveryProofPhoto;
   }
   if (pickupPhoto) {
+    pickupPhoto = await persistMediaAsset(pickupPhoto, "pickup_photo.jpg");
     order.pickup_photo = pickupPhoto;
   }
   if (deliveryDetails) {

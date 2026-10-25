@@ -45,8 +45,8 @@ async function runTests() {
   // TEST 2: Customer Registration into Neon Postgres
   console.log("\n[Test 2/5] Testing Customer Signup API with Address & PIN...");
   const testPhone = "9876543210";
-  const testEmail = "test_customer@mithaase.in";
-  const testPin = "4321";
+  const testEmail = `test_${Date.now()}@mithaase.in`;
+  const testPin = "123456";
 
   const signupRes = await fetch(`${baseUrl}/api/auth/customer/signup`, {
     method: "POST",

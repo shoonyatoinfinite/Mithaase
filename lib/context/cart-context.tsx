@@ -6,6 +6,7 @@ import { BulkOrderModal } from "@/components/cart/BulkOrderModal";
 import { CartReconciliationModal } from "@/components/cart/CartReconciliationModal";
 import { useUserAuth } from "@/lib/context/user-auth-context";
 import { useRealtime } from "@/lib/hooks/useRealtime";
+import { getCachedCatalog, saveCatalogToCache } from "@/lib/cache/indexed-db";
 
 export const MAX_CART_WEIGHT_KG = 20;
 
@@ -70,38 +71,60 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Reconcile cart item prices against latest products from server
+  // Reconcile cart item prices against latest products from IndexedDB / Server
   const syncCartPrices = useCallback(async () => {
     try {
+      const reconcile = (products: Product[]) => {
+        setItems((prev) => {
+          let hasDiff = false;
+          const updated = prev.map((item) => {
+            const prod = products.find((p) => p.id === item.productId);
+            const vr = prod?.variants.find((v) => v.id === item.variantId);
+            if (
+              prod &&
+              vr &&
+              (vr.price !== item.price ||
+                vr.stock_quantity !== item.maxStock ||
+                vr.variant_name !== item.variantName ||
+                prod.name !== item.productName)
+            ) {
+              hasDiff = true;
+              return {
+                ...item,
+                price: Number(vr.price),
+                maxStock: Number(vr.stock_quantity),
+                variantName: vr.variant_name,
+                productName: prod.name,
+              };
+            }
+            return item;
+          });
+          return hasDiff ? updated : prev;
+        });
+      };
+
+      // 1. Instant local price reconciliation from IndexedDB (0 network, 0 database)
+      const cached = await getCachedCatalog();
+      if (cached && cached.products && cached.products.length > 0) {
+        reconcile(cached.products);
+      }
+
+      // 2. Fetch lightweight catalog version
+      const vRes = await fetch("/api/catalog/version");
+      if (!vRes.ok) return;
+      const { version } = await vRes.json();
+
+      // If version matches cached data, skip downloading products entirely!
+      if (cached && cached.version === version) {
+        return;
+      }
+
+      // 3. Version changed or no cache: fetch fresh products and save to IndexedDB
       const res = await fetch("/api/products");
       if (!res.ok) return;
-      const products: Product[] = await res.json();
-      setItems((prev) => {
-        let hasDiff = false;
-        const updated = prev.map((item) => {
-          const prod = products.find((p) => p.id === item.productId);
-          const vr = prod?.variants.find((v) => v.id === item.variantId);
-          if (
-            prod &&
-            vr &&
-            (vr.price !== item.price ||
-              vr.stock_quantity !== item.maxStock ||
-              vr.variant_name !== item.variantName ||
-              prod.name !== item.productName)
-          ) {
-            hasDiff = true;
-            return {
-              ...item,
-              price: Number(vr.price),
-              maxStock: Number(vr.stock_quantity),
-              variantName: vr.variant_name,
-              productName: prod.name,
-            };
-          }
-          return item;
-        });
-        return hasDiff ? updated : prev;
-      });
+      const freshProducts: Product[] = await res.json();
+      reconcile(freshProducts);
+      await saveCatalogToCache(freshProducts, cached?.categories || [], version);
     } catch {
       // Ignore background sync errors
     }
