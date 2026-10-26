@@ -28,13 +28,14 @@ export async function POST(req: Request) {
 
     const cleanPhone = (customerPhone || "").replace(/[^0-9]/g, "");
     const generatedOrderId = orderId || `ord-${Date.now()}`;
-    const youpiBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
+    const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
+    const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
     const merchantKey = process.env.YOUPI_MERCHANT_KEY || "00000000-0000-0000-0000-000000000001";
 
     // Attempt to connect to live YouPI-PG Gateway
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
 
       const gatewayRes = await fetch(`${youpiBaseUrl}/api/v1/payments`, {
         method: "POST",

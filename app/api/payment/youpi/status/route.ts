@@ -12,13 +12,14 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: "Missing paymentId parameter" }, { status: 400 });
     }
 
-    const youpiBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
+    const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
+    const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
 
     // 1. Check if it's a live YouPI session
     if (!paymentId.startsWith("yp_sbx_")) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
 
         const res = await fetch(`${youpiBaseUrl}/api/v1/payments/${paymentId}`, {
           signal: controller.signal,
@@ -29,8 +30,13 @@ export async function GET(req: Request) {
 
         if (res.ok) {
           const data = await res.json();
+          let normalizedStatus = data.status || "PENDING";
+          if (normalizedStatus === "COMPLETED" || normalizedStatus === "PAID") {
+            normalizedStatus = "SUCCESS";
+          }
           return NextResponse.json({
-            status: data.status, // "PENDING", "SUCCESS", "FAILED", "EXPIRED"
+            status: normalizedStatus, // Normalized to "SUCCESS" for auto-confirmation
+            rawStatus: data.status,
             paymentId: data.paymentId || data.id,
             orderId: data.orderId,
             utr: data.utr || data.bankRrn,

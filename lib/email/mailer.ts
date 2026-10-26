@@ -158,3 +158,62 @@ function getEmailHtml(otp: string): string {
     </html>
   `;
 }
+
+export async function sendPinResetEmail(
+  toEmail: string,
+  customerName: string,
+  newPin: string
+): Promise<{ success: boolean; error?: string }> {
+  const transporter = getTransporter();
+  const fromAddress = process.env.SMTP_FROM || `Shree Shyam Sweets <${process.env.SMTP_USER || "no-reply@mithaase.in"}>`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Your New Mithaasé Security PIN</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #16031E; margin: 0; padding: 20px; color: #FFF8EE; }
+        .card { max-width: 500px; margin: 0 auto; background: #20052B; border: 2px solid #D4AF37; border-radius: 20px; padding: 32px; text-align: center; }
+        .badge { display: inline-block; background: #580E1E; border: 1px solid #D4AF37; color: #F5D061; font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 6px 14px; border-radius: 50px; margin-bottom: 16px; }
+        h1 { color: #FFF8EE; font-size: 24px; margin: 0 0 12px 0; font-family: Georgia, serif; }
+        p { color: #D3BEB0; font-size: 14px; line-height: 1.6; margin: 0 0 24px 0; }
+        .pin-box { background: #16031E; border: 2px solid #10b981; border-radius: 14px; padding: 18px; margin: 24px 0; }
+        .pin-val { font-family: 'Courier New', monospace; font-size: 40px; font-weight: 900; color: #34d399; letter-spacing: 8px; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <div class="badge">Security Notification</div>
+        <h1>Your New Security PIN</h1>
+        <p>Hello ${customerName || "Valued Customer"}, your account PIN has been reset as requested after dual Email and WhatsApp verification.</p>
+        <div class="pin-box">
+          <div class="pin-val">${newPin}</div>
+        </div>
+        <p style="color: #F5D061; font-size: 13px;">
+          Use this 6-digit PIN to log into your account. For your security, you can change your PIN anytime from your account profile settings.
+        </p>
+      </div>
+    </body>
+    </html>
+  `;
+
+  if (transporter) {
+    try {
+      await transporter.sendMail({
+        from: fromAddress,
+        to: toEmail,
+        subject: `Your New Mithaasé Security PIN: ${newPin}`,
+        text: `Hello ${customerName}, your new 6-digit security PIN is: ${newPin}. You can now log into your account.`,
+        html,
+      });
+      return { success: true };
+    } catch (e: any) {
+      console.error("[PIN_RESET_EMAIL] SMTP Error:", e);
+    }
+  }
+
+  console.log(`[PIN RESET EMAIL TO ${toEmail}]: NEW PIN is >>> ${newPin} <<<`);
+  return { success: true };
+}

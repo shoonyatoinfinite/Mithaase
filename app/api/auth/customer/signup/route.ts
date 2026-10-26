@@ -65,14 +65,24 @@ export async function POST(req: Request) {
       }
     }
 
-    // 2. Authoritative Server-Side WhatsApp Reachability Verification Check
-    // Format validation does NOT prove reachability; a consumed OTP row in Neon proves it.
-    const verification = await assertPhoneVerifiedServerSide(cleanPhone, "signup", 15);
-    if (!verification.verified && process.env.NODE_ENV === "production") {
+    // 2. Authoritative Server-Side Dual Verification Checks (Email OTP + WhatsApp OTP)
+    const emailVerification = await assertPhoneVerifiedServerSide(normEmail, "signup", 30);
+    if (!emailVerification.verified && process.env.NODE_ENV === "production") {
       return NextResponse.json(
         {
           error:
-            "Mobile number has not been verified via WhatsApp OTP. Format validation does not prove WhatsApp reachability; please complete WhatsApp verification.",
+            "Email address has not been verified via OTP. Please complete email OTP verification.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const phoneVerification = await assertPhoneVerifiedServerSide(cleanPhone, "signup", 30);
+    if (!phoneVerification.verified && process.env.NODE_ENV === "production") {
+      return NextResponse.json(
+        {
+          error:
+            "Mobile number has not been verified via WhatsApp OTP. Please complete WhatsApp OTP verification.",
         },
         { status: 400 }
       );

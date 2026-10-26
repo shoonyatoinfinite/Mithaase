@@ -193,12 +193,13 @@ export async function sendWhatsAppOtp(params: {
   );
 
   // 6. Dispatch through live YouPI WhatsApp gateway
-  const youpiBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
+  const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
+  const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
   let delivered = false;
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500);
+    const timeout = setTimeout(() => controller.abort(), 8000);
 
     const res = await fetch(`${youpiBaseUrl}/api/v1/customer/send-otp`, {
       method: "POST",
@@ -266,7 +267,36 @@ export async function verifyWhatsAppOtp(params: {
     return { success: false, error: verifyLimit.error };
   }
 
-  // 1. Fetch active verification record from Neon DB
+  // 1. Authoritative check: Check if YouPI live gateway validates this OTP (YouPI generates & sends its own OTP over WhatsApp)
+  let youpiVerified = false;
+  try {
+    const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
+    const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    const youpiRes = await fetch(`${youpiBaseUrl}/api/v1/customer/verify-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mobileNumber: cleanPhone,
+        otp: cleanOtp,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (youpiRes.ok) {
+      const data = await youpiRes.json();
+      if (data.verified || data.success) {
+        youpiVerified = true;
+      }
+    }
+  } catch (err) {
+    // Gateway network/timeout error, proceed to check Neon hash
+  }
+
+  // 2. Fetch active verification record from Neon DB
   const rows = await sql.query(
     `SELECT id, otp_hash, expires_at, attempts, consumed_at 
      FROM phone_verifications 
@@ -276,14 +306,37 @@ export async function verifyWhatsAppOtp(params: {
     [cleanPhone, params.purpose]
   );
 
-  if (!rows || rows.length === 0) {
+  const record = rows && rows.length > 0 ? rows[0] : null;
+
+  if (youpiVerified) {
+    // YouPI gateway verified the code! Consume in Neon DB to fulfill assertPhoneVerifiedServerSide
+    let verificationId = record?.id;
+    if (record) {
+      await sql.query(`UPDATE phone_verifications SET consumed_at = NOW() WHERE id = $1;`, [record.id]);
+    } else {
+      const newRec = await sql.query(
+        `INSERT INTO phone_verifications (phone, purpose, otp_hash, expires_at, attempts, ip, consumed_at)
+         VALUES ($1, $2, 'youpi_gateway_verified', NOW() + INTERVAL '15 minutes', 1, $3, NOW())
+         RETURNING id;`,
+        [cleanPhone, params.purpose, params.ip]
+      );
+      verificationId = newRec[0]?.id;
+    }
+
+    await clearRateLimit(`${cleanPhone}_${params.purpose}`, "otp_verify");
+    return {
+      success: true,
+      verificationId,
+      dbPhone: cleanPhone,
+    };
+  }
+
+  if (!record) {
     return {
       success: false,
       error: "No active verification code found for this number. Please request a new code.",
     };
   }
-
-  const record = rows[0];
 
   // Check expiration
   if (new Date() > new Date(record.expires_at)) {
@@ -303,7 +356,7 @@ export async function verifyWhatsAppOtp(params: {
     };
   }
 
-  // 2. Constant-time HMAC comparison
+  // 3. Constant-time HMAC comparison (for Neon-stored fallback OTPs)
   const expectedHmac = record.otp_hash;
   const submittedHmac = computeOtpHmac(cleanPhone, cleanOtp, params.purpose);
 
@@ -325,7 +378,7 @@ export async function verifyWhatsAppOtp(params: {
     };
   }
 
-  // 3. Mark verification as successfully consumed
+  // 4. Mark verification as successfully consumed
   await sql.query(
     `UPDATE phone_verifications 
      SET consumed_at = NOW() 

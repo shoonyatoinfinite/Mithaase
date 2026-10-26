@@ -180,12 +180,10 @@ export function PaymentSelectionModal({
   const payeeName = settings.upi_payee_name || "Shree Shyam Sweets";
   const paymentNote = `Mithaase Order - ${customerName.trim() || "Customer"}`;
 
-  // NPCI UPI Linking Specification strictly requires 'pa' to contain the literal '@' (e.g. user@bank).
-  // Using encodeURIComponent on pa converts '@' into '%40', which causes BHIM and other UPI apps
-  // to display '%' or '%40' instead of '@', breaking the payee VPA validation.
+  const trParam = youpiSession?.paymentId ? `&tr=${encodeURIComponent(youpiSession.paymentId)}` : "";
   const upiParams = `pa=${upiId}&pn=${encodeURIComponent(
     payeeName
-  )}&am=${amount}&cu=INR&tn=${encodeURIComponent(paymentNote)}`;
+  )}&am=${amount}&cu=INR&tn=${encodeURIComponent(paymentNote)}${trParam}`;
 
   const upiUri = `upi://pay?${upiParams}`;
 
@@ -374,7 +372,7 @@ export function PaymentSelectionModal({
         if (!res.ok) return;
         const data = await res.json();
 
-        if (isMounted && data.status === "SUCCESS") {
+        if (isMounted && (data.status === "SUCCESS" || data.status === "COMPLETED" || data.status === "PAID")) {
           setYoupiStatus("SUCCESS");
           const verifiedUtr = data.utr || `4289${Date.now().toString().slice(-8)}`;
           setYoupiUtr(verifiedUtr);
