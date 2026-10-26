@@ -31,21 +31,23 @@ export async function GET(req: Request) {
     }
 
     const customer = rows[0];
+    const hasCompletePhone = Boolean(customer.phone && customer.phone.replace(/[^0-9]/g, "").length >= 10);
     const hasCompleteProfile = Boolean(
       customer.delivery_address &&
       customer.locality &&
-      customer.phone &&
-      customer.phone.replace(/[^0-9]/g, "").length >= 10
+      hasCompletePhone
     );
 
-    return NextResponse.json({
-      exists: true,
-      hasCompleteProfile,
-      customer: {
-        id: customer.id,
-        email: customer.email,
-        phone: customer.phone,
-        name: customer.name,
+    const userObj = {
+      id: customer.id,
+      email: customer.email,
+      name: customer.name,
+      phone: customer.phone,
+      phone_verified_at: customer.phone_verified_at,
+      authProvider: "google" as const,
+      savedProfile: {
+        customer_name: customer.name,
+        customer_phone: customer.phone,
         delivery_address: customer.delivery_address,
         locality: customer.locality,
         landmark: customer.landmark,
@@ -53,11 +55,34 @@ export async function GET(req: Request) {
         latitude: customer.latitude ? Number(customer.latitude) : 28.1907,
         longitude: customer.longitude ? Number(customer.longitude) : 76.1624,
         map_url: customer.map_url,
-        phone_verified_at: customer.phone_verified_at,
-        created_at: customer.created_at,
-        updated_at: customer.updated_at,
+        savedAt: customer.updated_at || customer.created_at,
       },
+    };
+
+    const token = await createCustomerSession({
+      userId: customer.id,
+      phone: customer.phone || "",
+      email: customer.email,
     });
+
+    const response = NextResponse.json({
+      exists: true,
+      hasCompleteProfile,
+      user: userObj,
+      customer: userObj.savedProfile,
+    });
+
+    if (hasCompleteProfile) {
+      response.cookies.set(SESSION_COOKIE_NAME, token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 30 * 24 * 60 * 60,
+      });
+    }
+
+    return response;
   } catch (error) {
     return NextResponse.json({ error: "Failed to check profile." }, { status: 500 });
   }

@@ -1,0 +1,56 @@
+{
+  "name": "Mithaasé — Shree Shyam Sweets",
+  "short_name": "Mithaasé",
+  "description": "Authentic Pure Desi Ghee Diwali Mithai & Sweets by Shree Shyam Sweets",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#16031E",
+  "theme_color": "#3B0820",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en-IN",
+  "categories": ["shopping", "food", "lifestyle"],
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Diwali Sweets Shop",
+      "short_name": "Shop",
+      "description": "Browse authentic sweets and festival specials",
+      "url": "/#shop",
+      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "My Orders & Receipts",
+      "short_name": "Orders",
+      "description": "Track live sweet deliveries and download bills",
+      "url": "/orders",
+      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Shopping Cart",
+      "short_name": "Cart",
+      "description": "View booked sweets and checkout",
+      "url": "/cart",
+      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192" }]
+    }
+  ]
+}

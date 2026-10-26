@@ -159,11 +159,12 @@ export async function POST(req: Request) {
       upiReference: body.upi_reference,
       upiScreenshot: body.upi_screenshot,
       idempotencyKey,
+      isBookingRequest: Boolean(body.is_booking_request || body.isBookingRequest),
     });
 
     if (!result.success || !result.order) {
       return NextResponse.json(
-        { error: result.error || "Failed to place order." },
+        { error: result.error || "Failed to place order.", storeClosed: result.storeClosed },
         { status: result.code || 400 }
       );
     }

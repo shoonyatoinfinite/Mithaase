@@ -8,6 +8,7 @@ import { Order, OrderStatus, PaymentStatus, StoreSettings } from "@/types";
 import { useRealtime } from "@/lib/hooks/useRealtime";
 import { Diya } from "@/components/animations/Diya";
 import { OrderReceipt } from "@/components/orders/OrderReceipt";
+import { PaymentSelectionModal } from "@/components/checkout/PaymentSelectionModal";
 import {
   CheckCircle2,
   Package,
@@ -22,6 +23,7 @@ import {
   ShieldCheck,
   ArrowRight,
   Phone,
+  Lock,
 } from "lucide-react";
 
 interface LiveOrderTrackerProps {
@@ -30,7 +32,7 @@ interface LiveOrderTrackerProps {
 }
 
 const statusSteps: { key: OrderStatus; label: string; desc: string }[] = [
-  { key: "pending_confirmation", label: "Order Received", desc: "Received at sweet workshop" },
+  { key: "pending_confirmation", label: "Request Placed", desc: "Received at sweet workshop" },
   { key: "confirmed", label: "Confirmed", desc: "Verified & queued for batching" },
   { key: "preparing", label: "Packing Fresh", desc: "Fresh sweets boxed with love" },
   { key: "ready_for_dispatch", label: "Ready", desc: "Sealed & assigned to delivery" },
@@ -39,6 +41,31 @@ const statusSteps: { key: OrderStatus; label: string; desc: string }[] = [
 ];
 
 function getOrderStatusHeadline(status: OrderStatus, order?: Order) {
+  if (order?.booking_status === "requested") {
+    return {
+      title: "After-Hours Booking",
+      highlight: "Request Received 🌙",
+      desc: "Store is currently closed. We have received your booking request details. No payment is required right now! Once our store manager approves, payment options will be unlocked for you.",
+      iconColor: "text-amber-400 bg-amber-950/80 border-amber-400",
+    };
+  }
+  if (order?.booking_status === "approved_for_payment") {
+    return {
+      title: "Booking Request Approved!",
+      highlight: "Select Payment 💳",
+      desc: "Great news! Our store manager approved your booking. Please choose your payment method below to finalize your order.",
+      iconColor: "text-emerald-400 bg-emerald-950/80 border-emerald-400",
+    };
+  }
+  if (order?.booking_status === "payment_selected") {
+    return {
+      title: "Payment Submitted —",
+      highlight: "Awaiting Final Confirmation ⏳",
+      desc: "Your payment preference has been recorded. Our store manager is reconfirming your order for fulfillment.",
+      iconColor: "text-sky-400 bg-sky-950/80 border-sky-400",
+    };
+  }
+
   const isManualUpiPending =
     order &&
     order.payment_method === "upi" &&
@@ -121,6 +148,40 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
   const [lastUpdatedNotice, setLastUpdatedNotice] = useState<string | null>(null);
   const [pulseNewStatus, setPulseNewStatus] = useState<boolean>(false);
   const [isManualRefreshing, setIsManualRefreshing] = useState<boolean>(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
+
+  const handleSelectApprovedPayment = async (data: {
+    paymentMethod: "cod" | "upi";
+    upiReference?: string;
+    upiScreenshot?: string;
+  }) => {
+    setIsSubmittingPayment(true);
+    setPaymentError("");
+    try {
+      const res = await fetch(`/api/orders/${order.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          booking_status: "payment_selected",
+          payment_method: data.paymentMethod,
+          upi_reference: data.upiReference,
+          upi_screenshot: data.upiScreenshot,
+        }),
+      });
+      const updated = await res.json();
+      if (!res.ok) {
+        throw new Error(updated.error || "Failed to submit payment selection.");
+      }
+      setOrder(updated);
+      setIsPaymentModalOpen(false);
+    } catch (err: any) {
+      setPaymentError(err.message || "Failed to submit payment selection.");
+    } finally {
+      setIsSubmittingPayment(false);
+    }
+  };
 
   // Tracking page is publicly accessible to any customer with their order link
 
@@ -159,7 +220,8 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
         setOrder((prev) => {
           const newStatus = (payload.data.order_status || prev.order_status) as OrderStatus;
           const newPay = (payload.data.payment_status || prev.payment_status) as PaymentStatus;
-          if (prev.order_status !== newStatus || prev.payment_status !== newPay) {
+          const newBooking = (payload.data.booking_status || prev.booking_status);
+          if (prev.order_status !== newStatus || prev.payment_status !== newPay || prev.booking_status !== newBooking) {
             setLastUpdatedNotice(
               `⚡ Live update: Order status is now "${newStatus.replace(/_/g, " ").toUpperCase()}"!`
             );
@@ -170,6 +232,7 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
             ...prev,
             order_status: newStatus,
             payment_status: newPay,
+            booking_status: newBooking,
           };
         });
       } else if (payload.data?.isFallbackTick) {
@@ -189,6 +252,8 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
   const isPaid = order.payment_status === "paid";
   const isCancelled = order.order_status === "cancelled";
   const isManualUpiPending =
+    order.booking_status !== "requested" &&
+    order.booking_status !== "approved_for_payment" &&
     order.payment_method === "upi" &&
     (!order.upi_reference?.startsWith("youpi:") || order.payment_status === "pending_verification") &&
     order.order_status === "pending_confirmation";
@@ -242,9 +307,100 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
         </p>
 
         <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs">
-          <span className="text-white/50">Order Reference:</span>
+          <span className="text-white/50">Order Number:</span>
           <strong className="text-[#F5D061] font-mono tracking-wider">{order.order_number}</strong>
         </div>
+
+        {/* AFTER-HOURS BOOKING REQUEST RECEIVED BANNER */}
+        {order.booking_status === "requested" && (
+          <div className="mt-5 p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-purple-950/90 via-[#23042A] to-purple-950/90 border-2 border-[#D4AF37]/70 shadow-2xl text-left space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-[#D4AF37]/20 border border-[#D4AF37]/50 flex items-center justify-center text-[#F5D061] shrink-0 shadow-inner">
+                <Clock className="w-5 h-5 animate-pulse text-[#F5D061]" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm sm:text-base font-bold text-white">
+                    After-Hours Booking Request Received — No Upfront Payment Required
+                  </h3>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#D4AF37]/20 text-[#F5D061] border border-[#D4AF37]/40">
+                    Awaiting Store Approval
+                  </span>
+                </div>
+                <p className="text-xs text-[#E8D4C8] leading-relaxed">
+                  Our shop is currently closed for instant deliveries. We have received your booking request for <strong>₹{order.total_amount > 0 ? order.total_amount : order.subtotal}</strong>. Our store manager will review your request. <strong>No payment is needed right now</strong>. Once approved, you will be notified right here to select your payment method (UPI or COD).
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* APPROVED FOR PAYMENT ACTION CARD */}
+        {order.booking_status === "approved_for_payment" && (
+          <div className="mt-5 p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-emerald-950/95 via-[#1E0528] to-emerald-950/95 border-2 border-emerald-400 shadow-[0_0_30px_rgba(52,211,153,0.3)] text-left space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-start gap-3.5">
+              <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-400 flex items-center justify-center text-emerald-300 shrink-0 shadow-inner">
+                <Sparkles className="w-6 h-6 text-emerald-300 animate-pulse" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-base sm:text-lg font-serif font-black text-white">
+                    🎉 Booking Request Approved by Store Manager!
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-400">
+                    Action Required
+                  </span>
+                </div>
+                <p className="text-xs text-emerald-100/90 leading-relaxed">
+                  Your booking request for <strong>₹{order.total_amount > 0 ? order.total_amount : order.subtotal}</strong> has been approved! Please choose your payment method (Online UPI or Cash on Delivery) now to finalize your order.
+                </p>
+              </div>
+            </div>
+
+            {paymentError && (
+              <div className="p-3 rounded-xl bg-red-950/80 border border-red-500/50 text-red-200 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{paymentError}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setIsPaymentModalOpen(true)}
+              className="w-full py-4 px-6 rounded-2xl gold-gradient-btn text-xs sm:text-sm font-black flex items-center justify-center gap-2 shadow-2xl active:scale-95 transition-all text-[#16031E] cursor-pointer"
+            >
+              <Lock className="w-4 h-4" />
+              <span>Choose Payment Method (UPI / Cash on Delivery)</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* PAYMENT SELECTED - AWAITING FINAL REAPPROVAL */}
+        {order.booking_status === "payment_selected" && (
+          <div className="mt-5 p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-sky-950/90 via-[#1E062B] to-sky-950/90 border-2 border-sky-400/70 shadow-2xl text-left space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-sky-400/20 border border-sky-400/50 flex items-center justify-center text-sky-300 shrink-0 shadow-inner">
+                <Clock className="w-5 h-5 animate-pulse text-sky-400" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm sm:text-base font-bold text-white">
+                    Payment Submitted — Awaiting Store Manager Reapproval
+                  </h3>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-400/20 text-sky-300 border border-sky-400/40">
+                    Final Confirmation
+                  </span>
+                </div>
+                <p className="text-xs text-sky-100/90 leading-relaxed">
+                  You selected <strong>{order.payment_method === "upi" ? "Online UPI" : "Cash on Delivery (COD)"}</strong>
+                  {order.payment_method === "upi" && order.upi_reference ? ` (Ref: ${order.upi_reference})` : ""}.
+                  Our store manager will reapprove and confirm your order shortly for kitchen preparation.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* MANUAL UPI URGENT ADMIN CONTACT & NOTICE BANNER */}
         {isManualUpiPending && (
@@ -630,7 +786,12 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
               <div className="pt-2.5 border-t border-white/10 flex items-center justify-between text-xs">
                 <span className="text-white/50">Payment Mode:</span>
                 <span className="font-semibold text-white flex items-center gap-1.5">
-                  {order.payment_method === "upi" ? (
+                  {order.booking_status === "requested" ? (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                      <span className="text-amber-300 font-bold">Pending Store Approval (No Payment Yet)</span>
+                    </>
+                  ) : order.payment_method === "upi" ? (
                     <>
                       <span className="w-2 h-2 rounded-full bg-purple-400" />
                       <span className="text-purple-300 font-bold">Direct UPI Online</span>
@@ -708,6 +869,21 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
             </div>
           </div>
         </div>
+      )}
+
+      {/* Payment Selection Modal for Approved Booking Requests */}
+      {isPaymentModalOpen && (
+        <PaymentSelectionModal
+          isOpen={isPaymentModalOpen}
+          onClose={() => setIsPaymentModalOpen(false)}
+          amount={order.total_amount > 0 ? order.total_amount : order.subtotal}
+          customerName={order.customer_name}
+          customerPhone={order.customer_phone}
+          locality={order.locality}
+          settings={settings}
+          isSubmitting={isSubmittingPayment}
+          onConfirmOrder={handleSelectApprovedPayment}
+        />
       )}
     </div>
   );

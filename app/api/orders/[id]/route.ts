@@ -3,6 +3,7 @@ import {
   getOrderById,
   updateOrderStatus,
   updatePaymentStatus,
+  updateBookingStatus,
   setOrderDeliveryQueue,
   processOrderRefund,
 } from "@/lib/data/store";
@@ -85,19 +86,72 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
+    const order = await getOrderById(id);
+    if (!order) {
+      return NextResponse.json({ error: "Order not found" }, { status: 404 });
+    }
+
     const isAdmin = isAdminAuthenticated(req);
     const isRider = isRiderAuthenticated(req);
+    const customerSession = await getCustomerSessionFromRequest(req);
+
+    const isOrderOwner =
+      customerSession &&
+      ((order.customer_email && customerSession.email && order.customer_email.toLowerCase() === customerSession.email.toLowerCase()) ||
+        (order.customer_phone && customerSession.phone && order.customer_phone === customerSession.phone));
+
+    const body = await req.json();
+
+    // Check if this is an authorized customer selecting payment for an approved booking request
+    const isCustomerPaymentSelection =
+      isOrderOwner &&
+      body.booking_status === "payment_selected" &&
+      order.booking_status === "approved_for_payment";
 
     // Strict Server-Side Role Enforcement
-    if (!isAdmin && !isRider) {
+    if (!isAdmin && !isRider && !isCustomerPaymentSelection) {
       return NextResponse.json(
-        { error: "Forbidden: Staff administrator or rider login required." },
+        { error: "Forbidden: Staff administrator, rider, or authorized customer payment action required." },
         { status: 403 }
       );
     }
 
-    const { id } = await params;
-    const body = await req.json();
+    // Customer Payment Selection Handler
+    if (isCustomerPaymentSelection) {
+      const payRes = await updateBookingStatus(
+        id,
+        "payment_selected",
+        "Customer",
+        body.note,
+        {
+          payment_method: body.payment_method === "upi" ? "upi" : "cod",
+          upi_reference: body.payment_method === "upi" ? body.upi_reference : undefined,
+          upi_screenshot: body.payment_method === "upi" ? body.upi_screenshot : undefined,
+        }
+      );
+      if (!payRes.success) {
+        return NextResponse.json({ error: payRes.error || "Failed to submit payment selection" }, { status: 400 });
+      }
+    }
+
+    // Admin Booking Status Updates (Approve Request or Reapprove/Confirm Order)
+    if (isAdmin && body.booking_status) {
+      const bookRes = await updateBookingStatus(
+        id,
+        body.booking_status,
+        "Admin",
+        body.note,
+        body.payment_method ? {
+          payment_method: body.payment_method,
+          upi_reference: body.upi_reference,
+          upi_screenshot: body.upi_screenshot,
+        } : undefined
+      );
+      if (!bookRes.success) {
+        return NextResponse.json({ error: bookRes.error || "Failed to update booking status" }, { status: 400 });
+      }
+    }
 
     if (body.order_status) {
       // Riders can only update their active delivery progression

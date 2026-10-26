@@ -264,10 +264,21 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginWithGoogle = useCallback(async () => {
     try {
-      await authClient.signIn.social({
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const callbackURL = `${origin}/auth/callback`;
+      const result: any = await authClient.signIn.social({
         provider: "google",
-        callbackURL: "/auth/callback",
+        callbackURL,
       });
+
+      if (result?.error) {
+        return { success: false, error: result.error.message || "Google sign-in error." };
+      }
+
+      if (result?.data?.url && typeof window !== "undefined") {
+        window.location.href = result.data.url;
+      }
+
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e?.message || "Google sign-in error." };

@@ -9,7 +9,7 @@ import { Sparkles, Loader2, CheckCircle2, AlertCircle, MapPin, Phone } from "luc
 
 export default function AuthCallbackPage() {
   const router = useRouter();
-  const { syncGoogleCustomer } = useUserAuth();
+  const { syncGoogleCustomer, refreshUser } = useUserAuth();
   const { settings } = useStoreSettings();
 
   const [loading, setLoading] = useState(true);
@@ -32,7 +32,7 @@ export default function AuthCallbackPage() {
       try {
         const session = await authClient.getSession();
         if (!session?.data?.user?.email) {
-          // If session not ready immediately, wait 1 second and retry once
+          // If session not ready immediately, wait 1.2s and retry once
           setTimeout(async () => {
             const retrySession = await authClient.getSession();
             if (retrySession?.data?.user?.email) {
@@ -59,9 +59,12 @@ export default function AuthCallbackPage() {
       const res = await fetch(`/api/auth/customer/google-sync?email=${encodeURIComponent(email)}`);
       if (res.ok) {
         const data = await res.json();
-        if (data.exists && data.hasCompleteProfile) {
+        if (data.exists && data.hasCompleteProfile && data.user) {
+          try {
+            localStorage.setItem("mithaase_customer_session", JSON.stringify(data.user));
+          } catch {}
+          await refreshUser();
           router.replace("/#shop");
-          router.refresh();
           return;
         }
       }
@@ -71,7 +74,7 @@ export default function AuthCallbackPage() {
     }
 
     processAuth();
-  }, [router]);
+  }, [router, refreshUser]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,8 +100,8 @@ export default function AuthCallbackPage() {
 
     setIsSubmitting(false);
     if (res.success) {
+      await refreshUser();
       router.replace("/#shop");
-      router.refresh();
     } else {
       setError(res.error || "Failed to save profile.");
     }

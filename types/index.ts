@@ -137,6 +137,7 @@ export interface Order {
   refund_screenshot?: string;
   refunded_at?: string;
   source: 'online' | 'manual';
+  booking_status?: 'standard' | 'requested' | 'approved_for_payment' | 'payment_selected' | 'confirmed';
   items: OrderItem[];
   status_history?: OrderStatusHistory[];
   created_at: string;

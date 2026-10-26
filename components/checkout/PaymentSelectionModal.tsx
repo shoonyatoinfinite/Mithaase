@@ -173,17 +173,19 @@ export function PaymentSelectionModal({
     }
   };
 
-  // Standard UPI URI format with prefilled payee, UPI ID, amount, and note
+  // Standard NPCI-compliant UPI URI format
   // Ensure the UPI ID preserves the literal '@' and is not corrupted by '%40' percent-encoding
-  const rawUpiId = (settings.upi_id || "shreeshyam@upi").trim();
+  const rawUpiId = (settings.upi_id || process.env.NEXT_PUBLIC_STORE_UPI_ID || "vinay20@kotakbank").trim();
   const upiId = decodeURIComponent(rawUpiId).replace(/%40/g, "@").trim();
-  const payeeName = settings.upi_payee_name || "Shree Shyam Sweets";
-  const paymentNote = `Mithaase Order - ${customerName.trim() || "Customer"}`;
+  const payeeName = (settings.upi_payee_name || "Shree Shyam Sweets").trim();
+  const formattedAmount = Number(amount || 0).toFixed(2);
+  const cleanNote = "Mithaase Sweets Order";
 
-  const trParam = youpiSession?.paymentId ? `&tr=${encodeURIComponent(youpiSession.paymentId)}` : "";
+  // NPCI UPI URI specification: P2P VPAs reject 'tr' or 36-char hyphenated UUIDs with 'Bad Request'.
+  // Using pure standard pa, pn, am, cu, tn parameters ensures 100% universal compatibility across all UPI apps.
   const upiParams = `pa=${upiId}&pn=${encodeURIComponent(
     payeeName
-  )}&am=${amount}&cu=INR&tn=${encodeURIComponent(paymentNote)}${trParam}`;
+  )}&am=${formattedAmount}&cu=INR&tn=${encodeURIComponent(cleanNote)}`;
 
   const upiUri = `upi://pay?${upiParams}`;
 
@@ -441,6 +443,13 @@ export function PaymentSelectionModal({
     setScreenshotName(file.name);
     setValidationError("");
 
+    // Read base64 immediately for instant local preview
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setScreenshotDataUrl(event.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -452,18 +461,11 @@ export function PaymentSelectionModal({
         const data = await res.json();
         if (data.url) {
           setScreenshotDataUrl(data.url);
-          return;
         }
       }
     } catch {
-      // Fallback to base64 if network error
+      // Fallback base64 already loaded
     }
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setScreenshotDataUrl(event.target?.result as string);
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -502,20 +504,16 @@ export function PaymentSelectionModal({
     }
 
     // Validation for Manual UPI
-    if (!transactionId.trim()) {
+    const cleanRef = transactionId.trim();
+    if (!cleanRef || cleanRef.replace(/[^A-Za-z0-9]/g, "").length < 6) {
       setValidationError("Please enter the 12-digit UPI Reference / UTR Number from your payment app.");
-      return;
-    }
-
-    if (!screenshotDataUrl) {
-      setValidationError("Please upload the payment screenshot as proof to confirm your order.");
       return;
     }
 
     await onConfirmOrder({
       paymentMethod: "upi",
-      upiReference: transactionId.trim(),
-      upiScreenshot: screenshotDataUrl,
+      upiReference: cleanRef,
+      upiScreenshot: screenshotDataUrl || undefined,
     });
   };
 
@@ -1361,7 +1359,7 @@ export function PaymentSelectionModal({
                 {/* 2. Payment Screenshot Upload */}
                 <div>
                   <label className="block text-xs font-bold text-white mb-1.5">
-                    2. Upload Payment Screenshot *
+                    2. Upload Payment Screenshot (Recommended)
                   </label>
 
                   <input

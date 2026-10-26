@@ -519,6 +519,53 @@ export default function AdminOrdersPage() {
     }
   };
 
+  // Update Booking Status Handler (Approve Request or Reapprove/Confirm Order)
+  const handleUpdateBooking = async (
+    targetBookingStatus: "approved_for_payment" | "confirmed",
+    note?: string
+  ) => {
+    if (!selectedOrder) return;
+    setIsUpdating(true);
+    setActionSuccess("");
+    setActionError("");
+
+    try {
+      const body: any = {
+        booking_status: targetBookingStatus,
+        note: note || (targetBookingStatus === "approved_for_payment"
+          ? "Approved after-hours booking request and unlocked payment options"
+          : "Reapproved order after payment selection"),
+      };
+
+      if (targetBookingStatus === "confirmed") {
+        body.order_status = "confirmed";
+      }
+
+      const res = await fetch(`/api/orders/${selectedOrder.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to update booking status");
+      }
+
+      setSelectedOrder(data);
+      setActionSuccess(
+        targetBookingStatus === "approved_for_payment"
+          ? `Booking #${selectedOrder.order_number} approved! Customer can now select payment on tracking page.`
+          : `Order #${selectedOrder.order_number} reapproved & officially confirmed!`
+      );
+      fetchOrders(true);
+    } catch (err: any) {
+      setActionError(err.message || "Failed to update booking");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   // Status Color Styling Helper
   const getStatusBadgeStyle = (status: OrderStatus) => {
     switch (status) {
@@ -776,6 +823,22 @@ export default function AdminOrdersPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
+                      {o.booking_status === "requested" && (
+                        <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/50 text-[10px] font-bold shrink-0 flex items-center gap-1 animate-pulse">
+                          <Clock className="w-3 h-3 text-purple-300" />
+                          <span>🌙 Req</span>
+                        </span>
+                      )}
+                      {o.booking_status === "approved_for_payment" && (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 text-[10px] font-bold shrink-0">
+                          💳 Pay Unlocked
+                        </span>
+                      )}
+                      {o.booking_status === "payment_selected" && (
+                        <span className="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/50 text-[10px] font-bold shrink-0 animate-pulse">
+                          ⏳ Reapproval Req
+                        </span>
+                      )}
                       {o.delivery_queued && (
                         <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-[#F5D061] border border-amber-500/50 text-[10px] font-bold shrink-0 flex items-center gap-1">
                           <Boxes className="w-3 h-3 text-[#F5D061]" />
@@ -787,7 +850,9 @@ export default function AdminOrdersPage() {
                           o.order_status
                         )}`}
                       >
-                        {o.order_status === "ready_for_dispatch"
+                        {o.booking_status === "requested"
+                          ? "Booking Req"
+                          : o.order_status === "ready_for_dispatch"
                           ? "Packed"
                           : o.order_status === "pending_confirmation"
                           ? "Order Placed"
@@ -1081,6 +1146,66 @@ export default function AdminOrdersPage() {
                         </div>
                       </div>
                     )
+                  ) : selectedOrder.booking_status === "requested" ? (
+                    <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/90 via-[#280532] to-purple-950/90 border-2 border-[#D4AF37] space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-white font-bold text-xs uppercase tracking-wider">
+                          <Clock className="w-4 h-4 text-[#F5D061]" />
+                          <span>🌙 After-Hours Booking Request</span>
+                        </div>
+                        <span className="px-2.5 py-0.5 rounded-full bg-[#D4AF37]/20 text-[#F5D061] text-[10px] font-bold border border-[#D4AF37]/40">
+                          Review Required
+                        </span>
+                      </div>
+                      <p className="text-xs text-white/80 leading-relaxed">
+                        Customer submitted this booking while the shop was closed (no upfront payment was collected). Approve this request to unlock payment options (UPI / COD) for the customer.
+                      </p>
+                      <button
+                        type="button"
+                        disabled={isUpdating}
+                        onClick={() => handleUpdateBooking("approved_for_payment")}
+                        className="w-full py-3.5 px-4 rounded-xl gold-gradient-btn font-bold text-xs flex items-center justify-center gap-2 shadow cursor-pointer text-[#16031E]"
+                      >
+                        <CheckCircle2 className="w-4 h-4 text-[#16031E]" />
+                        <span>Approve Request & Unlock Payment Options</span>
+                      </button>
+                    </div>
+                  ) : selectedOrder.booking_status === "approved_for_payment" ? (
+                    <div className="p-4 rounded-2xl bg-[#280532] border border-emerald-400/50 space-y-2">
+                      <div className="flex items-center gap-2 text-emerald-300 font-bold text-xs">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <span>Booking Request Approved — Awaiting Customer Payment Selection</span>
+                      </div>
+                      <p className="text-xs text-white/70 leading-relaxed">
+                        Customer has been notified on their live tracking page to select UPI or COD. Once selected, you can reapprove and confirm the order.
+                      </p>
+                    </div>
+                  ) : selectedOrder.booking_status === "payment_selected" ? (
+                    <div className="p-4 rounded-2xl bg-gradient-to-r from-sky-950/90 via-[#1C082B] to-sky-950/90 border-2 border-sky-400 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-white font-bold text-xs uppercase tracking-wider">
+                          <CheckCircle2 className="w-4 h-4 text-sky-400" />
+                          <span>💳 Payment Selected by Customer</span>
+                        </div>
+                        <span className="px-2.5 py-0.5 rounded-full bg-sky-400/20 text-sky-300 text-[10px] font-bold border border-sky-400/40">
+                          Final Reapproval Required
+                        </span>
+                      </div>
+                      <p className="text-xs text-white/80 leading-relaxed">
+                        Customer selected <strong>{selectedOrder.payment_method.toUpperCase()}</strong>.
+                        {selectedOrder.payment_method === "upi" && selectedOrder.upi_reference ? ` Ref: ${selectedOrder.upi_reference}.` : ""}
+                        Click below to reapprove and officially confirm this order into preparation!
+                      </p>
+                      <button
+                        type="button"
+                        disabled={isUpdating}
+                        onClick={() => handleUpdateBooking("confirmed")}
+                        className="w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-green-500 hover:from-emerald-500 hover:to-green-400 text-white font-bold text-xs flex items-center justify-center gap-2 shadow cursor-pointer"
+                      >
+                        <Check className="w-4 h-4" />
+                        <span>Reapprove & Confirm Order (Place Order)</span>
+                      </button>
+                    </div>
                   ) : nextStep ? (
                     <button
                       type="button"

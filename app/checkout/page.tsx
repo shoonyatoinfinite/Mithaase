@@ -406,15 +406,6 @@ export default function CheckoutPage() {
       return;
     }
 
-    if (isStoreClosed) {
-      setIsStoreClosedModalOpen(true);
-      setOrderError(
-        settings.closure_message ||
-          "Store is currently closed for online deliveries. Please check opening timings or visit our shop directly."
-      );
-      return;
-    }
-
     if (items.length === 0) {
       setOrderError("Your cart is empty. Please add sweets before placing an order.");
       return;
@@ -436,6 +427,12 @@ export default function CheckoutPage() {
       return;
     }
 
+    // After hours: Directly submit booking request without payment modal or upfront payment
+    if (isStoreClosed) {
+      handleConfirmOrder({ paymentMethod: "cod", isBookingRequest: true });
+      return;
+    }
+
     setIsPaymentModalOpen(true);
   };
 
@@ -443,6 +440,7 @@ export default function CheckoutPage() {
     paymentMethod: "cod" | "upi";
     upiReference?: string;
     upiScreenshot?: string;
+    isBookingRequest?: boolean;
   }) => {
     setIsSubmitting(true);
     setOrderError("");
@@ -471,6 +469,7 @@ export default function CheckoutPage() {
         payment_method: paymentData.paymentMethod,
         upi_reference: paymentData.paymentMethod === "upi" ? paymentData.upiReference : undefined,
         upi_screenshot: paymentData.paymentMethod === "upi" ? paymentData.upiScreenshot : undefined,
+        is_booking_request: paymentData.isBookingRequest,
         coupon_code: appliedCoupon ? appliedCoupon.code : undefined,
         idempotency_key: idempotencyKey,
         discount_amount:
@@ -1040,22 +1039,46 @@ export default function CheckoutPage() {
                   </div>
                 )}
 
-                {/* Primary Place Order Button (Only when cart has items) */}
+                {/* After-Hours Booking Notice */}
+                {isStoreClosed && items.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/90 via-[#23042A] to-purple-950/90 border border-[#D4AF37]/50 text-xs text-[#EAD8C7] space-y-2">
+                    <div className="flex items-center gap-2 text-white font-bold">
+                      <Clock className="w-4 h-4 text-[#F5D061]" />
+                      <span>Shop Closed for Instant Orders (Hours: {settings.operating_hours || "8:00 AM - 10:00 PM"})</span>
+                    </div>
+                    <p className="text-white/80 leading-relaxed text-[11px]">
+                      Our halwai workshop is currently closed for live dispatch. You can still submit an <strong>After-Hours Booking Request</strong>.
+                      <strong> No upfront payment is required</strong>! Your request will be sent to the store manager. Once approved, you will be notified on the tracking page to choose your payment method (UPI / COD).
+                    </p>
+                  </div>
+                )}
+
+                {/* Primary Place Order / Booking Request Button */}
                 {items.length > 0 && (
                   <button
                     type="submit"
                     id="place-order-submit-btn"
-                    onClick={(e) => {
-                      if (isStoreClosed) {
-                        e.preventDefault();
-                        setIsStoreClosedModalOpen(true);
-                      }
-                    }}
+                    disabled={isSubmitting}
                     className="w-full py-4 rounded-full font-black text-sm flex items-center justify-center gap-2 shadow-2xl transition-all active:scale-95 gold-gradient-btn"
                   >
-                    <Lock className="w-4 h-4" />
-                    <span>Proceed to Payment / Place Order (₹{finalTotal})</span>
-                    <ArrowRight className="w-4 h-4" />
+                    {isSubmitting ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin text-[#16031E]" />
+                        <span>Submitting Request...</span>
+                      </>
+                    ) : isStoreClosed ? (
+                      <>
+                        <Clock className="w-4 h-4 text-[#16031E]" />
+                        <span>Submit After-Hours Booking Request (No Upfront Payment)</span>
+                        <ArrowRight className="w-4 h-4 text-[#16031E]" />
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="w-4 h-4" />
+                        <span>Proceed to Payment / Place Order (₹{finalTotal})</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
                   </button>
                 )}
               </form>

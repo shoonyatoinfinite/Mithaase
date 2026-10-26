@@ -48,14 +48,16 @@ export async function POST(req: Request) {
 
     // 1. Locate customer account in Neon PostgreSQL
     const cleanPhone = rawIdentifier.replace(/[^0-9]/g, "").slice(-10);
+    const hasValidPhone = cleanPhone.length === 10;
     const normEmail = rawIdentifier.toLowerCase();
 
     const custRows = await sql.query(
       `SELECT id, name, email, phone 
        FROM customer_accounts 
-       WHERE LOWER(email) = $1 OR phone = $2 
+       WHERE LOWER(email) = $1 
+          OR ($2 = TRUE AND (phone = $3 OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', '', 'g'), 10) = $3))
        LIMIT 1;`,
-      [normEmail, cleanPhone]
+      [normEmail, hasValidPhone, cleanPhone]
     );
 
     if (!custRows || custRows.length === 0) {

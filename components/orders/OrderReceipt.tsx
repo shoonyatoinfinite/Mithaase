@@ -245,7 +245,7 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
                 </span>
                 <span className="text-[11px] text-emerald-900 font-medium block">
                   Payment Method: {order.payment_method.toUpperCase()}
-                  {order.upi_reference ? ` • Ref: ${order.upi_reference}` : ""}
+                  {order.payment_method === "upi" && order.upi_reference ? ` • Ref: ${order.upi_reference}` : ""}
                 </span>
                 <span className="text-[10px] text-emerald-700 block">
                   Verified by Shree Shyam Sweets Delivery Fleet

@@ -33,6 +33,7 @@ export interface CreateOrderParams {
   upiReference?: string;
   upiScreenshot?: string;
   idempotencyKey?: string;
+  isBookingRequest?: boolean;
 }
 
 export interface CreateOrderResult {
@@ -40,6 +41,7 @@ export interface CreateOrderResult {
   order?: Order;
   error?: string;
   code?: number;
+  storeClosed?: boolean;
 }
 
 export async function processAuthoritativeCheckout(params: CreateOrderParams): Promise<CreateOrderResult> {
@@ -83,11 +85,13 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
       code: 403,
     };
   }
-  if (!settings.accepts_orders || settings.store_status !== "open") {
+  const isStoreClosed = !settings.accepts_orders || settings.store_status !== "open";
+  if (isStoreClosed && !params.isBookingRequest) {
     return {
       success: false,
-      error: settings.closure_message || "Store is currently closed for online orders.",
+      error: settings.closure_message || "Store is currently closed for instant orders. Please submit an After-Hours Booking Request instead.",
       code: 403,
+      storeClosed: true,
     };
   }
 
@@ -272,32 +276,54 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
   const totalAmount = Math.max(0, subtotal - discountAmount + deliveryFee);
 
   // 6. UPI Reference Validation (anti-replay check)
+  // Strictly only validate or assign cleanUtr if paymentMethod is 'upi' and NOT a booking request
   let cleanUtr: string | null = null;
-  if (params.upiReference) {
-    cleanUtr = params.upiReference.trim().toUpperCase();
-    // Validate format (12 alphanumeric characters or youpi:... session)
-    if (!/^[A-Z0-9]{12}$/.test(cleanUtr) && !cleanUtr.startsWith("YOUPI:")) {
+  if (!params.isBookingRequest && params.paymentMethod === "upi") {
+    if (!params.upiReference || !params.upiReference.trim()) {
       return {
         success: false,
-        error: "Please enter a valid 12-digit UPI Transaction / UTR number.",
+        error: "Please enter your UPI Reference / UTR Number from your payment app.",
         code: 400,
       };
     }
+    const rawRef = params.upiReference.trim();
+    if (rawRef.toUpperCase().startsWith("YOUPI:")) {
+      cleanUtr = rawRef.toUpperCase();
+    } else {
+      // Strip any whitespace, hyphens, colons, or "UTR:" prefix
+      const sanitized = rawRef.replace(/^UTR[:\s-]*/i, "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+      if (sanitized.length < 6 || sanitized.length > 30) {
+        return {
+          success: false,
+          error: "Please enter a valid 12-digit UPI Transaction / UTR number from your payment app.",
+          code: 400,
+        };
+      }
+      cleanUtr = sanitized;
+    }
   }
 
-  // Persist screenshot to media_assets if uploaded
-  const screenshotUrl = params.upiScreenshot
-    ? await persistMediaAsset(params.upiScreenshot, "upi_payment.jpg")
-    : null;
+  // Persist screenshot to media_assets ONLY if paymentMethod is upi and NOT a booking request
+  const screenshotUrl =
+    !params.isBookingRequest && params.paymentMethod === "upi" && params.upiScreenshot
+      ? await persistMediaAsset(params.upiScreenshot, "upi_payment.jpg")
+      : null;
 
   // 7. Execute in ONE ACID Transaction via Neon Pool / WebSocket Driver
   const orderId = crypto.randomUUID();
   const year = new Date().getFullYear();
   const orderNumber = `SSS-${year}-${Date.now().toString().slice(-4)}`;
 
+  const finalPaymentMethod: PaymentMethod = params.isBookingRequest ? "cod" : params.paymentMethod;
+  const initialBookingStatus = params.isBookingRequest ? "requested" : "standard";
+
   // Payment Status: NEVER mark 'paid' automatically from client request!
   const initialPaymentStatus: PaymentStatus =
-    params.paymentMethod === "upi" ? "pending_verification" : "unpaid";
+    params.isBookingRequest
+      ? "unpaid"
+      : finalPaymentMethod === "upi"
+      ? "pending_verification"
+      : "unpaid";
   const initialOrderStatus: OrderStatus = "pending_confirmation";
 
   try {
@@ -331,7 +357,9 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
             "order_reservation",
             -line.quantity,
             newStock,
-            `Online order ${orderNumber} reserved`,
+            params.isBookingRequest
+              ? `After-hours booking request ${orderNumber} reserved`
+              : `Online order ${orderNumber} reserved`,
             orderId,
             "System",
           ]
@@ -345,9 +373,9 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
            delivery_address, locality, landmark, delivery_instructions,
            subtotal, discount_amount, delivery_charge, total_amount, coupon_code,
            payment_method, payment_status, order_status, upi_reference, upi_screenshot,
-           latitude, longitude, map_url, source, idempotency_key, created_at, updated_at
+           latitude, longitude, map_url, source, idempotency_key, booking_status, created_at, updated_at
          ) VALUES (
-           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, NOW(), NOW()
+           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), NOW()
          );`,
         [
           orderId,
@@ -364,7 +392,7 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
           deliveryFee,
           totalAmount,
           params.couponCode ? params.couponCode.toUpperCase().trim() : null,
-          params.paymentMethod,
+          finalPaymentMethod,
           initialPaymentStatus,
           initialOrderStatus,
           cleanUtr,
@@ -374,6 +402,7 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
           finalMapUrl,
           "online",
           params.idempotencyKey || null,
+          initialBookingStatus,
         ]
       );
 
@@ -400,6 +429,12 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
       }
 
       // D. Insert initial order_status_history
+      const initialHistoryNote = params.isBookingRequest
+        ? "🌙 After-hours booking request received. Awaiting Store Manager review to approve and unlock payment options."
+        : params.paymentMethod === "upi"
+        ? "Order submitted with UPI reference — awaiting verification"
+        : "Order submitted with Cash on Delivery";
+
       await client.query(
         `INSERT INTO order_status_history (id, order_id, previous_status, new_status, changed_by, note, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, NOW());`,
@@ -409,9 +444,7 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
           "pending_confirmation",
           "pending_confirmation",
           "Customer",
-          params.paymentMethod === "upi"
-            ? "Order submitted with UPI reference — awaiting verification"
-            : "Order submitted with Cash on Delivery",
+          initialHistoryNote,
         ]
       );
 
@@ -430,9 +463,10 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
         delivery_charge: deliveryFee,
         total_amount: totalAmount,
         coupon_code: params.couponCode,
-        payment_method: params.paymentMethod,
+        payment_method: finalPaymentMethod,
         payment_status: initialPaymentStatus,
         order_status: initialOrderStatus,
+        booking_status: initialBookingStatus,
         upi_reference: cleanUtr || undefined,
         upi_screenshot: screenshotUrl || undefined,
         items: verifiedLines as any,

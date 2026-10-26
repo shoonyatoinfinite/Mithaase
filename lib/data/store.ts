@@ -1329,7 +1329,7 @@ export async function getOrders(
           delivery_queued, delivery_group_id, delivered_at, delivered_lat, delivered_lng,
           delivered_location_name, delivered_map_url, latitude, longitude, map_url,
           source, cancellation_reason, refund_status, refund_amount, refund_txn_id,
-          created_at, updated_at
+          booking_status, created_at, updated_at
         FROM orders 
         ${whereClause}
         ORDER BY created_at DESC
@@ -1395,6 +1395,7 @@ export async function getOrders(
           payment_method: o.payment_method,
           payment_status: o.payment_status,
           order_status: o.order_status,
+          booking_status: o.booking_status || "standard",
           upi_reference: o.upi_reference || undefined,
           delivery_queued: Boolean(o.delivery_queued),
           delivery_group_id: o.delivery_group_id || undefined,
@@ -1513,6 +1514,7 @@ export async function getOrderById(id: string): Promise<Order | null> {
           payment_method: o.payment_method,
           payment_status: o.payment_status,
           order_status: o.order_status,
+          booking_status: o.booking_status || "standard",
           upi_reference: o.upi_reference || undefined,
           upi_screenshot: o.upi_screenshot || undefined,
           delivery_proof_photo: o.delivery_proof_photo || undefined,
@@ -1835,6 +1837,107 @@ export async function updatePaymentStatus(
       console.error("[STORE] updatePaymentStatus sql error:", err);
     }
   }
+  serverCache.invalidateTag("orders");
+  return { success: true, order };
+}
+
+export async function updateBookingStatus(
+  orderId: string,
+  newBookingStatus: "standard" | "requested" | "approved_for_payment" | "payment_selected" | "confirmed",
+  changedBy: string = "Admin",
+  note?: string,
+  paymentData?: {
+    payment_method: "cod" | "upi";
+    upi_reference?: string;
+    upi_screenshot?: string;
+  }
+): Promise<{ success: boolean; order?: Order; error?: string }> {
+  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId) || (await getOrderById(orderId));
+  if (!order) return { success: false, error: "Order not found" };
+
+  order.booking_status = newBookingStatus;
+  order.updated_at = new Date().toISOString();
+
+  let historyNote = note || `Booking status updated to ${newBookingStatus}`;
+
+  if (newBookingStatus === "approved_for_payment") {
+    historyNote = note || "🌙 After-hours booking request approved by Store Manager. Payment options unlocked for customer.";
+  } else if (newBookingStatus === "payment_selected" && paymentData) {
+    order.payment_method = paymentData.payment_method;
+    if (paymentData.payment_method === "upi") {
+      order.upi_reference = paymentData.upi_reference;
+      order.upi_screenshot = paymentData.upi_screenshot;
+      order.payment_status = "pending_verification";
+      historyNote = note || `Customer selected UPI Payment (Ref: ${paymentData.upi_reference || "Proof Attached"}). Awaiting Store Manager final reapproval.`;
+    } else {
+      order.upi_reference = undefined;
+      order.upi_screenshot = undefined;
+      order.payment_status = "unpaid";
+      historyNote = note || "Customer selected Cash on Delivery (COD). Awaiting Store Manager final reapproval.";
+    }
+  } else if (newBookingStatus === "confirmed") {
+    order.order_status = "confirmed";
+    if (order.payment_method === "upi") {
+      order.payment_status = "paid";
+    }
+    historyNote = note || "Order officially confirmed by Store Manager after payment review.";
+  }
+
+  if (!order.status_history) order.status_history = [];
+  order.status_history.push({
+    id: `hist-${Date.now()}`,
+    order_id: order.id,
+    previous_status: order.order_status,
+    new_status: order.order_status,
+    changed_by: changedBy,
+    note: historyNote,
+    created_at: new Date().toISOString(),
+  });
+
+  if (sql) {
+    try {
+      let screenshotUrl = order.upi_screenshot;
+      if (paymentData?.upi_screenshot && paymentData.upi_screenshot.startsWith("data:")) {
+        screenshotUrl = await persistMediaAsset(paymentData.upi_screenshot, "upi_payment.jpg");
+        order.upi_screenshot = screenshotUrl || undefined;
+      }
+
+      await sql.query(
+        `UPDATE orders SET
+          booking_status = $1,
+          order_status = $2,
+          payment_status = $3,
+          payment_method = $4,
+          upi_reference = $5,
+          upi_screenshot = $6,
+          updated_at = NOW()
+        WHERE id = $7 OR order_number = $7;`,
+        [
+          newBookingStatus,
+          order.order_status,
+          order.payment_status,
+          order.payment_method,
+          order.upi_reference || null,
+          screenshotUrl || null,
+          order.id,
+        ]
+      );
+
+      await sql.query(
+        `INSERT INTO order_status_history (id, order_id, previous_status, new_status, changed_by, note, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW());`,
+        [crypto.randomUUID(), order.id, order.order_status, order.order_status, changedBy, historyNote]
+      ).catch(() => {});
+    } catch (err) {
+      console.error("[STORE] updateBookingStatus sql error:", err);
+    }
+  }
+
+  const memIdx = db.orders.findIndex((o) => o.id === order.id || o.order_number === order.order_number);
+  if (memIdx !== -1) {
+    db.orders[memIdx] = { ...order };
+  }
+
   serverCache.invalidateTag("orders");
   return { success: true, order };
 }
