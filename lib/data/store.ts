@@ -1290,14 +1290,7 @@ export async function getOrders(
   searchQuery?: string,
   emailFilter?: string
 ): Promise<Order[]> {
-  const cacheKey = `orders_${statusFilter || "all"}_${emailFilter || "all"}_${searchQuery || ""}`;
-  const cached = serverCache.get<Order[]>(cacheKey);
-  if (cached) {
-    return cached;
-  }
-
-  let list = [...db.orders];
-
+  let list: Order[] = [];
   if (sql) {
     try {
       const conditions: string[] = [];
@@ -1424,14 +1417,7 @@ export async function getOrders(
           refund_txn_id: o.refund_txn_id || undefined,
         }));
 
-        const dbIds = new Set(dbMapped.map((o) => o.id));
-        const merged = [...dbMapped];
-        for (const mem of db.orders) {
-          if (!dbIds.has(mem.id)) {
-            merged.push(mem);
-          }
-        }
-        list = merged;
+        list = dbMapped;
       }
     } catch (err) {
       console.error("[STORE] getOrders db error:", err);
@@ -1470,7 +1456,6 @@ export async function getOrders(
   }
 
   const normalized = list.map(normalizeOrder);
-  serverCache.set(cacheKey, normalized, 10, ["orders"]);
   return normalized;
 }
 
@@ -1492,17 +1477,7 @@ export async function getOrderById(id: string): Promise<Order | null> {
   const cleanId = String(id).trim();
   const lower = cleanId.toLowerCase();
 
-  // 1. Check in-memory orders (case-insensitive on id and order_number)
-  const memoryMatch = db.orders.find(
-    (o) =>
-      o.id.toLowerCase() === lower ||
-      o.order_number.toLowerCase() === lower ||
-      cleanId === o.id ||
-      cleanId === o.order_number
-  );
-  if (memoryMatch) return { ...normalizeOrder(memoryMatch) };
-
-  // 2. Check Neon DB if sql is available
+  // 1. Authoritative check in Neon PostgreSQL
   if (sql) {
     try {
       const rows = await sql.query(

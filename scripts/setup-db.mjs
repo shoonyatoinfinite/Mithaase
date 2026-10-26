@@ -147,10 +147,12 @@ async function main() {
       ADD COLUMN IF NOT EXISTS delivered_location_name VARCHAR(150),
       ADD COLUMN IF NOT EXISTS delivered_map_url TEXT,
       ADD COLUMN IF NOT EXISTS cancellation_reason TEXT,
+      ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS refund_status VARCHAR(50),
       ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(10, 2),
       ADD COLUMN IF NOT EXISTS refund_txn_id VARCHAR(100),
-      ADD COLUMN IF NOT EXISTS refund_screenshot TEXT;
+      ADD COLUMN IF NOT EXISTS refund_screenshot TEXT,
+      ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ;
   `);
   console.log("✓ orders table ready");
 
@@ -254,6 +256,7 @@ async function main() {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       email VARCHAR(255) NOT NULL UNIQUE,
       phone VARCHAR(20) NOT NULL,
+      password TEXT,
       pin VARCHAR(20) NOT NULL,
       name VARCHAR(150) NOT NULL,
       delivery_address TEXT NOT NULL,
@@ -266,6 +269,9 @@ async function main() {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+
+    ALTER TABLE customer_accounts
+      ADD COLUMN IF NOT EXISTS password TEXT;
   `);
   console.log("✓ customer_accounts table ready");
 

@@ -45,12 +45,8 @@ export function StoreSettingsProvider({ children }: { children: React.ReactNode 
   useRealtime({
     events: ["settings_updated"],
     enablePollingFallback: false,
-    onEvent: (payload) => {
-      if (payload.data) {
-        setSettings(payload.data);
-      } else {
-        refreshSettings();
-      }
+    onEvent: () => {
+      refreshSettings();
     },
   });
 

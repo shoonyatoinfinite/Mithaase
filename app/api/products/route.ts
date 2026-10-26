@@ -31,6 +31,10 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
+    const { isAdminAuthenticated } = await import("@/lib/auth/session");
+    if (!isAdminAuthenticated(req)) {
+      return NextResponse.json({ error: "Unauthorized: Admin login required" }, { status: 401 });
+    }
     const body = await req.json();
     if (!body.name || !body.description) {
       return NextResponse.json({ error: "Name and description are required" }, { status: 400 });

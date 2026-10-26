@@ -177,8 +177,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     if (!isHydrated) return;
     try {
       localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(items));
-      if (isAuthenticated && user?.email) {
-        const userKey = `mithaase_user_cart_${user.email.toLowerCase()}`;
+      if (isAuthenticated && (user?.id || user?.email)) {
+        const userKey = user?.id ? `mithaase_user_cart_${user.id}` : `mithaase_user_cart_${user?.email?.toLowerCase()}`;
         localStorage.setItem(userKey, JSON.stringify(items));
       }
     } catch {
@@ -190,15 +190,20 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isHydrated) return;
 
-    if (isAuthenticated && user?.email) {
-      const userEmail = user.email.toLowerCase();
-      if (userEmail === checkedUserEmail) return;
+    if (isAuthenticated && (user?.id || user?.email)) {
+      const userIdentifier = user?.id || user?.email?.toLowerCase();
+      if (userIdentifier === checkedUserEmail) return;
 
-      setCheckedUserEmail(userEmail);
-      const userKey = `mithaase_user_cart_${userEmail}`;
+      setCheckedUserEmail(userIdentifier);
+      const userKey = user?.id ? `mithaase_user_cart_${user.id}` : `mithaase_user_cart_${user?.email?.toLowerCase()}`;
+      const legacyEmailKey = user?.email ? `mithaase_user_cart_${user.email.toLowerCase()}` : null;
 
       try {
-        const savedJson = localStorage.getItem(userKey);
+        let savedJson = localStorage.getItem(userKey);
+        // Fallback to legacy email key if id key is not yet set
+        if (!savedJson && legacyEmailKey && legacyEmailKey !== userKey) {
+          savedJson = localStorage.getItem(legacyEmailKey);
+        }
         if (savedJson) {
           const parsedSaved: CartItem[] = JSON.parse(savedJson);
 
@@ -255,8 +260,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       });
 
       const finalItems = Array.from(mergedMap.values());
-      if (user?.email) {
-        localStorage.setItem(`mithaase_user_cart_${user.email.toLowerCase()}`, JSON.stringify(finalItems));
+      const userKey = user?.id ? `mithaase_user_cart_${user.id}` : (user?.email ? `mithaase_user_cart_${user.email.toLowerCase()}` : null);
+      if (userKey) {
+        localStorage.setItem(userKey, JSON.stringify(finalItems));
       }
       return finalItems;
     });
@@ -266,8 +272,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
   // Reconcile Handler 2: Keep current visit items only
   const handleKeepCurrent = () => {
-    if (user?.email) {
-      localStorage.setItem(`mithaase_user_cart_${user.email.toLowerCase()}`, JSON.stringify(items));
+    const userKey = user?.id ? `mithaase_user_cart_${user.id}` : (user?.email ? `mithaase_user_cart_${user.email.toLowerCase()}` : null);
+    if (userKey) {
+      localStorage.setItem(userKey, JSON.stringify(items));
     }
     setReconcileModalOpen(false);
   };

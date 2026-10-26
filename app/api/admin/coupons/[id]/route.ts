@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { updateCoupon, deleteCoupon } from "@/lib/data/store";
+import { isAdminAuthenticated } from "@/lib/auth/session";
 
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    if (!isAdminAuthenticated(req)) {
+      return NextResponse.json({ error: "Unauthorized: Admin login required" }, { status: 401 });
+    }
+
     const { id } = await params;
     const body = await req.json();
 
@@ -21,10 +26,14 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    if (!isAdminAuthenticated(req)) {
+      return NextResponse.json({ error: "Unauthorized: Admin login required" }, { status: 401 });
+    }
+
     const { id } = await params;
     const ok = await deleteCoupon(id);
     if (!ok) {

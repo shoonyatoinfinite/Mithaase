@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useUserAuth } from "@/lib/context/user-auth-context";
-import { Order, OrderStatus, StoreSettings } from "@/types";
+import { Order, OrderStatus, PaymentStatus, StoreSettings } from "@/types";
 import { useRealtime } from "@/lib/hooks/useRealtime";
 import { Diya } from "@/components/animations/Diya";
 import { OrderReceipt } from "@/components/orders/OrderReceipt";
@@ -157,8 +157,8 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
     onEvent: (payload) => {
       if (payload.data?.id === order.id || payload.data?.order_number === order.order_number) {
         setOrder((prev) => {
-          const newStatus = payload.data.order_status || prev.order_status;
-          const newPay = payload.data.payment_status || prev.payment_status;
+          const newStatus = (payload.data.order_status || prev.order_status) as OrderStatus;
+          const newPay = (payload.data.payment_status || prev.payment_status) as PaymentStatus;
           if (prev.order_status !== newStatus || prev.payment_status !== newPay) {
             setLastUpdatedNotice(
               `⚡ Live update: Order status is now "${newStatus.replace(/_/g, " ").toUpperCase()}"!`

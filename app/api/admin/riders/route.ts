@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { getRiders, createRider } from "@/lib/data/store";
+import { isAdminAuthenticated } from "@/lib/auth/session";
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    if (!isAdminAuthenticated(req)) {
+      return NextResponse.json({ error: "Unauthorized: Admin login required" }, { status: 401 });
+    }
     const riders = await getRiders();
     return NextResponse.json(riders);
   } catch (error: any) {
@@ -12,6 +16,9 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    if (!isAdminAuthenticated(req)) {
+      return NextResponse.json({ error: "Unauthorized: Admin login required" }, { status: 401 });
+    }
     const body = await req.json();
     const result = await createRider(body);
     if (!result.success) {

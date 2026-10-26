@@ -26,6 +26,10 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { isAdminAuthenticated } = await import("@/lib/auth/session");
+    if (!isAdminAuthenticated(req)) {
+      return NextResponse.json({ error: "Unauthorized: Admin login required" }, { status: 401 });
+    }
     const { id } = await params;
     const body = await req.json();
     const updated = await updateProduct(id, body);

@@ -339,10 +339,10 @@ export default function AdminOrdersPage() {
         if (selectedOrder && selectedOrder.id === payload.data?.id) {
           setSelectedOrder((prev) =>
             prev
-              ? {
+              ? ({
                   ...prev,
                   ...payload.data,
-                }
+                } as Order)
               : null
           );
         }

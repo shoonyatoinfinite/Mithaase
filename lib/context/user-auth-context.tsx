@@ -18,11 +18,12 @@ export interface SavedDeliveryProfile {
 }
 
 export interface CustomerUser {
+  id?: string;
   email: string;
   name?: string;
   phone?: string;
   image?: string;
-  verifiedAt?: string;
+  phone_verified_at?: string | null;
   authProvider?: "pin" | "google";
   savedProfile?: SavedDeliveryProfile;
 }
@@ -34,8 +35,9 @@ interface UserAuthContextType {
   isAuthModalOpen: boolean;
   openAuthModal: () => void;
   closeAuthModal: () => void;
-  sendOtp: (email: string) => Promise<{ success: boolean; error?: string }>;
-  verifyOtp: (email: string, otp: string) => Promise<{ success: boolean; error?: string }>;
+  refreshUser: () => Promise<CustomerUser | null>;
+  sendOtp: (identifier: string, customerName?: string) => Promise<{ success: boolean; error?: string }>;
+  verifyOtp: (identifier: string, otp: string) => Promise<{ success: boolean; error?: string }>;
   loginWithPin: (identifier: string, pin: string) => Promise<{ success: boolean; error?: string }>;
   signupWithPin: (data: {
     email: string;
@@ -83,77 +85,81 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
   const openAuthModal = useCallback(() => setIsAuthModalOpen(true), []);
   const closeAuthModal = useCallback(() => setIsAuthModalOpen(false), []);
 
-  // Hydrate local session and sync fresh profile from PostgreSQL
+  /**
+   * Authoritative Live Profile Sync from Neon Database
+   */
+  const refreshUser = useCallback(async (): Promise<CustomerUser | null> => {
+    try {
+      const res = await fetch("/api/auth/me", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.authenticated && data.user) {
+          const liveUser: CustomerUser = {
+            id: data.user.id,
+            email: data.user.email,
+            name: data.user.name,
+            phone: data.user.phone,
+            phone_verified_at: data.user.phone_verified_at,
+            savedProfile: data.user.savedProfile,
+          };
+          setUser(liveUser);
+          try {
+            // Keep safe user profile locally for display only (NO credentials)
+            localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(liveUser));
+          } catch {}
+          return liveUser;
+        }
+      }
+      // If unauthorized, clear state
+      setUser(null);
+      try {
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+      } catch {}
+      return null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Hydrate on mount: prioritize live database session over any local cache
   useEffect(() => {
     async function initAuth() {
       try {
-        let activeEmail: string | null = null;
+        // Fast optimistic visual display while verifying with server
         const stored = localStorage.getItem(AUTH_STORAGE_KEY);
         if (stored) {
-          const parsed = JSON.parse(stored);
-          setUser(parsed);
-          if (parsed.email) activeEmail = parsed.email;
-        }
-
-        // Check customer session cookie if localStorage is empty (e.g. after browser reopen or update)
-        if (!activeEmail && typeof document !== "undefined") {
-          const cookieMatch = document.cookie.match(/mithaase_customer_session=([^;]+)/);
-          if (cookieMatch && cookieMatch[1]) {
-            activeEmail = decodeURIComponent(cookieMatch[1]);
-          }
-        }
-
-        // Check if there is an active session from Neon Auth / Google
-        try {
-          const session = await authClient.getSession();
-          if (session?.data?.user?.email) {
-            activeEmail = session.data.user.email;
-          }
-        } catch {
-          // Neon Auth session check silent fallback
-        }
-
-        // Always sync the latest customer delivery profile from the database so it NEVER resets
-        if (activeEmail) {
           try {
-            const res = await fetch(`/api/auth/customer/profile?email=${encodeURIComponent(activeEmail)}`);
-            if (res.ok) {
-              const data = await res.json();
-              if (data.success && data.user) {
-                const refreshedUser: CustomerUser = {
-                  email: data.user.email,
-                  name: data.user.name,
-                  phone: data.user.phone,
-                  savedProfile: data.user.savedProfile,
-                };
-                setUser(refreshedUser);
-                localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(refreshedUser));
-              }
-            }
-          } catch (e) {
-            console.warn("Could not sync customer profile from DB:", e);
-          }
+            setUser(JSON.parse(stored));
+          } catch {}
         }
-      } catch {
-        // ignore
+
+        // Authoritative verification with Neon DB
+        await refreshUser();
       } finally {
         setIsHydrated(true);
       }
     }
 
     initAuth();
-  }, []);
+  }, [refreshUser]);
 
-  const sendOtp = useCallback(async (email: string) => {
+  const sendOtp = useCallback(async (identifier: string, customerName?: string) => {
     try {
-      const res = await fetch("/api/auth/otp/send", {
+      const isEmail = identifier.includes("@");
+      const cleanPhone = identifier.replace(/[^0-9]/g, "").slice(-10);
+      const payload: any = isEmail
+        ? { email: identifier.trim().toLowerCase(), name: customerName }
+        : { mobileNumber: cleanPhone, customerName, purpose: "signup" };
+
+      const url = isEmail ? "/api/auth/otp/send" : "/api/payment/youpi/whatsapp-otp/send";
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) {
-        return { success: false, error: data.error || "Failed to send code." };
+        return { success: false, error: data.error || "Failed to send verification code." };
       }
       return { success: true };
     } catch {
@@ -161,47 +167,31 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const verifyOtp = useCallback(async (email: string, otp: string) => {
+  const verifyOtp = useCallback(async (identifier: string, otp: string) => {
     try {
-      const res = await fetch("/api/auth/otp/verify", {
+      const isEmail = identifier.includes("@");
+      const cleanPhone = identifier.replace(/[^0-9]/g, "").slice(-10);
+      const payload: any = isEmail
+        ? { email: identifier.trim().toLowerCase(), otp: otp.trim() }
+        : { mobileNumber: cleanPhone, otp: otp.trim(), purpose: "signup" };
+
+      const url = isEmail ? "/api/auth/otp/verify" : "/api/payment/youpi/whatsapp-otp/verify";
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, otp }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) {
         return { success: false, error: data.error || "Incorrect verification code." };
       }
 
-      let existingProfile: SavedDeliveryProfile | undefined;
-      try {
-        const stored = localStorage.getItem(AUTH_STORAGE_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (parsed.email === email) {
-            existingProfile = parsed.savedProfile;
-          }
-        }
-      } catch {
-        // ignore
-      }
-
-      const verifiedUser: CustomerUser = {
-        ...data.user,
-        savedProfile: data.user?.savedProfile || existingProfile,
-      };
-
-      setUser(verifiedUser);
-      try {
-        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(verifiedUser));
-      } catch {
-        // ignore
-      }
+      await refreshUser();
       return { success: true };
     } catch {
       return { success: false, error: "Network error verifying code." };
     }
-  }, []);
+  }, [refreshUser]);
 
   const loginWithPin = useCallback(async (identifier: string, pin: string) => {
     try {
@@ -212,8 +202,9 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        return { success: false, error: data.error || "Login failed." };
+        return { success: false, error: data.error || "Invalid credentials." };
       }
+
       const loggedInUser: CustomerUser = {
         ...data.user,
         authProvider: "pin",
@@ -221,10 +212,8 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
       setUser(loggedInUser);
       try {
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(loggedInUser));
-        sessionStorage.setItem("mithaase_user_email", loggedInUser.email);
-      } catch {
-        // ignore
-      }
+      } catch {}
+
       return { success: true };
     } catch {
       return { success: false, error: "Network error during customer login." };
@@ -263,10 +252,8 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
         setUser(newUser);
         try {
           localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(newUser));
-          sessionStorage.setItem("mithaase_user_email", newUser.email);
-        } catch {
-          // ignore
-        }
+        } catch {}
+
         return { success: true };
       } catch {
         return { success: false, error: "Network error during registration." };
@@ -277,19 +264,13 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginWithGoogle = useCallback(async () => {
     try {
-      const callbackURL = typeof window !== "undefined" ? `${window.location.origin}/auth/callback` : "/auth/callback";
-      const result = await authClient.signIn.social({
+      await authClient.signIn.social({
         provider: "google",
-        callbackURL,
+        callbackURL: "/auth/callback",
       });
-
-      if (result?.error) {
-        return { success: false, error: result.error.message || "Failed to initiate Google sign-in." };
-      }
-
       return { success: true };
-    } catch (err: any) {
-      return { success: false, error: err?.message || "Google sign-in is currently unavailable." };
+    } catch (e: any) {
+      return { success: false, error: e?.message || "Google sign-in error." };
     }
   }, []);
 
@@ -312,24 +293,21 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data),
         });
-        const json = await res.json();
-        if (!res.ok || !json.success) {
-          return { success: false, error: json.error || "Failed to save delivery profile." };
+        const resData = await res.json();
+        if (!res.ok || !resData.success) {
+          return { success: false, error: resData.error || "Could not link account." };
         }
-
-        const updatedUser: CustomerUser = {
-          ...json.user,
+        const syncedUser: CustomerUser = {
+          ...resData.user,
           authProvider: "google",
         };
-        setUser(updatedUser);
+        setUser(syncedUser);
         try {
-          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updatedUser));
-        } catch {
-          // ignore
-        }
+          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(syncedUser));
+        } catch {}
         return { success: true };
       } catch {
-        return { success: false, error: "Network error saving Google customer profile." };
+        return { success: false, error: "Network error linking Google account." };
       }
     },
     []
@@ -337,36 +315,35 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
 
   const saveProfile = useCallback((profile: SavedDeliveryProfile) => {
     setUser((prev) => {
-      const activeEmail = prev?.email || (typeof window !== "undefined" ? sessionStorage.getItem("mithaase_user_email") || "" : "");
-      const updated: CustomerUser = {
-        ...(prev || { email: activeEmail }),
-        savedProfile: profile,
-      };
+      const updated: CustomerUser = prev
+        ? { ...prev, savedProfile: profile }
+        : {
+            email: "",
+            name: profile.customer_name,
+            phone: profile.customer_phone,
+            savedProfile: profile,
+          };
+
       try {
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
-      } catch {
-        // ignore
-      }
+      } catch {}
 
-      // Persist directly to PostgreSQL database
-      if (activeEmail || profile.customer_phone) {
-        fetch("/api/auth/customer/profile", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: activeEmail,
-            phone: profile.customer_phone,
-            name: profile.customer_name,
-            delivery_address: profile.delivery_address,
-            locality: profile.locality,
-            landmark: profile.landmark,
-            delivery_instructions: profile.delivery_instructions,
-            latitude: profile.latitude,
-            longitude: profile.longitude,
-            map_url: profile.map_url,
-          }),
-        }).catch((err) => console.warn("Error auto-persisting profile to DB:", err));
-      }
+      // Authoritative persist to PostgreSQL database via live PUT /api/auth/customer/profile
+      fetch("/api/auth/customer/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: profile.customer_phone,
+          name: profile.customer_name,
+          delivery_address: profile.delivery_address,
+          locality: profile.locality,
+          landmark: profile.landmark,
+          delivery_instructions: profile.delivery_instructions,
+          latitude: profile.latitude,
+          longitude: profile.longitude,
+          map_url: profile.map_url,
+        }),
+      }).catch((err) => console.warn("Error auto-persisting profile to DB:", err));
 
       return updated;
     });
@@ -380,13 +357,11 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // If user is actively on checkout page, keep them on checkout to allow seamless order completion
       if (pathname === "/checkout") {
         router.refresh();
         return;
       }
 
-      // Always redirect user to the shop section as requested
       router.push("/#shop");
       router.refresh();
     },
@@ -396,20 +371,17 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(
     async (redirectTo?: string) => {
       try {
+        await fetch("/api/auth/customer/logout", { method: "POST" });
         await authClient.signOut();
-      } catch {
-        // ignore
-      }
+      } catch {}
+
       setUser(null);
       try {
         localStorage.removeItem(AUTH_STORAGE_KEY);
+        localStorage.removeItem("mithaase_user");
         sessionStorage.removeItem("mithaase_user_email");
-        document.cookie = "mithaase_customer_session=; path=/; max-age=0; SameSite=Lax";
-      } catch {
-        // ignore
-      }
+      } catch {}
 
-      // Determine clean redirection destination upon logout
       const isPrivateCustomerPage =
         pathname === "/checkout" ||
         pathname === "/orders" ||
@@ -428,11 +400,12 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
     <UserAuthContext.Provider
       value={{
         user,
-        isAuthenticated: Boolean(user?.email),
+        isAuthenticated: Boolean(user?.email || user?.id),
         isHydrated,
         isAuthModalOpen,
         openAuthModal,
         closeAuthModal,
+        refreshUser,
         sendOtp,
         verifyOtp,
         loginWithPin,

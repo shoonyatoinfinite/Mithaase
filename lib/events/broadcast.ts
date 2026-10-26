@@ -1,4 +1,13 @@
-// Real-time Event Broadcaster using Node EventEmitter / Global Registry
+/**
+ * Real-time Event Broadcaster (Process-local SSE Hint System)
+ * 
+ * IMPORTANT ARCHITECTURAL NOTE:
+ * Node.js EventEmitter is process-local and non-persistent across serverless instances on Vercel.
+ * Therefore, all mutations MUST persist to Neon PostgreSQL first.
+ * Broadcast events act strictly as non-authoritative cache-busting "hints".
+ * No customer PII (phone, address, credentials, payment screenshots) is ever broadcast over the wire.
+ */
+
 import { EventEmitter } from "events";
 
 declare global {
@@ -25,20 +34,46 @@ export type RealtimeEventType =
 
 export interface RealtimeEventPayload {
   type: RealtimeEventType;
-  data: any;
+  data: {
+    id?: string;
+    orderId?: string;
+    order_number?: string;
+    status?: string;
+    order_status?: string;
+    payment_status?: string;
+    catalog_version?: number;
+    [key: string]: any;
+  };
   timestamp: string;
+}
+
+/**
+ * Sanitizes payload to ensure NO customer PII is transmitted in broadcast events.
+ */
+function sanitizeEventData(raw: any): RealtimeEventPayload["data"] {
+  if (!raw || typeof raw !== "object") return {};
+
+  return {
+    id: raw.id || raw.orderId || undefined,
+    orderId: raw.orderId || raw.id || undefined,
+    order_number: raw.order_number || undefined,
+    status: raw.status || raw.order_status || undefined,
+    order_status: raw.order_status || raw.status || undefined,
+    payment_status: raw.payment_status || undefined,
+    catalog_version: raw.catalog_version || undefined,
+  };
 }
 
 export function broadcastRealtimeEvent(type: RealtimeEventType, data: any) {
   const payload: RealtimeEventPayload = {
     type,
-    data,
+    data: sanitizeEventData(data),
     timestamp: new Date().toISOString(),
   };
 
   try {
     eventEmitter.emit("realtime_event", payload);
   } catch (err) {
-    console.error("Error emitting realtime event:", err);
+    console.error("[REALTIME] Error emitting event hint:", err);
   }
 }

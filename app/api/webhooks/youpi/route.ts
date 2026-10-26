@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import crypto from "crypto";
-import { updatePaymentStatus, getOrderById } from "@/lib/data/store";
+import { sql } from "@/lib/neon/db";
 import { broadcastRealtimeEvent } from "@/lib/events/broadcast";
+import { serverCache } from "@/lib/cache/server-cache";
 
 export const dynamic = "force-dynamic";
 
 /**
- * YouPI PG Authoritative Webhook Endpoint
- * Header: X-Gateway-Signature: sha256=<hex>
- * Payload: { event: "SUCCESS", orderId, utr, amount, amountPaise, paymentId }
+ * Authoritative YouPI PG Webhook Handler
+ * Verified with HMAC-SHA256, matches currency & amounts, and prevents late payment overrides on cancelled orders.
  */
 export async function POST(req: Request) {
   try {
@@ -16,7 +16,7 @@ export async function POST(req: Request) {
     const signature = req.headers.get("x-gateway-signature") || "";
     const webhookSecret = process.env.YOUPI_WEBHOOK_SECRET;
 
-    // Verify HMAC-SHA256 signature if secret is configured
+    // 1. Enforce HMAC-SHA256 signature verification
     if (webhookSecret) {
       const expectedSignature =
         "sha256=" +
@@ -29,12 +29,12 @@ export async function POST(req: Request) {
         sigBuffer.length !== expectedBuffer.length ||
         !crypto.timingSafeEqual(sigBuffer, expectedBuffer)
       ) {
-        console.warn("[YouPI Webhook] Signature verification failed!");
-        return NextResponse.json(
-          { error: "Invalid webhook signature" },
-          { status: 401 }
-        );
+        console.warn("[YouPI Webhook] Invalid signature rejected");
+        return NextResponse.json({ error: "Invalid webhook signature" }, { status: 401 });
       }
+    } else if (process.env.NODE_ENV === "production") {
+      console.error("[YouPI Webhook] YOUPI_WEBHOOK_SECRET is not configured in production");
+      return NextResponse.json({ error: "Webhook signature secret required" }, { status: 500 });
     }
 
     let payload: any;
@@ -44,27 +44,104 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const { event, orderId, utr, paymentId } = payload;
+    const { event, orderId, utr, paymentId, amount } = payload;
 
-    if (event === "SUCCESS" && orderId) {
-      console.log(`[YouPI Webhook] Order ${orderId} confirmed paid! UTR: ${utr}`);
+    if (!orderId) {
+      return NextResponse.json({ error: "Missing orderId in payload" }, { status: 400 });
+    }
 
-      const existingOrder = await getOrderById(orderId);
-      if (existingOrder) {
-        // Mark payment as paid in database with verified bank UTR
-        await updatePaymentStatus(orderId, "paid", utr || paymentId);
+    if (!sql) {
+      return NextResponse.json({ error: "Database unavailable" }, { status: 503 });
+    }
 
-        const updated = await getOrderById(orderId);
-        if (updated) {
-          // Broadcast real-time update to Admin and customer tracking views
-          broadcastRealtimeEvent("order_status_updated", updated);
+    // 2. Query order directly from Neon PostgreSQL
+    const orderRows = await sql.query(
+      `SELECT id, order_number, total_amount, payment_status, order_status 
+       FROM orders 
+       WHERE id = $1 OR order_number = $1 
+       LIMIT 1;`,
+      [orderId]
+    );
+
+    if (!orderRows || orderRows.length === 0) {
+      return NextResponse.json({ error: "Order not found in database" }, { status: 404 });
+    }
+
+    const order = orderRows[0];
+
+    // 3. Match amount (prevent underpayment or price tampering)
+    if (amount !== undefined && amount !== null) {
+      const paidAmount = Number(amount);
+      const expectedAmount = Number(order.total_amount);
+      if (Math.abs(paidAmount - expectedAmount) > 0.05) {
+        console.error(
+          `[YouPI Webhook] Amount mismatch! Expected ₹${expectedAmount}, received ₹${paidAmount}`
+        );
+        return NextResponse.json(
+          { error: "Payment amount does not match order total" },
+          { status: 400 }
+        );
+      }
+    }
+
+    // 4. Validate state transitions (A late payment success must NOT override a cancelled order)
+    if (order.order_status === "cancelled") {
+      console.warn(
+        `[YouPI Webhook] Order ${order.order_number} is already cancelled! Late payment requires manual refund reconciliation.`
+      );
+      await sql.query(
+        `INSERT INTO order_status_history (id, order_id, previous_status, new_status, changed_by, note, created_at)
+         VALUES ($1, $2, 'cancelled', 'cancelled', 'YouPI Webhook', $3, NOW());`,
+        [
+          crypto.randomUUID(),
+          order.id,
+          `Late payment received (₹${amount || order.total_amount}, UTR: ${utr || paymentId}) for already-cancelled order. Requires manual refund.`,
+        ]
+      );
+      return NextResponse.json({ received: true, note: "Order already cancelled; logged for reconciliation." });
+    }
+
+    // 5. Idempotent state transition (only updates if payment_status is not already 'paid')
+    if (event === "SUCCESS") {
+      const cleanUtr = utr ? String(utr).trim().toUpperCase() : null;
+      const updateRes = await sql.query(
+        `UPDATE orders SET
+           payment_status = 'paid',
+           gateway_transaction_id = COALESCE($1, gateway_transaction_id),
+           upi_reference = COALESCE($2, upi_reference),
+           order_status = CASE WHEN order_status = 'pending_confirmation' THEN 'confirmed' ELSE order_status END,
+           updated_at = NOW()
+         WHERE (id = $3 OR order_number = $3) AND payment_status <> 'paid'
+         RETURNING id, order_number, order_status, payment_status, total_amount;`,
+        [paymentId || null, cleanUtr, orderId]
+      );
+
+      if (updateRes && updateRes.length > 0) {
+        // Record status history
+        await sql.query(
+          `INSERT INTO order_status_history (id, order_id, previous_status, new_status, changed_by, note, created_at)
+           VALUES ($1, $2, $3, $4, 'YouPI Webhook', $5, NOW());`,
+          [
+            crypto.randomUUID(),
+            order.id,
+            order.order_status,
+            order.order_status === "pending_confirmation" ? "confirmed" : order.order_status,
+            `Instant UPI Auto-Verification via YouPI Gateway (UTR: ${cleanUtr || paymentId})`,
+          ]
+        );
+
+        serverCache.invalidateTag("orders");
+
+        const updatedOrder = await sql.query(`SELECT * FROM orders WHERE id = $1 LIMIT 1;`, [order.id]);
+        if (updatedOrder && updatedOrder.length > 0) {
+          broadcastRealtimeEvent("order_status_updated", updatedOrder[0]);
         }
       }
     }
 
-    return NextResponse.json({ received: true });
+    return NextResponse.json({ received: true, processed: true });
   } catch (err: any) {
-    console.error("[YouPI Webhook] Error processing event:", err);
+    console.error("[YouPI Webhook] Processing error:", err);
     return NextResponse.json(
       { error: err?.message || "Webhook processing error" },
       { status: 500 }

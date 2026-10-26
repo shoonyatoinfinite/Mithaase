@@ -19,6 +19,10 @@ export async function GET() {
 
 export async function PUT(req: Request) {
   try {
+    const { isAdminAuthenticated } = await import("@/lib/auth/session");
+    if (!isAdminAuthenticated(req)) {
+      return NextResponse.json({ error: "Unauthorized: Admin login required" }, { status: 401 });
+    }
     const body = await req.json();
     const updated = await updateStoreSettings(body);
     broadcastRealtimeEvent("settings_updated", updated);

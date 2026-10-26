@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { getCoupons, createCoupon } from "@/lib/data/store";
+import { isAdminAuthenticated } from "@/lib/auth/session";
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    if (!isAdminAuthenticated(req)) {
+      return NextResponse.json({ error: "Unauthorized: Admin login required" }, { status: 401 });
+    }
     const coupons = await getCoupons(false);
     return NextResponse.json(coupons);
   } catch (error) {
@@ -12,6 +16,10 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    if (!isAdminAuthenticated(req)) {
+      return NextResponse.json({ error: "Unauthorized: Admin login required" }, { status: 401 });
+    }
+
     const body = await req.json();
 
     const isFreeDel = Boolean(body.free_delivery || body.discount_type === "free_delivery");

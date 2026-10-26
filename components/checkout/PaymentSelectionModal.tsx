@@ -127,6 +127,7 @@ export function PaymentSelectionModal({
         body: JSON.stringify({
           mobileNumber: clean,
           customerName,
+          purpose: "checkout",
         }),
       });
       const data = await res.json();
@@ -157,6 +158,7 @@ export function PaymentSelectionModal({
         body: JSON.stringify({
           mobileNumber: clean,
           otp: whatsappOtpInput.trim(),
+          purpose: "checkout",
         }),
       });
       const data = await res.json();

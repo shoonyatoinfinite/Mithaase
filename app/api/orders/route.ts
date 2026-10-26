@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getOrders, createOrder, getStoreSettings } from "@/lib/data/store";
 import { broadcastRealtimeEvent } from "@/lib/events/broadcast";
+import {
+  getCustomerSessionFromRequest,
+  isAdminAuthenticated,
+  isRiderAuthenticated,
+} from "@/lib/auth/session";
 
 export async function GET(req: Request) {
   try {
@@ -9,37 +14,32 @@ export async function GET(req: Request) {
     const search = searchParams.get("search") || undefined;
     const email = searchParams.get("email") || undefined;
 
-    const cookieHeader = req.headers.get("cookie") || "";
-    const hasAdminSession = cookieHeader.includes("mithaase_admin_session=true");
-    const hasRiderSession = cookieHeader.includes("mithaase_rider_session=true");
+    const hasAdminSession = isAdminAuthenticated(req);
+    const hasRiderSession = isRiderAuthenticated(req);
+    const customerSession = await getCustomerSessionFromRequest(req);
 
-    // Extract customer session cookie if present
-    const customerCookieMatch = cookieHeader.match(/mithaase_customer_session=([^;]+)/);
-    const authenticatedCustomerEmail = customerCookieMatch
-      ? decodeURIComponent(customerCookieMatch[1]).trim().toLowerCase()
-      : null;
+    const authenticatedCustomerEmail = customerSession?.email?.toLowerCase() || null;
+    const authenticatedCustomerPhone = customerSession?.phone || null;
 
-    const authHeaderEmail = req.headers.get("x-customer-auth-email")?.trim().toLowerCase();
-
-    // 1. If querying orders for a specific email (customer receipts):
+    // 1. If querying orders for a specific email or phone:
     if (email) {
-      const targetEmail = email.trim().toLowerCase();
+      const targetQuery = email.trim().toLowerCase();
       const isAuthorizedCustomer =
-        (authenticatedCustomerEmail && authenticatedCustomerEmail === targetEmail) ||
-        (authHeaderEmail && authHeaderEmail === targetEmail);
+        (authenticatedCustomerEmail && authenticatedCustomerEmail === targetQuery) ||
+        (authenticatedCustomerPhone && targetQuery.includes(authenticatedCustomerPhone));
 
-      // Deny if neither admin, rider, nor authenticated customer matching this email
+      // Deny if neither admin, rider, nor authenticated customer matching this email/phone
       if (!hasAdminSession && !hasRiderSession && !isAuthorizedCustomer) {
         return NextResponse.json(
           {
             error:
-              "Access Denied: Authentication required to view receipts. Please log in with your email and PIN.",
+              "Access Denied: Authentication required to view receipts. Please log in with your mobile number and PIN.",
           },
           { status: 401 }
         );
       }
 
-      const orders = await getOrders(status, search, targetEmail);
+      const orders = await getOrders(status, search, targetQuery);
       return NextResponse.json(orders);
     }
 
@@ -48,9 +48,9 @@ export async function GET(req: Request) {
     // 2. If querying all orders without email (Staff Admin/Rider):
     if (!hasAdminSession && !hasRiderSession && !isRiderRequest) {
       // If customer is querying without email param, return only their own orders if authenticated
-      if (authenticatedCustomerEmail || authHeaderEmail) {
-        const userEmail = authenticatedCustomerEmail || authHeaderEmail;
-        const orders = await getOrders(status, search, userEmail || undefined);
+      if (authenticatedCustomerEmail || authenticatedCustomerPhone) {
+        const userIdentifier = authenticatedCustomerEmail || authenticatedCustomerPhone!;
+        const orders = await getOrders(status, search, userIdentifier);
         return NextResponse.json(orders);
       }
 
@@ -126,82 +126,51 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const { getCustomerSessionFromRequest } = await import("@/lib/auth/session");
+    const { processAuthoritativeCheckout } = await import("@/lib/data/checkout");
 
-    // 0. Store status verification
-    const settings = await getStoreSettings();
-    if (!settings.accepts_orders || settings.store_status !== "open") {
+    const session = await getCustomerSessionFromRequest(req);
+    if (!session || !session.userId) {
       return NextResponse.json(
-        {
-          error:
-            settings.closure_message ||
-            "Store is currently closed for online orders. Kindly visit our shop directly or order during operating hours.",
-          storeClosed: true,
-          operatingHours: settings.operating_hours || "8:00 AM - 10:00 PM",
-          shopAddress: settings.shop_address,
-          businessPhone: settings.business_phone,
-        },
-        { status: 403 }
-      );
-    }
-
-    // 1. Validation
-    if (!body.customer_name || body.customer_name.trim().length < 2) {
-      return NextResponse.json({ error: "Please enter a valid customer name" }, { status: 400 });
-    }
-
-    if (!body.customer_email || !body.customer_email.includes("@")) {
-      return NextResponse.json(
-        { error: "Please verify your email with OTP before placing an order." },
+        { error: "Authentication required: Please log in with your mobile number to place an order." },
         { status: 401 }
       );
     }
 
-    const cleanPhone = (body.customer_phone || "").replace(/[^0-9]/g, "");
-    if (cleanPhone.length < 10) {
-      return NextResponse.json({ error: "Please enter a valid 10-digit mobile number" }, { status: 400 });
-    }
-
-    if (!body.delivery_address || body.delivery_address.trim().length < 5) {
-      return NextResponse.json({ error: "Please enter your full delivery address" }, { status: 400 });
-    }
-
-    if (!body.locality || body.locality.trim().length < 2) {
-      return NextResponse.json({ error: "Please select or enter your village/locality" }, { status: 400 });
-    }
+    const body = await req.json();
+    const idempotencyKey = req.headers.get("x-idempotency-key") || body.idempotency_key || undefined;
 
     if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
-      return NextResponse.json({ error: "Your cart is empty" }, { status: 400 });
+      return NextResponse.json({ error: "Your shopping cart is empty" }, { status: 400 });
     }
 
-    const result = await createOrder({
-      customer_name: body.customer_name,
-      customer_email: body.customer_email.trim(),
-      customer_phone: cleanPhone,
-      delivery_address: body.delivery_address,
+    const result = await processAuthoritativeCheckout({
+      userId: session.userId,
+      items: body.items,
+      deliveryAddress: body.delivery_address,
       locality: body.locality,
       landmark: body.landmark,
-      delivery_instructions: body.delivery_instructions,
-      payment_method: body.payment_method === "upi" ? "upi" : "cod",
-      upi_reference: body.upi_reference,
-      upi_screenshot: body.upi_screenshot,
-      coupon_code: body.coupon_code,
-      discount_amount: typeof body.discount_amount === "number" ? body.discount_amount : undefined,
+      deliveryInstructions: body.delivery_instructions,
       latitude: typeof body.latitude === "number" ? body.latitude : undefined,
       longitude: typeof body.longitude === "number" ? body.longitude : undefined,
-      map_url: body.map_url,
-      items: body.items,
+      mapUrl: body.map_url,
+      couponCode: body.coupon_code,
+      paymentMethod: body.payment_method === "upi" ? "upi" : "cod",
+      upiReference: body.upi_reference,
+      upiScreenshot: body.upi_screenshot,
+      idempotencyKey,
     });
 
     if (!result.success || !result.order) {
-      return NextResponse.json({ error: result.error || "Failed to place order" }, { status: 400 });
+      return NextResponse.json(
+        { error: result.error || "Failed to place order." },
+        { status: result.code || 400 }
+      );
     }
 
-    // Broadcast new order creation real-time event to Admin dashboard and store
-    broadcastRealtimeEvent("order_created", result.order);
-
     return NextResponse.json(result.order, { status: 201 });
-  } catch (error) {
-    return NextResponse.json({ error: "Server error processing order" }, { status: 500 });
+  } catch (error: any) {
+    console.error("[ORDERS_POST] Server error:", error);
+    return NextResponse.json({ error: error?.message || "Server error processing order." }, { status: 500 });
   }
 }

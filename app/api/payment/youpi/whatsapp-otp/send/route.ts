@@ -1,82 +1,60 @@
 import { NextResponse } from "next/server";
+import { sendWhatsAppOtp } from "@/lib/auth/otp-service";
+import { getCustomerSessionFromRequest } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
-
-// In-memory challenge store for sandbox / local development
-export const pendingWhatsappChallenges = new Map<
-  string,
-  {
-    otpCode: string;
-    expiresAt: number;
-    attempts: number;
-  }
->();
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const rawMobile = body.mobileNumber || body.phoneNumber || body.phone || "";
-    const cleanMobile = rawMobile.replace(/[^0-9]/g, "").slice(-10);
+    const purpose = body.purpose || "signup"; // "signup" | "change" | "checkout" | "login"
+    const customerName = body.customerName || body.name || "Customer";
 
-    if (!cleanMobile || cleanMobile.length !== 10) {
+    if (purpose === "signup") {
+      const { sql } = await import("@/lib/neon/db");
+      if (sql) {
+        const settingsRows = await sql.query(
+          `SELECT store_status, store_shutoff, shutoff_message FROM store_settings WHERE id = 1 LIMIT 1;`
+        );
+        if (settingsRows && settingsRows.length > 0) {
+          const s = settingsRows[0];
+          if (s.store_shutoff || s.store_status === "shutoff") {
+            return NextResponse.json(
+              { error: s.shutoff_message || "The store is permanently closed. New customer signups are currently disabled." },
+              { status: 403 }
+            );
+          }
+        }
+      }
+    }
+
+    const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "127.0.0.1";
+    const session = await getCustomerSessionFromRequest(req);
+
+    const result = await sendWhatsAppOtp({
+      rawPhone: rawMobile,
+      purpose,
+      ip: clientIp,
+      customerName,
+      userId: session?.userId,
+    });
+
+    if (!result.success) {
       return NextResponse.json(
-        { error: "Please provide a valid 10-digit mobile number." },
-        { status: 400 }
+        { error: result.error, retryAfterSeconds: result.retryAfterSeconds },
+        { status: result.retryAfterSeconds ? 429 : 400 }
       );
     }
 
-    const youpiBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
-
-    // 1. Attempt to dispatch via live YouPI PG Berry WhatsApp socket
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
-
-      const res = await fetch(`${youpiBaseUrl}/api/v1/customer/send-otp`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mobileNumber: cleanMobile,
-          name: (body.customerName || "").trim(),
-          fullName: (body.customerName || "").trim(),
-          customerName: (body.customerName || "").trim(),
-          displayName: (body.customerName || "").trim(),
-        }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        return NextResponse.json({
-          success: true,
-          message: "Verification code sent to your WhatsApp number.",
-          mobileNumber: cleanMobile,
-        });
-      }
-    } catch (e) {
-      // YouPI Gateway offline
-    }
-
-    // 2. Challenge generation (cryptographic 6-digit code)
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = Date.now() + 5 * 60 * 1000;
-
-    pendingWhatsappChallenges.set(cleanMobile, {
-      otpCode,
-      expiresAt,
-      attempts: 0,
-    });
-
-    console.log(`[YouPI WhatsApp] OTP generated for +91${cleanMobile}: ${otpCode}`);
-
     return NextResponse.json({
       success: true,
-      message: "Verification code sent to your WhatsApp number.",
-      mobileNumber: cleanMobile,
+      message: "WhatsApp verification code dispatched.",
+      mobileNumber: result.dbPhone,
       expiresInSeconds: 300,
     });
   } catch (error: any) {
+    console.error("[OTP_SEND] Error:", error);
     return NextResponse.json(
       { error: error?.message || "Failed to dispatch WhatsApp OTP" },
       { status: 500 }

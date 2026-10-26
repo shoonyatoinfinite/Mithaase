@@ -452,6 +452,11 @@ export default function CheckoutPage() {
       const finalMapUrl =
         mapUrl || `https://www.google.com/maps?q=${latitude},${longitude}`;
 
+      const idempotencyKey =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `idemp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
       const payload = {
         customer_name: customerName.trim(),
         customer_email: user?.email || signupEmail.trim(),
@@ -467,6 +472,7 @@ export default function CheckoutPage() {
         upi_reference: paymentData.paymentMethod === "upi" ? paymentData.upiReference : undefined,
         upi_screenshot: paymentData.paymentMethod === "upi" ? paymentData.upiScreenshot : undefined,
         coupon_code: appliedCoupon ? appliedCoupon.code : undefined,
+        idempotency_key: idempotencyKey,
         discount_amount:
           appliedCoupon && appliedCoupon.discount_type === "free_delivery"
             ? 0
@@ -482,7 +488,10 @@ export default function CheckoutPage() {
 
       const res = await fetch("/api/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-idempotency-key": idempotencyKey,
+        },
         body: JSON.stringify(payload),
       });
 

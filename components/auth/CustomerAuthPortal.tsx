@@ -52,8 +52,11 @@ export function CustomerAuthPortal({
   } = useUserAuth();
 
   const { settings } = useStoreSettings();
+  const isStoreShutoff = Boolean(settings.store_shutoff || settings.store_status === "shutoff");
 
-  const [activeTab, setActiveTab] = useState<"login" | "signup" | "google_complete">(initialTab);
+  const [activeTab, setActiveTab] = useState<"login" | "signup" | "google_complete">(
+    initialTab === "signup" && isStoreShutoff ? "login" : initialTab
+  );
   const [showSecret, setShowSecret] = useState(false);
 
   // Login form state
@@ -158,7 +161,7 @@ export function CustomerAuthPortal({
     }
   };
 
-  // Step 1: Validate Name & Email, Send 1-time OTP
+  // Step 1: Validate Name, Phone & Email, Send WhatsApp OTP
   const handleSignupStep1 = async (e: React.FormEvent) => {
     e.preventDefault();
     setSignupError("");
@@ -169,47 +172,54 @@ export function CustomerAuthPortal({
       return;
     }
 
+    const cleanPhone = signupPhone.replace(/[^0-9]/g, "").slice(-10);
+    if (cleanPhone.length < 10 || !/^[6-9]\d{9}$/.test(cleanPhone)) {
+      setSignupError("Please enter a valid 10-digit Indian WhatsApp mobile number (starting with 6-9).");
+      return;
+    }
+
     if (!signupEmail || !signupEmail.includes("@") || !signupEmail.includes(".")) {
-      setSignupError("Please enter a valid email address to receive your 1-time verification code.");
+      setSignupError("Please enter a valid email address.");
       return;
     }
 
     setIsSendingOtp(true);
-    const res = await sendOtp(signupEmail.trim());
+    const res = await sendOtp(cleanPhone, signupName.trim());
     setIsSendingOtp(false);
 
     if (res.success) {
-      setSignupSuccessMsg(`A 6-digit verification code has been dispatched to ${signupEmail.trim()}`);
+      setSignupSuccessMsg(`A 6-digit WhatsApp verification code has been dispatched to +91 ${cleanPhone}`);
       setSignupStep(2);
     } else {
-      setSignupError(res.error || "Failed to deliver verification code. Please try again.");
+      setSignupError(res.error || "Failed to deliver WhatsApp verification code. Please try again.");
     }
   };
 
-  // Step 2: Verify OTP
+  // Step 2: Verify WhatsApp OTP
   const handleSignupStep2 = async (e: React.FormEvent) => {
     e.preventDefault();
     setSignupError("");
     setSignupSuccessMsg("");
 
     const cleanOtp = signupOtp.replace(/[^0-9]/g, "");
-    if (cleanOtp.length < 4) {
-      setSignupError("Please enter the 6-digit code received on your email.");
+    if (cleanOtp.length !== 6) {
+      setSignupError("Please enter the 6-digit code received on WhatsApp.");
       return;
     }
 
+    const cleanPhone = signupPhone.replace(/[^0-9]/g, "").slice(-10);
     setIsVerifyingOtp(true);
-    const verifyRes = await verifyOtp(signupEmail.trim(), cleanOtp);
+    const verifyRes = await verifyOtp(cleanPhone, cleanOtp);
     setIsVerifyingOtp(false);
 
     if (!verifyRes.success) {
-      setSignupError(verifyRes.error || "Incorrect verification code. Please try again.");
+      setSignupError(verifyRes.error || "Incorrect WhatsApp verification code. Please try again.");
       return;
     }
 
-    // Email is verified! Proceed to Step 3: set PIN, address with map, and extra details
+    // Phone is verified! Proceed to Step 3: set PIN, address with map, and extra details
     setSignupStep(3);
-    setSignupSuccessMsg("✓ Email verified! Please set your PIN and delivery address with map.");
+    setSignupSuccessMsg("✓ WhatsApp number verified! Please set your 6-digit PIN and delivery address.");
   };
 
   // Step 3: Set PIN, Address with Map, and Extra Details, then Register
@@ -435,21 +445,23 @@ export function CustomerAuthPortal({
               <span>Login to Account</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab("signup");
-                setSignupError("");
-              }}
-              className={`py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${
-                activeTab === "signup"
-                  ? "gold-gradient-btn shadow-md"
-                  : "text-white/60 hover:text-white"
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Create Account</span>
-            </button>
+            {!isStoreShutoff && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("signup");
+                  setSignupError("");
+                }}
+                className={`py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${
+                  activeTab === "signup"
+                    ? "gold-gradient-btn shadow-md"
+                    : "text-white/60 hover:text-white"
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Create Account</span>
+              </button>
+            )}
           </div>
         </>
       )}
@@ -530,30 +542,55 @@ export function CustomerAuthPortal({
           </button>
 
           <div className="pt-2 text-center text-xs text-[#D3BEB0]">
-            <span>New customer? </span>
-            <button
-              type="button"
-              onClick={() => setActiveTab("signup")}
-              className="text-[#F5D061] hover:underline font-bold"
-            >
-              Register once with Email OTP →
-            </button>
+            {isStoreShutoff ? (
+              <span className="text-amber-300/80 text-[11px] block">
+                🔒 The store is permanently shut off. New customer signups are disabled.
+              </span>
+            ) : (
+              <>
+                <span>New customer? </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("signup")}
+                  className="text-[#F5D061] hover:underline font-bold"
+                >
+                  Register once with WhatsApp OTP →
+                </button>
+              </>
+            )}
           </div>
         </form>
       )}
 
+      {activeTab === "signup" && isStoreShutoff && (
+        <div className="p-6 rounded-2xl bg-gradient-to-b from-red-950/40 via-[#1C0324] to-[#12021A] border border-red-500/40 text-center space-y-3">
+          <AlertCircle className="w-8 h-8 text-red-400 mx-auto" />
+          <h4 className="font-serif font-bold text-white text-base">New Signups Disabled</h4>
+          <p className="text-xs text-white/70 max-w-sm mx-auto leading-relaxed">
+            {settings.shutoff_message || "The store is permanently shut off by administration. New customer registrations are temporarily disabled."}
+          </p>
+          <button
+            type="button"
+            onClick={() => setActiveTab("login")}
+            className="gold-gradient-btn px-5 py-2.5 rounded-xl text-xs font-bold text-[#16031E] shadow-md"
+          >
+            Sign In to Existing Account →
+          </button>
+        </div>
+      )}
+
       {/* ============================================================== */}
-      {/* VIEW B: SIGNUP WITH 1-TIME EMAIL OTP VERIFICATION              */}
+      {/* VIEW B: SIGNUP WITH 1-TIME WHATSAPP OTP VERIFICATION          */}
       {/* ============================================================== */}
-      {activeTab === "signup" && (
+      {activeTab === "signup" && !isStoreShutoff && (
         <div className="space-y-4">
           {/* Step Indicator */}
           <div className="flex items-center justify-between p-3 rounded-xl bg-[#16031E] border border-[#D4AF37]/30 text-xs">
             <span className="font-semibold text-white/80">
               {signupStep === 1
-                ? "Step 1: Your Name & Email"
+                ? "Step 1: WhatsApp Mobile & Details"
                 : signupStep === 2
-                ? "Step 2: Submit 1-Time Email OTP"
+                ? "Step 2: Verify WhatsApp Code"
                 : "Step 3: Set PIN, Delivery Address & Map"}
             </span>
             <span className="font-mono text-[#F5D061] font-bold px-2 py-0.5 rounded-full bg-[#20052B] border border-[#D4AF37]/40 text-[10px]">
@@ -575,7 +612,7 @@ export function CustomerAuthPortal({
             </div>
           )}
 
-          {/* SIGNUP STEP 1: NAME & EMAIL */}
+          {/* SIGNUP STEP 1: NAME, WHATSAPP PHONE & EMAIL */}
           {signupStep === 1 && (
             <form onSubmit={handleSignupStep1} className="space-y-4">
               <div>
@@ -597,7 +634,30 @@ export function CustomerAuthPortal({
 
               <div>
                 <label className="block text-xs font-semibold text-white/80 mb-1">
-                  Email Address * (For OTP Verification)
+                  WhatsApp Mobile Number * (10 Digits)
+                </label>
+                <div className="flex">
+                  <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-white/15 bg-white/5 text-white/70 font-mono text-xs">
+                    +91
+                  </span>
+                  <input
+                    type="tel"
+                    required
+                    maxLength={10}
+                    value={signupPhone}
+                    onChange={(e) => setSignupPhone(e.target.value.replace(/[^0-9]/g, ""))}
+                    placeholder="9876543210"
+                    className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-r-xl px-3 py-2.5 text-xs sm:text-sm text-white font-mono placeholder-white/30 outline-none"
+                  />
+                </div>
+                <span className="text-[11px] text-white/40 mt-1 block">
+                  A 6-digit WhatsApp OTP verification code will be sent to this number.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-white/80 mb-1">
+                  Email Address * (For Order Invoices & Receipts)
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-white/40 absolute left-3.5 top-3" />
@@ -610,9 +670,6 @@ export function CustomerAuthPortal({
                     className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-xl pl-10 pr-4 py-3 text-xs sm:text-sm text-white placeholder-white/30 outline-none transition-colors"
                   />
                 </div>
-                <span className="text-[11px] text-white/40 mt-1 block">
-                  We will send a 1-time 6-digit verification code to confirm your email.
-                </span>
               </div>
 
               <button
@@ -623,12 +680,12 @@ export function CustomerAuthPortal({
                 {isSendingOtp ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin text-[#16031E]" />
-                    <span>Dispatching Verification Code...</span>
+                    <span>Sending WhatsApp Code...</span>
                   </>
                 ) : (
                   <>
-                    <Mail className="w-4 h-4 text-[#16031E]" />
-                    <span>Send Verification Code (OTP)</span>
+                    <Phone className="w-4 h-4 text-[#16031E]" />
+                    <span>Send WhatsApp Verification Code</span>
                     <ArrowRight className="w-4 h-4 text-[#16031E]" />
                   </>
                 )}
@@ -647,24 +704,24 @@ export function CustomerAuthPortal({
             </form>
           )}
 
-          {/* SIGNUP STEP 2: VERIFY EMAIL OTP */}
+          {/* SIGNUP STEP 2: VERIFY WHATSAPP OTP */}
           {signupStep === 2 && (
             <form onSubmit={handleSignupStep2} className="space-y-4">
               <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs leading-relaxed">
-                A 6-digit security code was dispatched to <strong>{signupEmail}</strong>. Please check your inbox or spam folder.
+                A 6-digit WhatsApp verification code was dispatched to <strong>+91 {signupPhone.slice(-10)}</strong>. Please check your WhatsApp messages.
               </div>
 
               <div>
                 <div className="flex justify-between items-center mb-1.5">
                   <label className="text-xs font-semibold text-white/80">
-                    Enter 6-Digit Email Code *
+                    Enter 6-Digit WhatsApp Code *
                   </label>
                   <button
                     type="button"
                     onClick={() => setSignupStep(1)}
                     className="text-[11px] text-[#F5D061] hover:underline font-bold"
                   >
-                    ← Change Email
+                    ← Change Mobile Number
                   </button>
                 </div>
                 <input
@@ -672,7 +729,7 @@ export function CustomerAuthPortal({
                   required
                   maxLength={6}
                   value={signupOtp}
-                  onChange={(e) => setSignupOtp(e.target.value)}
+                  onChange={(e) => setSignupOtp(e.target.value.replace(/[^0-9]/g, ""))}
                   placeholder="e.g. 523499"
                   className="w-full bg-[#16031E] border-2 border-[#D4AF37]/50 focus:border-[#F5D061] rounded-xl px-4 py-3.5 text-center text-2xl font-mono tracking-widest text-[#FFF8EE] outline-none shadow-inner"
                 />
@@ -692,7 +749,7 @@ export function CustomerAuthPortal({
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4 text-[#16031E]" />
-                      <span>Verify Code &amp; Proceed</span>
+                      <span>Verify WhatsApp &amp; Proceed</span>
                       <ArrowRight className="w-4 h-4 text-[#16031E]" />
                     </>
                   )}
@@ -703,68 +760,46 @@ export function CustomerAuthPortal({
                   disabled={isSendingOtp}
                   className="px-4 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/80 hover:text-white text-xs font-semibold border border-white/10 transition-colors"
                 >
-                  Resend Code
+                  Resend
                 </button>
               </div>
             </form>
           )}
 
-          {/* SIGNUP STEP 3: SET PIN, PASSWORD, DELIVERY ADDRESS WITH MAP */}
+          {/* SIGNUP STEP 3: SET PIN, DELIVERY ADDRESS WITH MAP */}
           {signupStep === 3 && (
             <form onSubmit={handleSignupStep3} className="space-y-4">
-              {/* Verified Email Badge */}
+              {/* Verified Badges */}
               <div className="p-3 rounded-xl bg-emerald-950/70 border border-emerald-500/40 text-emerald-300 text-xs flex items-center justify-between">
                 <span className="flex items-center gap-1.5 font-semibold">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>Verified: {signupEmail}</span>
+                  <span>Verified WhatsApp: +91 {signupPhone.slice(-10)}</span>
                 </span>
                 <span className="text-[10px] text-white/50 bg-white/5 px-2 py-0.5 rounded-full flex items-center gap-1">
                   <Lock className="w-2.5 h-2.5" />
-                  <span>Permanent ID</span>
+                  <span>Verified</span>
                 </span>
               </div>
 
-              {/* Mobile Number & 6-Digit PIN */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-white/80 mb-1">
-                    Mobile Number * (10 Digits)
-                  </label>
-                  <div className="flex">
-                    <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-white/15 bg-white/5 text-white/70 font-mono text-xs">
-                      +91
-                    </span>
-                    <input
-                      type="tel"
-                      required
-                      maxLength={10}
-                      value={signupPhone}
-                      onChange={(e) => setSignupPhone(e.target.value)}
-                      placeholder="9876543210"
-                      className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-r-xl px-3 py-2.5 text-xs sm:text-sm text-white font-mono placeholder-white/30 outline-none"
-                    />
-                  </div>
+              {/* Set 6-Digit PIN */}
+              <div>
+                <label className="block text-xs font-semibold text-white/80 mb-1">
+                  Create 6-Digit Security PIN * (For 1-Click Login)
+                </label>
+                <div className="relative">
+                  <KeyRound className="w-4 h-4 text-white/40 absolute left-3 top-3" />
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    required
+                    maxLength={6}
+                    value={signupPin}
+                    onChange={(e) => setSignupPin(e.target.value.replace(/[^0-9]/g, ""))}
+                    placeholder="Enter 6-digit numeric PIN"
+                    className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-xl pl-9 pr-4 py-2.5 text-xs sm:text-sm text-white font-mono placeholder-white/30 outline-none"
+                  />
                 </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-white/80 mb-1">
-                    Set 6-Digit Security PIN *
-                  </label>
-                  <div className="relative">
-                    <KeyRound className="w-4 h-4 text-white/40 absolute left-3 top-3" />
-                    <input
-                      type="password"
-                      inputMode="numeric"
-                      required
-                      maxLength={6}
-                      value={signupPin}
-                      onChange={(e) => setSignupPin(e.target.value)}
-                      placeholder="6 digits (e.g. 523499)"
-                      className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-xl pl-9 pr-3 py-2.5 text-xs sm:text-sm text-white font-mono placeholder-white/30 outline-none"
-                    />
-                  </div>
-                  <span className="text-[10px] text-[#F5D061] mt-0.5 block">For instant 1-click re-orders</span>
-                </div>
+                <span className="text-[10px] text-[#F5D061] mt-1 block">Your 6-digit PIN allows instant 1-click login and re-orders.</span>
               </div>
 
               {/* Password */}
