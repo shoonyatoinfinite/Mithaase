@@ -36,6 +36,7 @@ export interface CreateOrderParams {
   isBookingRequest?: boolean;
   customerPhone?: string;
   customerName?: string;
+  orderNumber?: string;
 }
 
 export interface CreateOrderResult {
@@ -358,7 +359,10 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
   // 7. Execute in ONE ACID Transaction via Neon Pool / WebSocket Driver
   const orderId = crypto.randomUUID();
   const year = new Date().getFullYear();
-  const orderNumber = `SSS-${year}-${Date.now().toString().slice(-4)}`;
+  const orderNumber =
+    params.orderNumber && /^SSS-\d{4}-\d+$/i.test(params.orderNumber.trim())
+      ? params.orderNumber.trim().toUpperCase()
+      : `SSS-${year}-${Date.now().toString().slice(-4)}`;
 
   const finalPaymentMethod: PaymentMethod = params.isBookingRequest ? "cod" : params.paymentMethod;
   const initialBookingStatus = params.isBookingRequest ? "requested" : "standard";

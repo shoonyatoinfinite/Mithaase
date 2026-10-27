@@ -1123,9 +1123,17 @@ export default function AdminOrdersPage() {
                   </div>
 
                   <div className="bg-black/40 p-2.5 rounded-xl border border-purple-500/20 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <div className="font-mono text-[11px]">
-                      <span className="text-white/60">Customer UTR / Ref: </span>
-                      <strong className="text-white font-bold">{selectedOrder.upi_reference || "No UTR provided"}</strong>
+                    <div className="font-mono text-[11px] space-y-0.5">
+                      <div>
+                        <span className="text-white/60">Customer UTR / Ref: </span>
+                        <strong className="text-white font-bold">{selectedOrder.upi_reference?.split("|")[0] || "No UTR provided"}</strong>
+                      </div>
+                      {selectedOrder.upi_reference?.includes("|payid:") && (
+                        <div className="text-[10px] text-purple-300">
+                          <span className="text-white/50">YouPI Gateway Session: </span>
+                          <span className="font-mono font-bold text-[#F5D061]">{selectedOrder.upi_reference.split("|payid:")[1]}</span>
+                        </div>
+                      )}
                     </div>
                     {selectedOrder.upi_screenshot && (
                       <button
@@ -1922,9 +1930,16 @@ export default function AdminOrdersPage() {
                         <span>Manual UPI Payment Proof & Verification</span>
                       </div>
                       {selectedOrder.upi_reference && (
-                        <span className="text-[11px] font-mono text-[#F5D061]">
-                          UTR: {selectedOrder.upi_reference}
-                        </span>
+                        <div className="text-right font-mono">
+                          <span className="text-[11px] text-[#F5D061] block">
+                            UTR: {selectedOrder.upi_reference.split("|")[0]}
+                          </span>
+                          {selectedOrder.upi_reference.includes("|payid:") && (
+                            <span className="text-[9px] text-purple-300 block">
+                              YouPI Session: {selectedOrder.upi_reference.split("|payid:")[1]}
+                            </span>
+                          )}
+                        </div>
                       )}
                     </div>
 

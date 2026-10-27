@@ -442,6 +442,7 @@ export default function CheckoutPage() {
     upiReference?: string;
     upiScreenshot?: string;
     isBookingRequest?: boolean;
+    orderNumber?: string;
   }) => {
     setIsSubmitting(true);
     setOrderError("");
@@ -467,6 +468,7 @@ export default function CheckoutPage() {
         latitude,
         longitude,
         map_url: finalMapUrl,
+        order_number: paymentData.orderNumber || undefined,
         payment_method: paymentData.paymentMethod,
         upi_reference: paymentData.paymentMethod === "upi" ? paymentData.upiReference : undefined,
         upi_screenshot: paymentData.paymentMethod === "upi" ? paymentData.upiScreenshot : undefined,

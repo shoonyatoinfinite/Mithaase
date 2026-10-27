@@ -42,6 +42,7 @@ interface PaymentSelectionModalProps {
     paymentMethod: "cod" | "upi";
     upiReference?: string;
     upiScreenshot?: string;
+    orderNumber?: string;
   }) => Promise<void>;
 }
 
@@ -356,6 +357,10 @@ export function PaymentSelectionModal({
     if (youpiSession && youpiStatus === "PENDING") return;
     setYoupiLoading(true);
     setValidationError("");
+
+    const year = new Date().getFullYear();
+    const syncOrderNumber = `SSS-${year}-${Date.now().toString().slice(-4)}`;
+
     try {
       const res = await fetch("/api/payment/youpi/create", {
         method: "POST",
@@ -364,6 +369,7 @@ export function PaymentSelectionModal({
           amount: upiAmount,
           customerName,
           customerPhone,
+          orderId: syncOrderNumber,
         }),
       });
       const data = await res.json();
@@ -448,9 +454,12 @@ export function PaymentSelectionModal({
 
           // Automatically confirm order after short delay for customer feedback
           setTimeout(async () => {
+            const pId = youpiSession.paymentId;
+            const fullRef = pId ? `youpi:${verifiedUtr}|payid:${pId}` : `youpi:${verifiedUtr}`;
             await onConfirmOrder({
               paymentMethod: "upi",
-              upiReference: `youpi:${verifiedUtr}`,
+              upiReference: fullRef,
+              orderNumber: youpiSession.orderId,
             });
           }, 1200);
         } else if (isMounted && data.status === "FAILED") {
