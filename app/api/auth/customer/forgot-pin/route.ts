@@ -3,7 +3,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { sql } from "@/lib/neon/db";
 import { sendOtpEmail, sendPinResetEmail } from "@/lib/email/mailer";
-import { sendWhatsAppOtp, verifyWhatsAppOtp, checkRateLimit } from "@/lib/auth/otp-service";
+import { sendWhatsAppOtp, verifyWhatsAppOtp, checkRateLimit, clearRateLimit } from "@/lib/auth/otp-service";
 import { normalizeAndValidateWhatsAppPhone } from "@/lib/utils/phone";
 
 export const dynamic = "force-dynamic";
@@ -142,21 +142,26 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Incorrect email verification code. Please check and try again." }, { status: 400 });
       }
 
-      // Mark email OTP as consumed
-      await sql.query(`UPDATE phone_verifications SET consumed_at = NOW() WHERE id = $1;`, [rec.id]);
-
       // Automatically dispatch WhatsApp OTP to registered customer phone
+      // Bypass IP cooldown collision from the immediate prior email OTP request
       const waSend = await sendWhatsAppOtp({
         rawPhone: customer.phone,
         purpose: "change",
         ip: clientIp,
         customerName: customer.name,
         userId: customer.id,
+        skipIpCooldown: true,
       });
 
       if (!waSend.success) {
-        return NextResponse.json({ error: waSend.error || "Failed to dispatch WhatsApp OTP. Please verify your phone." }, { status: 400 });
+        return NextResponse.json(
+          { error: waSend.error || "Failed to dispatch WhatsApp OTP. Please verify your phone." },
+          { status: 400 }
+        );
       }
+
+      // Mark email OTP as consumed ONLY AFTER WhatsApp OTP was successfully dispatched
+      await sql.query(`UPDATE phone_verifications SET consumed_at = NOW() WHERE id = $1;`, [rec.id]);
 
       return NextResponse.json({
         success: true,
@@ -188,10 +193,17 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: waVerify.error || "Incorrect WhatsApp verification code." }, { status: 400 });
       }
 
-      // 2. Generate new random 6-digit PIN
-      const pinNum = crypto.randomInt(100000, 1000000);
-      const newPin = pinNum.toString();
-      const pinHash = await bcrypt.hash(newPin, 10);
+      // 2. Use user-specified 6-digit PIN or generate a random one
+      let finalPin = "";
+      const rawNewPin = String(body.newPin || body.pin || "").replace(/[^0-9]/g, "").trim();
+      if (rawNewPin && rawNewPin.length === 6) {
+        finalPin = rawNewPin;
+      } else {
+        const pinNum = crypto.randomInt(100000, 1000000);
+        finalPin = pinNum.toString();
+      }
+
+      const pinHash = await bcrypt.hash(finalPin, 10);
 
       // 3. Atomically update Neon customer_accounts
       await sql.query(
@@ -202,7 +214,7 @@ export async function POST(req: Request) {
       );
 
       // 4. Dispatch new PIN to Email
-      await sendPinResetEmail(customer.email, customer.name, newPin);
+      await sendPinResetEmail(customer.email, customer.name, finalPin);
 
       // 5. Dispatch new PIN to WhatsApp via YouPI
       try {
@@ -217,7 +229,7 @@ export async function POST(req: Request) {
           body: JSON.stringify({
             mobileNumber: customer.phone,
             name: customer.name,
-            otp: newPin, // Transmit new PIN
+            otp: finalPin, // Transmit new PIN
           }),
           signal: controller.signal,
         });
@@ -226,10 +238,16 @@ export async function POST(req: Request) {
         console.warn("[PIN_RESET] WhatsApp dispatch warning:", e);
       }
 
+      // 6. Clear any login lockout rate limits for this customer
+      await clearRateLimit(customer.email.toLowerCase(), "login_fail");
+      if (customer.phone) {
+        await clearRateLimit(customer.phone, "login_fail");
+      }
+
       return NextResponse.json({
         success: true,
         resetCompleted: true,
-        message: `Your new 6-digit security PIN has been successfully sent to both your email (${maskEmail(customer.email)}) and WhatsApp (${maskPhone(customer.phone)}).`,
+        message: `Your 6-digit security PIN has been successfully reset! A confirmation has been sent to both your email (${maskEmail(customer.email)}) and WhatsApp (${maskPhone(customer.phone)}).`,
       });
     }
 

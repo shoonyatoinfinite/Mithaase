@@ -34,7 +34,8 @@ export async function checkRateLimit(
   action: "otp_send" | "otp_verify" | "login_fail",
   ip: string,
   maxAttempts = 5,
-  windowMinutes = 15
+  windowMinutes = 15,
+  options?: { skipCooldown?: boolean }
 ): Promise<{ allowed: boolean; retryAfterSeconds?: number; error?: string }> {
   if (!sql) throw new Error("Database unavailable for rate limiting");
 
@@ -77,7 +78,7 @@ export async function checkRateLimit(
     }
 
     // Cooldown check for OTP send (60-second limit between resends)
-    if (action === "otp_send") {
+    if (action === "otp_send" && !options?.skipCooldown) {
       const cooldownExpiry = new Date(lastAttempt.getTime() + 60 * 1000);
       if (now < cooldownExpiry) {
         const waitSec = Math.ceil((cooldownExpiry.getTime() - now.getTime()) / 1000);
@@ -148,6 +149,7 @@ export async function sendWhatsAppOtp(params: {
   ip: string;
   customerName?: string;
   userId?: string;
+  skipIpCooldown?: boolean;
 }): Promise<{ success: boolean; error?: string; retryAfterSeconds?: number; dbPhone?: string }> {
   if (!sql) {
     return { success: false, error: "Database unavailable" };
@@ -167,7 +169,9 @@ export async function sendWhatsAppOtp(params: {
     return { success: false, error: phoneLimit.error, retryAfterSeconds: phoneLimit.retryAfterSeconds };
   }
 
-  const ipLimit = await checkRateLimit(params.ip, "otp_send", params.ip, 15, 15);
+  const ipLimit = await checkRateLimit(params.ip, "otp_send", params.ip, 15, 15, {
+    skipCooldown: params.skipIpCooldown,
+  });
   if (!ipLimit.allowed) {
     return { success: false, error: ipLimit.error, retryAfterSeconds: ipLimit.retryAfterSeconds };
   }

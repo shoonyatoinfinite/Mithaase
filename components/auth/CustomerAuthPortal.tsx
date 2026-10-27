@@ -75,6 +75,7 @@ export function CustomerAuthPortal({
   const [forgotSuccessMsg, setForgotSuccessMsg] = useState("");
   const [forgotMaskedEmail, setForgotMaskedEmail] = useState("");
   const [forgotMaskedPhone, setForgotMaskedPhone] = useState("");
+  const [forgotNewPin, setForgotNewPin] = useState("");
 
   // Signup form state (4-Step Progressive Flow: 1=Info, 2=Email OTP, 3=WhatsApp OTP, 4=PIN & Address)
   const [signupStep, setSignupStep] = useState<1 | 2 | 3 | 4>(1);
@@ -421,6 +422,7 @@ export function CustomerAuthPortal({
           action: "verify_whatsapp_and_reset",
           identifier: forgotIdentifier.trim(),
           otp: cleanOtp,
+          newPin: forgotNewPin.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -1389,6 +1391,23 @@ export function CustomerAuthPortal({
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold text-white/80 mb-1.5">
+                  Set New 6-Digit PIN (Optional)
+                </label>
+                <input
+                  type="password"
+                  maxLength={6}
+                  value={forgotNewPin}
+                  onChange={(e) => setForgotNewPin(e.target.value.replace(/[^0-9]/g, ""))}
+                  placeholder="e.g. 123456 (Leave blank to auto-generate)"
+                  className="w-full bg-[#16031E] border border-white/20 focus:border-[#D4AF37] rounded-xl px-4 py-3 text-center text-lg font-mono tracking-widest text-[#FFF8EE] outline-none transition-colors"
+                />
+                <span className="text-[11px] text-white/50 mt-1 block">
+                  Leave blank if you prefer an auto-generated random PIN sent to your email &amp; WhatsApp.
+                </span>
+              </div>
+
               <div className="flex gap-2.5">
                 <button
                   type="submit"
@@ -1403,7 +1422,7 @@ export function CustomerAuthPortal({
                   ) : (
                     <>
                       <KeyRound className="w-4 h-4 text-[#16031E]" />
-                      <span>Verify WhatsApp &amp; Generate New PIN</span>
+                      <span>Verify WhatsApp &amp; Reset PIN</span>
                       <ArrowRight className="w-4 h-4 text-[#16031E]" />
                     </>
                   )}

@@ -30,22 +30,39 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     async function processAuth() {
       try {
-        const session = await authClient.getSession();
-        if (!session?.data?.user?.email) {
-          // If session not ready immediately, wait 1.2s and retry once
-          setTimeout(async () => {
-            const retrySession = await authClient.getSession();
-            if (retrySession?.data?.user?.email) {
-              await checkProfile(retrySession.data.user.email, retrySession.data.user.name || "");
-            } else {
-              setError("Could not retrieve Google account session. Please try logging in again.");
-              setLoading(false);
+        let session = await authClient.getSession();
+        let userEmail = session?.data?.user?.email;
+        let userName = session?.data?.user?.name || "";
+
+        if (!userEmail) {
+          // If session not ready immediately, wait 800ms and retry
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          session = await authClient.getSession();
+          userEmail = session?.data?.user?.email;
+          userName = session?.data?.user?.name || "";
+        }
+
+        if (!userEmail) {
+          // Fallback: check if session cookie is already active on server
+          try {
+            const meRes = await fetch("/api/auth/me", { cache: "no-store" });
+            if (meRes.ok) {
+              const meData = await meRes.json();
+              if (meData?.user?.email) {
+                userEmail = meData.user.email;
+                userName = meData.user.name || "";
+              }
             }
-          }, 1200);
+          } catch {}
+        }
+
+        if (!userEmail) {
+          setError("Could not retrieve Google account session. Please try logging in again.");
+          setLoading(false);
           return;
         }
 
-        await checkProfile(session.data.user.email, session.data.user.name || "");
+        await checkProfile(userEmail, userName);
       } catch (err: any) {
         setError(err?.message || "Failed to complete Google authentication.");
         setLoading(false);

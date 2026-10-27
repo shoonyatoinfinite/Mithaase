@@ -38,6 +38,7 @@ export async function POST(req: Request) {
       ip: clientIp,
       customerName,
       userId: session?.userId,
+      skipIpCooldown: purpose === "signup" || Boolean(body.skipIpCooldown),
     });
 
     if (!result.success) {
