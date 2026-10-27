@@ -831,6 +831,14 @@ export default function AdminOrdersPage() {
                     setSelectedOrder(o);
                     setActionError("");
                     setActionSuccess("");
+                    fetch(`/api/orders/${o.id}`)
+                      .then((res) => (res.ok ? res.json() : null))
+                      .then((fresh) => {
+                        if (fresh && fresh.id === o.id) {
+                          setSelectedOrder(fresh);
+                        }
+                      })
+                      .catch(() => {});
                   }}
                   className={`group p-4 rounded-2xl bg-[#1C0324] hover:bg-[#280532] border-2 ${
                     o.delivery_queued

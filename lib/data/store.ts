@@ -1319,10 +1319,11 @@ export async function getOrders(
           delivery_address, locality, landmark, delivery_instructions,
           subtotal, discount_amount, delivery_charge, total_amount, coupon_code,
           payment_method, payment_status, order_status, upi_reference,
+          upi_screenshot, delivery_proof_photo, pickup_photo, refund_screenshot,
           delivery_queued, delivery_group_id, delivered_at, delivered_lat, delivered_lng,
           delivered_location_name, delivered_map_url, latitude, longitude, map_url,
-          source, cancellation_reason, refund_status, refund_amount, refund_txn_id,
-          booking_status, created_at, updated_at
+          source, cancellation_reason, cancelled_at, refund_status, refund_amount, refund_txn_id,
+          refunded_at, booking_status, created_at, updated_at
         FROM orders 
         ${whereClause}
         ORDER BY created_at DESC
@@ -1390,6 +1391,9 @@ export async function getOrders(
           order_status: o.order_status,
           booking_status: o.booking_status || "standard",
           upi_reference: o.upi_reference || undefined,
+          upi_screenshot: o.upi_screenshot || undefined,
+          delivery_proof_photo: o.delivery_proof_photo || undefined,
+          pickup_photo: o.pickup_photo || undefined,
           delivery_queued: Boolean(o.delivery_queued),
           delivery_group_id: o.delivery_group_id || undefined,
           delivered_at: o.delivered_at ? new Date(o.delivered_at).toISOString() : undefined,
@@ -1406,9 +1410,12 @@ export async function getOrders(
           created_at: o.created_at ? new Date(o.created_at).toISOString() : new Date().toISOString(),
           updated_at: o.updated_at ? new Date(o.updated_at).toISOString() : new Date().toISOString(),
           cancellation_reason: o.cancellation_reason || undefined,
+          cancelled_at: o.cancelled_at ? new Date(o.cancelled_at).toISOString() : undefined,
           refund_status: o.refund_status || undefined,
           refund_amount: o.refund_amount ? Number(o.refund_amount) : undefined,
           refund_txn_id: o.refund_txn_id || undefined,
+          refund_screenshot: o.refund_screenshot || undefined,
+          refunded_at: o.refunded_at ? new Date(o.refunded_at).toISOString() : undefined,
         }));
 
         list = dbMapped;
