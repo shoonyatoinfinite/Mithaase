@@ -192,10 +192,10 @@ export function PaymentSelectionModal({
 
   // Robust UPI ID resolution with phone number fallback for UPI safety compliance
   let rawUpiId = (settings.upi_id || "").trim();
-  if (!rawUpiId || rawUpiId === "shreeshyam@upi") {
+  if (!rawUpiId || rawUpiId === "8290683668@upi") {
     rawUpiId = (process.env.NEXT_PUBLIC_STORE_UPI_ID || "").trim();
   }
-  if (!rawUpiId || rawUpiId === "shreeshyam@upi") {
+  if (!rawUpiId || rawUpiId === "8290683668@upi") {
     rawUpiId = storePhone ? `${storePhone}@upi` : "vinay20@kotakbank";
   }
 
@@ -265,7 +265,7 @@ export function PaymentSelectionModal({
       if (typeof navigator !== "undefined" && navigator.clipboard) {
         navigator.clipboard.writeText(upiId);
       }
-    } catch {}
+    } catch { }
 
     const targetUrl = getUpiUrlForApp(app);
     setOpeningApp(appName);
@@ -397,7 +397,7 @@ export function PaymentSelectionModal({
                 paymentId: youpiSession.paymentId,
                 status: "EXPIRED",
               }),
-            }).catch(() => {});
+            }).catch(() => { });
           }
 
           // Auto-cancel payment, close modal, and return customer to cart
@@ -699,11 +699,10 @@ export function PaymentSelectionModal({
             {/* Option 1: Instant Auto-Confirmation UPI (YouPI) */}
             <div
               onClick={() => setSelectedMethod("upi_auto")}
-              className={`p-4 rounded-2xl border cursor-pointer transition-all relative overflow-hidden ${
-                selectedMethod === "upi_auto"
-                  ? "bg-gradient-to-r from-[#3D0A46] via-[#2D0634] to-[#1F0324] border-[#F5D061] shadow-xl ring-2 ring-[#F5D061]/50"
-                  : "bg-white/[0.03] border-white/10 hover:border-white/20"
-              }`}
+              className={`p-4 rounded-2xl border cursor-pointer transition-all relative overflow-hidden ${selectedMethod === "upi_auto"
+                ? "bg-gradient-to-r from-[#3D0A46] via-[#2D0634] to-[#1F0324] border-[#F5D061] shadow-xl ring-2 ring-[#F5D061]/50"
+                : "bg-white/[0.03] border-white/10 hover:border-white/20"
+                }`}
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3">
@@ -724,9 +723,8 @@ export function PaymentSelectionModal({
                 </div>
 
                 <div
-                  className={`w-4 h-4 rounded-full border flex items-center justify-center mt-1 shrink-0 ${
-                    selectedMethod === "upi_auto" ? "border-[#D4AF37] bg-[#D4AF37]" : "border-white/30"
-                  }`}
+                  className={`w-4 h-4 rounded-full border flex items-center justify-center mt-1 shrink-0 ${selectedMethod === "upi_auto" ? "border-[#D4AF37] bg-[#D4AF37]" : "border-white/30"
+                    }`}
                 >
                   {selectedMethod === "upi_auto" && <div className="w-1.5 h-1.5 rounded-full bg-[#16031E]" />}
                 </div>
@@ -737,11 +735,10 @@ export function PaymentSelectionModal({
               {/* Option 2: COD Card */}
               <div
                 onClick={() => setSelectedMethod("cod")}
-                className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
-                  selectedMethod === "cod"
-                    ? "bg-[#580E1E]/80 border-[#F5D061] shadow-lg ring-1 ring-[#F5D061]"
-                    : "bg-white/[0.03] border-white/10 hover:border-white/20"
-                }`}
+                className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${selectedMethod === "cod"
+                  ? "bg-[#580E1E]/80 border-[#F5D061] shadow-lg ring-1 ring-[#F5D061]"
+                  : "bg-white/[0.03] border-white/10 hover:border-white/20"
+                  }`}
               >
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
@@ -751,9 +748,8 @@ export function PaymentSelectionModal({
                     <span className="text-xs sm:text-sm font-bold text-white">Cash on Delivery</span>
                   </div>
                   <div
-                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
-                      selectedMethod === "cod" ? "border-[#D4AF37] bg-[#D4AF37]" : "border-white/30"
-                    }`}
+                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${selectedMethod === "cod" ? "border-[#D4AF37] bg-[#D4AF37]" : "border-white/30"
+                      }`}
                   >
                     {selectedMethod === "cod" && <div className="w-1 h-1 rounded-full bg-[#16031E]" />}
                   </div>
@@ -766,11 +762,10 @@ export function PaymentSelectionModal({
               {/* Option 3: Manual UPI Card */}
               <div
                 onClick={() => setSelectedMethod("upi")}
-                className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
-                  selectedMethod === "upi"
-                    ? "bg-[#580E1E]/80 border-[#F5D061] shadow-lg ring-1 ring-[#F5D061]"
-                    : "bg-white/[0.03] border-white/10 hover:border-white/20"
-                }`}
+                className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${selectedMethod === "upi"
+                  ? "bg-[#580E1E]/80 border-[#F5D061] shadow-lg ring-1 ring-[#F5D061]"
+                  : "bg-white/[0.03] border-white/10 hover:border-white/20"
+                  }`}
               >
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
@@ -780,9 +775,8 @@ export function PaymentSelectionModal({
                     <span className="text-xs sm:text-sm font-bold text-white">Manual UPI Upload</span>
                   </div>
                   <div
-                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
-                      selectedMethod === "upi" ? "border-[#D4AF37] bg-[#D4AF37]" : "border-white/30"
-                    }`}
+                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${selectedMethod === "upi" ? "border-[#D4AF37] bg-[#D4AF37]" : "border-white/30"
+                      }`}
                   >
                     {selectedMethod === "upi" && <div className="w-1 h-1 rounded-full bg-[#16031E]" />}
                   </div>
@@ -1003,11 +997,10 @@ export function PaymentSelectionModal({
                             setInstantPaymentMode("qr");
                             setValidationError("");
                           }}
-                          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                            instantPaymentMode === "qr"
-                              ? "bg-gradient-to-r from-amber-400 to-amber-500 text-[#16031E] shadow-md ring-1 ring-amber-400/50"
-                              : "text-white/70 hover:text-white hover:bg-white/5"
-                          }`}
+                          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${instantPaymentMode === "qr"
+                            ? "bg-gradient-to-r from-amber-400 to-amber-500 text-[#16031E] shadow-md ring-1 ring-amber-400/50"
+                            : "text-white/70 hover:text-white hover:bg-white/5"
+                            }`}
                         >
                           <Zap className="w-3.5 h-3.5 fill-current" />
                           <span>Scan QR (Auto-Confirm)</span>
@@ -1018,11 +1011,10 @@ export function PaymentSelectionModal({
                             setInstantPaymentMode("utr");
                             setValidationError("");
                           }}
-                          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                            instantPaymentMode === "utr"
-                              ? "bg-gradient-to-r from-amber-400 to-amber-500 text-[#16031E] shadow-md ring-1 ring-amber-400/50"
-                              : "text-white/70 hover:text-white hover:bg-white/5"
-                          }`}
+                          className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${instantPaymentMode === "utr"
+                            ? "bg-gradient-to-r from-amber-400 to-amber-500 text-[#16031E] shadow-md ring-1 ring-amber-400/50"
+                            : "text-white/70 hover:text-white hover:bg-white/5"
+                            }`}
                         >
                           <FileText className="w-3.5 h-3.5" />
                           <span>Fill Reference (Admin Confirmation)</span>
@@ -1354,11 +1346,10 @@ export function PaymentSelectionModal({
                 <button
                   type="button"
                   onClick={() => setUpiFlow("app")}
-                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                    upiFlow === "app"
-                      ? "bg-[#D4AF37] text-[#16031E] shadow-md"
-                      : "text-[#D3BEB0] hover:text-white"
-                  }`}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${upiFlow === "app"
+                    ? "bg-[#D4AF37] text-[#16031E] shadow-md"
+                    : "text-[#D3BEB0] hover:text-white"
+                    }`}
                 >
                   <Smartphone className="w-3.5 h-3.5" />
                   <span>Option 1: Choose UPI App</span>
@@ -1366,11 +1357,10 @@ export function PaymentSelectionModal({
                 <button
                   type="button"
                   onClick={() => setUpiFlow("qr")}
-                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                    upiFlow === "qr"
-                      ? "bg-[#D4AF37] text-[#16031E] shadow-md"
-                      : "text-[#D3BEB0] hover:text-white"
-                  }`}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${upiFlow === "qr"
+                    ? "bg-[#D4AF37] text-[#16031E] shadow-md"
+                    : "text-[#D3BEB0] hover:text-white"
+                    }`}
                 >
                   <QrCode className="w-3.5 h-3.5" />
                   <span>Option 2: Scan Shop QR Code</span>
