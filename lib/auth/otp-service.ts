@@ -203,7 +203,7 @@ export async function sendWhatsAppOtp(params: {
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2500);
+    const timeout = setTimeout(() => controller.abort(), 12000);
 
     const res = await fetch(`${youpiBaseUrl}/api/v1/customer/send-otp`, {
       method: "POST",

@@ -33,10 +33,10 @@ export async function POST(req: Request) {
     const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
     const merchantKey = process.env.YOUPI_MERCHANT_KEY || "00000000-0000-0000-0000-000000000001";
 
-    // Attempt to connect to live YouPI-PG Gateway
+    // Attempt to connect to live YouPI-PG Gateway (Render free tier may take 8-15s on cold starts)
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
       const gatewayRes = await fetch(`${youpiBaseUrl}/api/v1/payments`, {
         method: "POST",
@@ -64,12 +64,22 @@ export async function POST(req: Request) {
 
       if (gatewayRes.ok) {
         const data = await gatewayRes.json();
+        const pId = data.paymentId || data.id;
+        let finalCheckoutUrl = data.checkoutUrl;
+        if (
+          !finalCheckoutUrl ||
+          finalCheckoutUrl.includes("localhost") ||
+          finalCheckoutUrl.includes("127.0.0.1")
+        ) {
+          finalCheckoutUrl = `${youpiBaseUrl}/checkout/${pId}`;
+        }
+
         return NextResponse.json({
           success: true,
           mode: "live",
-          paymentId: data.paymentId || data.id,
+          paymentId: pId,
           orderId: generatedOrderId,
-          checkoutUrl: data.checkoutUrl,
+          checkoutUrl: finalCheckoutUrl,
           amount: finalAmount,
           gatewayUrl: youpiBaseUrl,
         });

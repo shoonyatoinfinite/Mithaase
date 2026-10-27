@@ -61,11 +61,10 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
           </div>
 
           <div className="text-left sm:text-right space-y-1 bg-black/5 sm:bg-transparent p-2.5 sm:p-0 rounded-xl">
-            <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold uppercase tracking-wider mb-0.5 ${
-              order.order_status === "cancelled"
+            <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold uppercase tracking-wider mb-0.5 ${order.order_status === "cancelled"
                 ? "bg-rose-950 text-rose-200 border border-rose-500/40"
                 : "bg-[#1D0823] text-[#F5D061]"
-            }`}>
+              }`}>
               {order.order_status === "cancelled" ? "Cancelled Order Bill / Refund Memo" : "Delivery Receipt / Bill"}
             </span>
             <div className="text-xs">
@@ -195,14 +194,12 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
         <div className="pt-4 border-t-2 border-[#1D0823]/20 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
           {/* Official Verification Stamp */}
           {order.order_status === "cancelled" ? (
-            <div className={`p-3.5 rounded-2xl border-2 max-w-sm flex items-start gap-3 ${
-              order.refund_status === "refunded"
+            <div className={`p-3.5 rounded-2xl border-2 max-w-sm flex items-start gap-3 ${order.refund_status === "refunded"
                 ? "border-emerald-600/70 bg-emerald-50/80"
                 : "border-rose-600/70 bg-rose-50/80"
-            }`}>
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-md text-white ${
-                order.refund_status === "refunded" ? "bg-emerald-600" : "bg-rose-600"
               }`}>
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-md text-white ${order.refund_status === "refunded" ? "bg-emerald-600" : "bg-rose-600"
+                }`}>
                 {order.refund_status === "refunded" ? (
                   <RotateCcw className="w-5 h-5" />
                 ) : (
@@ -210,14 +207,13 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
                 )}
               </div>
               <div>
-                <span className={`text-xs uppercase font-black tracking-wider block ${
-                  order.refund_status === "refunded" ? "text-emerald-800" : "text-rose-800"
-                }`}>
+                <span className={`text-xs uppercase font-black tracking-wider block ${order.refund_status === "refunded" ? "text-emerald-800" : "text-rose-800"
+                  }`}>
                   {order.refund_status === "refunded"
                     ? "ORDER CANCELLED & 100% REFUNDED"
                     : order.payment_method === "upi" || order.payment_status === "paid"
-                    ? "CANCELLED • UPI REFUND IN PROCESS"
-                    : "ORDER CANCELLED"}
+                      ? "CANCELLED • UPI REFUND IN PROCESS"
+                      : "ORDER CANCELLED"}
                 </span>
                 {order.cancellation_reason && (
                   <span className="text-[11px] text-black/80 font-medium block mt-0.5">
@@ -309,10 +305,10 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
                     ? "Amount 100% Refunded"
                     : "Amount (Cancelled)"
                   : order.payment_method === "cod"
-                  ? order.payment_status === "paid"
-                    ? "Paid (COD)"
-                    : "Total Payable (COD)"
-                  : "Total Paid"}
+                    ? order.payment_status === "paid"
+                      ? "Paid (COD)"
+                      : "Total Payable (COD)"
+                    : "Total Paid"}
               </span>
               <span className={`font-mono text-xl ${order.order_status === "cancelled" && order.refund_status === "refunded" ? "text-emerald-700" : order.order_status === "cancelled" ? "text-rose-700" : "text-[#B45309]"}`}>
                 ₹{order.total_amount != null ? order.total_amount : order.subtotal}
@@ -420,7 +416,7 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
             🪔 Shubh Deepawali from Shree Shyam Sweets, Kothal Kalan! 🪔
           </p>
           <p className="text-[10px] text-black/50 mt-0.5">
-            Crafted with traditional recipes, pure desi ghee, and festive warmth. Keep this receipt for your records.
+            Crafted with traditional recipes, pure milk, and festive warmth. Keep this receipt for your records.
           </p>
         </div>
       </div>
