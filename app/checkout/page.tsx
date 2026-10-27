@@ -522,6 +522,7 @@ export default function CheckoutPage() {
       router.push(`/order-confirmation/${data.id}`);
     } catch (err: any) {
       setOrderError(err.message || "An unexpected error occurred while placing your order.");
+      throw err;
     } finally {
       setIsSubmitting(false);
     }

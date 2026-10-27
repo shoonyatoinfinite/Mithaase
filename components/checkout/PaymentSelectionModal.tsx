@@ -475,53 +475,59 @@ export function PaymentSelectionModal({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e && typeof e.preventDefault === "function") {
+      e.preventDefault();
+    }
     setValidationError("");
 
-    if (selectedMethod === "cod") {
-      await onConfirmOrder({ paymentMethod: "cod" });
-      return;
-    }
-
-    if (selectedMethod === "upi_auto") {
-      if (!isWhatsappVerified) {
-        setValidationError(
-          "WhatsApp verification is required for Auto-Confirmed Instant UPI booking. Please complete WhatsApp verification above."
-        );
+    try {
+      if (selectedMethod === "cod") {
+        await onConfirmOrder({ paymentMethod: "cod" });
         return;
       }
-      if (!instantUtr.trim() || instantUtr.trim().length < 6) {
-        setValidationError(
-          "Please enter the 12-digit UPI Reference / UTR Number from your payment app."
-        );
+
+      if (selectedMethod === "upi_auto") {
+        if (!isWhatsappVerified) {
+          setValidationError(
+            "WhatsApp verification is required for Auto-Confirmed Instant UPI booking. Please complete WhatsApp verification above."
+          );
+          return;
+        }
+        if (!instantUtr.trim() || instantUtr.trim().length < 6) {
+          setValidationError(
+            "Please enter the 12-digit UPI Reference / UTR Number from your payment app."
+          );
+          return;
+        }
+        if (youpiStatus === "SUCCESS" && youpiUtr) {
+          await onConfirmOrder({
+            paymentMethod: "upi",
+            upiReference: `youpi:${youpiUtr}`,
+            upiScreenshot: screenshotDataUrl || undefined,
+          });
+          return;
+        }
+        // Trigger instant verification immediately
+        await handleInstantVerify(instantUtr.trim());
         return;
       }
-      if (youpiStatus === "SUCCESS" && youpiUtr) {
-        await onConfirmOrder({
-          paymentMethod: "upi",
-          upiReference: `youpi:${youpiUtr}`,
-          upiScreenshot: screenshotDataUrl || undefined,
-        });
+
+      // Validation for Manual UPI
+      const cleanRef = transactionId.trim();
+      if (!cleanRef || cleanRef.replace(/[^A-Za-z0-9]/g, "").length < 6) {
+        setValidationError("Please enter the 12-digit UPI Reference / UTR Number from your payment app.");
         return;
       }
-      // Trigger instant verification immediately
-      await handleInstantVerify(instantUtr.trim());
-      return;
-    }
 
-    // Validation for Manual UPI
-    const cleanRef = transactionId.trim();
-    if (!cleanRef || cleanRef.replace(/[^A-Za-z0-9]/g, "").length < 6) {
-      setValidationError("Please enter the 12-digit UPI Reference / UTR Number from your payment app.");
-      return;
+      await onConfirmOrder({
+        paymentMethod: "upi",
+        upiReference: cleanRef,
+        upiScreenshot: screenshotDataUrl || undefined,
+      });
+    } catch (err: any) {
+      setValidationError(err?.message || "Failed to place order. Please try again.");
     }
-
-    await onConfirmOrder({
-      paymentMethod: "upi",
-      upiReference: cleanRef,
-      upiScreenshot: screenshotDataUrl || undefined,
-    });
   };
 
   return (
@@ -615,7 +621,7 @@ export function PaymentSelectionModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {/* Option 2: COD Card */}
               <div
-                onClick={() => { setSelectedMethod("cod"); handleSubmit?.(); }}
+                onClick={() => setSelectedMethod("cod")}
                 className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
                   selectedMethod === "cod"
                     ? "bg-[#580E1E]/80 border-[#F5D061] shadow-lg ring-1 ring-[#F5D061]"
@@ -1422,42 +1428,6 @@ export function PaymentSelectionModal({
 
           {/* NOTICE FOR MANUAL UPI (ADMIN VERIFICATION REQUIRED) */}
           {selectedMethod === "upi" && (
-  <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-950/80 via-[#23081E] to-amber-950/80 border border-amber-500/40 text-xs space-y-2.5 shadow-md">
-    {/* Admin verification notice */}
-    <div className="flex items-center gap-2 text-amber-300 font-bold">
-      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
-      <span>Admin Verification Required — Not Auto-Placed</span>
-    </div>
-    <p className="text-[11px] text-amber-200/90 leading-relaxed">
-      Orders with manual UPI reference numbers are <strong>not automatically confirmed or placed</strong>. Our store admin will verify your payment details first before sending your order to the halwai workshop.
-    </p>
-    {/* ==== NEW: UPI Reference Input ==== */}
-    <div className="mt-2">
-      <label htmlFor="upiReference" className="block text-xs text-amber-300 font-medium mb-1">
-        UPI Transaction / UTR Reference
-      </label>
-      <input
-        id="upiReference"
-        type="text"
-        placeholder="e.g. UTR1234567890"
-        value={transactionId}
-        onChange={(e) => setTransactionId(e.target.value)}
-        className="w-full px-3 py-2 text-sm bg-white/5 border border-amber-500/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400/60 transition-colors"
-      />
-      {validationError && validationError.includes("UTR") && (
-        <p className="mt-1 text-xs text-red-400">{validationError}</p>
-      )}
-    </div>
-    {/* Screenshot uploader (unchanged) */}
-    <div className="p-2.5 rounded-xl bg-[#16031E] border border-amber-500/30 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] mt-3">
-      <span className="text-white/80 font-medium">Need sweets urgently?</span>
-      <a href={`tel:${settings.business_phone || "9306859388"}`} className="text-amber-400 hover:text-amber-300 font-bold underline flex items-center gap-1 shrink-0">
-        <Phone className="w-3 h-3" />
-        <span>Call Admin: +91 {settings.business_phone || "9306859388"}</span>
-      </a>
-    </div>
-  </div>
-)}
             <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-950/80 via-[#23081E] to-amber-950/80 border border-amber-500/40 text-xs space-y-2.5 shadow-md">
               <div className="flex items-center gap-2 text-amber-300 font-bold">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
