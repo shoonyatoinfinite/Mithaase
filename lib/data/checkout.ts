@@ -330,13 +330,21 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
     params.isBookingRequest
       ? "unpaid"
       : finalPaymentMethod === "upi"
-      ? "pending_verification"
-      : "unpaid";
+        ? "pending_verification"
+        : "unpaid";
   const initialOrderStatus: OrderStatus = "pending_confirmation";
 
   try {
     const createdOrder = await withTransaction(async (client) => {
       // A. Conditionally deduct stock atomically
+      const inventoryLogs: Array<{
+        variantId: string;
+        productName: string;
+        variantName: string;
+        quantity: number;
+        stockAfter: number;
+      }> = [];
+
       for (const line of verifiedLines) {
         const updateRes = await client.query(
           `UPDATE product_variants 
@@ -351,27 +359,13 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
         }
 
         const newStock = updateRes.rows[0].stock_quantity;
-
-        // Record inventory movement ledger inside transaction
-        await client.query(
-          `INSERT INTO inventory_movements (
-             variant_id, product_name, variant_name, movement_type, 
-             quantity_change, stock_after, reason, related_order_id, created_by
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);`,
-          [
-            line.variantId,
-            line.productName,
-            line.variantName,
-            "order_reservation",
-            -line.quantity,
-            newStock,
-            params.isBookingRequest
-              ? `After-hours booking request ${orderNumber} reserved`
-              : `Online order ${orderNumber} reserved`,
-            orderId,
-            "System",
-          ]
-        );
+        inventoryLogs.push({
+          variantId: line.variantId,
+          productName: line.productName,
+          variantName: line.variantName,
+          quantity: line.quantity,
+          stockAfter: newStock,
+        });
       }
 
       // B. Insert into orders table
@@ -436,12 +430,35 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
         );
       }
 
-      // D. Insert initial order_status_history
+      // D. Record inventory movement ledger inside transaction (orders row now exists)
+      for (const log of inventoryLogs) {
+        await client.query(
+          `INSERT INTO inventory_movements (
+             variant_id, product_name, variant_name, movement_type, 
+             quantity_change, stock_after, reason, related_order_id, created_by
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);`,
+          [
+            log.variantId,
+            log.productName,
+            log.variantName,
+            "order_reservation",
+            -log.quantity,
+            log.stockAfter,
+            params.isBookingRequest
+              ? `After-hours booking request ${orderNumber} reserved`
+              : `Online order ${orderNumber} reserved`,
+            orderId,
+            "System",
+          ]
+        );
+      }
+
+      // E. Insert initial order_status_history
       const initialHistoryNote = params.isBookingRequest
         ? "🌙 After-hours booking request received. Awaiting Store Manager review to approve and unlock payment options."
         : params.paymentMethod === "upi"
-        ? "Order submitted with UPI reference — awaiting verification"
-        : "Order submitted with Cash on Delivery";
+          ? "Order submitted with UPI reference — awaiting verification"
+          : "Order submitted with Cash on Delivery";
 
       await client.query(
         `INSERT INTO order_status_history (id, order_id, previous_status, new_status, changed_by, note, created_at)
@@ -486,7 +503,7 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
     // 8. After commit: Bump database catalog_version and clear cached product queries
     await sql.query(
       `UPDATE store_settings SET catalog_version = COALESCE(catalog_version, 1) + 1, updated_at = NOW() WHERE id = 1;`
-    ).catch(() => {});
+    ).catch(() => { });
 
     serverCache.invalidateTag("products");
     serverCache.invalidateTag("orders");

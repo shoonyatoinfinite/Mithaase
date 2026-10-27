@@ -2445,7 +2445,7 @@ export async function getCoupons(onlyActive = false): Promise<Coupon[]> {
         ? `SELECT * FROM coupons WHERE is_active = true ORDER BY created_at DESC;`
         : `SELECT * FROM coupons ORDER BY created_at DESC;`;
       const rows = await sql.query(query);
-      if (rows && rows.length > 0) {
+      if (Array.isArray(rows)) {
         return rows.map((c: any) => ({
           id: String(c.id),
           code: c.code,
@@ -2545,8 +2545,9 @@ export async function createCoupon(data: {
         newCoupon.free_delivery,
         newCoupon.is_active,
       ]);
-    } catch (err) {
+    } catch (err: any) {
       console.error("[STORE] createCoupon db error:", err);
+      return { success: false, error: err?.message || "Failed to create coupon in database" };
     }
   }
 
@@ -2612,8 +2613,9 @@ export async function updateCoupon(
           return { success: true, coupon: mapped };
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("[STORE] updateCoupon db error:", err);
+      return { success: false, error: err?.message || "Failed to update coupon in database" };
     }
   }
 
