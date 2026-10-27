@@ -19,6 +19,7 @@ import {
   Clock,
   Bike,
   Check,
+  Zap,
 } from "lucide-react";
 
 interface OrderAlertCardProps {
@@ -130,14 +131,17 @@ export function OrderAlertCard({
     return () => clearInterval(timer);
   }, [onDismiss]);
 
-  const cleanPhone = (order.customer_phone || "").replace(/[^0-9]/g, "");
+  const custName = order.customer_name || (order as any).name || "Customer";
+  const custPhone = order.customer_phone || (order as any).phone || "";
+  const cleanPhone = custPhone.replace(/[^0-9]/g, "");
+  const deliveryAddr = order.delivery_address || (order as any).address || "";
+  const locality = order.locality || "";
+  const fullAddress = [deliveryAddr, locality].filter(Boolean).join(", ") || "Kothal Kalan";
   const mapsUrl =
     order.map_url ||
     (order.latitude && order.longitude
       ? `https://www.google.com/maps?q=${order.latitude},${order.longitude}`
-      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-          `${order.delivery_address}, ${order.locality}`
-        )}`);
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddress)}`);
 
   return (
     <>
@@ -188,14 +192,18 @@ export function OrderAlertCard({
             <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-white/10">
               <div>
                 <span className="text-white/50 text-[10px] block">Customer</span>
-                <strong className="text-sm text-white block">{order.customer_name}</strong>
-                <a
-                  href={`tel:+91${cleanPhone}`}
-                  className="text-[#F5D061] hover:underline flex items-center gap-1 mt-0.5 font-mono text-[11px]"
-                >
-                  <Phone className="w-3 h-3" />
-                  <span>+91 {order.customer_phone}</span>
-                </a>
+                <strong className="text-sm text-white block">{custName}</strong>
+                {custPhone ? (
+                  <a
+                    href={`tel:+91${cleanPhone}`}
+                    className="text-[#F5D061] hover:underline flex items-center gap-1 mt-0.5 font-mono text-[11px]"
+                  >
+                    <Phone className="w-3 h-3" />
+                    <span>+91 {custPhone}</span>
+                  </a>
+                ) : (
+                  <span className="text-white/40 text-[10px]">No phone recorded</span>
+                )}
               </div>
 
               <div className="text-right">
@@ -211,12 +219,17 @@ export function OrderAlertCard({
               <div className="flex items-start gap-1.5">
                 <MapPin className="w-3.5 h-3.5 text-[#F5D061] shrink-0 mt-0.5" />
                 <span className="text-white/90 text-xs leading-snug">
-                  {order.delivery_address}, {order.locality}
+                  {fullAddress}
                 </span>
               </div>
               {order.landmark && (
                 <div className="text-[11px] text-[#F5D061] pl-5">
                   Landmark: {order.landmark}
+                </div>
+              )}
+              {order.delivery_instructions && (
+                <div className="text-[10px] text-amber-200/80 pl-5 italic">
+                  Note: {order.delivery_instructions}
                 </div>
               )}
               <div className="pt-1 flex items-center justify-between">
@@ -244,39 +257,51 @@ export function OrderAlertCard({
               <span className="text-[10px] text-white/50 uppercase font-bold tracking-wider block">
                 Sweets in Order ({order.items?.length || 0}):
               </span>
-              <div className="max-h-24 overflow-y-auto space-y-1 pr-1">
-                {order.items?.map((it) => (
-                  <div
-                    key={it.id}
-                    className="flex justify-between items-center text-[11px] bg-black/20 px-2 py-1.5 rounded-lg border border-white/5"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      {it.image_url && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setSelectedImageModal({
-                              url: it.image_url!,
-                              title: `${it.product_name_snapshot} (${it.variant_name_snapshot})`,
-                            })
-                          }
-                          className="w-6 h-6 rounded shrink-0 overflow-hidden border border-white/20 hover:border-[#D4AF37] transition-all"
-                          title="Click to view item image"
-                        >
-                          <img
-                            src={it.image_url}
-                            alt={it.product_name_snapshot}
-                            className="w-full h-full object-cover"
-                          />
-                        </button>
-                      )}
-                      <span className="truncate">
-                        {it.product_name_snapshot} ({it.variant_name_snapshot})
-                      </span>
-                    </div>
-                    <strong className="text-[#F5D061] font-mono shrink-0 ml-1">× {it.quantity}</strong>
+              <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
+                {order.items && order.items.length > 0 ? (
+                  order.items.map((it: any, idx: number) => {
+                    const itemName = it.product_name_snapshot || it.productName || it.name || "Sweet Box";
+                    const itemVariant = it.variant_name_snapshot || it.variantName || it.unit || "";
+                    const itemImg = it.image_url || it.imageUrl;
+                    const itemQty = it.quantity || 1;
+                    return (
+                      <div
+                        key={it.id || `${it.product_id || it.productId || idx}-${it.variant_id || it.variantId || idx}`}
+                        className="flex justify-between items-center text-[11px] bg-black/20 px-2 py-1.5 rounded-lg border border-white/5"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {itemImg && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setSelectedImageModal({
+                                  url: itemImg,
+                                  title: `${itemName} ${itemVariant ? `(${itemVariant})` : ""}`,
+                                })
+                              }
+                              className="w-6 h-6 rounded shrink-0 overflow-hidden border border-white/20 hover:border-[#D4AF37] transition-all"
+                              title="Click to view item image"
+                            >
+                              <img
+                                src={itemImg}
+                                alt={itemName}
+                                className="w-full h-full object-cover"
+                              />
+                            </button>
+                          )}
+                          <span className="truncate">
+                            {itemName} {itemVariant ? `(${itemVariant})` : ""}
+                          </span>
+                        </div>
+                        <strong className="text-[#F5D061] font-mono shrink-0 ml-1">× {itemQty}</strong>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-[11px] text-white/50 italic px-2 py-1">
+                    Order details loading...
                   </div>
-                ))}
+                )}
               </div>
             </div>
 
@@ -286,20 +311,31 @@ export function OrderAlertCard({
                 <div>
                   <span className="text-[10px] text-white/50 block">Payment Method</span>
                   <span className="font-bold flex items-center gap-1.5 text-xs">
-                    {order.payment_method === "upi" ? (
-                      <>
-                        <Smartphone className="w-3.5 h-3.5 text-purple-400" />
-                        <span className="text-purple-300">UPI Online</span>
-                        {order.upi_reference && (
-                          <span className="text-[10px] text-[#F5D061] font-mono">
-                            ({order.upi_reference})
-                          </span>
-                        )}
-                      </>
-                    ) : (
+                    {order.payment_method === "cod" ? (
                       <>
                         <Banknote className="w-3.5 h-3.5 text-amber-400" />
                         <span className="text-amber-300">Cash on Delivery (COD)</span>
+                        <span className="text-[10px] text-amber-200/80 font-normal">
+                          ({order.payment_status === "paid" ? "Paid ✓" : `Collect ₹${order.total_amount}`})
+                        </span>
+                      </>
+                    ) : order.upi_reference?.toLowerCase().startsWith("youpi:") ? (
+                      <>
+                        <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-emerald-300">Auto-Confirmed UPI</span>
+                        <span className="text-[10px] text-emerald-400 font-mono">
+                          (Verified ✓)
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Smartphone className="w-3.5 h-3.5 text-purple-400" />
+                        <span className="text-purple-300">Manual UPI</span>
+                        {order.upi_reference && (
+                          <span className="text-[10px] text-[#F5D061] font-mono">
+                            (UTR: {order.upi_reference})
+                          </span>
+                        )}
                       </>
                     )}
                   </span>

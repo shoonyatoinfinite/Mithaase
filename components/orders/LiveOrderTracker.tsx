@@ -776,10 +776,33 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
                   )}
                 </span>
               </div>
-              {Number(order.discount_amount) > 0 && (
-                <div className="flex justify-between text-emerald-400 font-semibold">
-                  <span>Coupon Discount ({order.coupon_code || "OFFER"})</span>
-                  <span className="font-mono">-₹{Number(order.discount_amount)}</span>
+              {/* Prominent Coupon & Savings Box */}
+              {(Number(order.discount_amount) > 0 || order.coupon_code || Number(order.delivery_charge) === 0) && (
+                <div className="p-3 rounded-2xl bg-emerald-950/60 border border-emerald-500/50 space-y-1 my-2">
+                  <div className="flex items-center justify-between text-emerald-300 font-bold text-xs">
+                    <span className="flex items-center gap-1.5">
+                      <span>🏷️ Coupon Applied:</span>
+                      <span className="font-mono text-[#F5D061] uppercase bg-black/40 px-2 py-0.5 rounded border border-[#D4AF37]/40">
+                        {order.coupon_code || "SPECIAL OFFER"}
+                      </span>
+                    </span>
+                    {Number(order.discount_amount) > 0 && (
+                      <span className="font-mono text-emerald-400 font-black">
+                        -₹{Number(order.discount_amount)} OFF
+                      </span>
+                    )}
+                  </div>
+                  {Number(order.delivery_charge) === 0 && (
+                    <div className="text-[11px] text-emerald-300/80 flex justify-between">
+                      <span>Free Delivery Waiver:</span>
+                      <span className="font-bold text-emerald-300">Saved ₹21</span>
+                    </div>
+                  )}
+                  {Number(order.discount_amount) > 0 && (
+                    <div className="text-[10px] text-emerald-300/70 pt-0.5 border-t border-emerald-500/20">
+                      Total savings on this order: ₹{Number(order.discount_amount) + (Number(order.delivery_charge) === 0 ? 21 : 0)}!
+                    </div>
+                  )}
                 </div>
               )}
               <div className="pt-2 border-t border-white/10 flex justify-between text-base font-bold text-[#FFF8EE]">

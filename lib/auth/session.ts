@@ -76,7 +76,10 @@ export async function getCustomerSessionFromRequest(req: Request): Promise<Custo
  */
 export function isAdminAuthenticated(req: Request): boolean {
   const cookieHeader = req.headers.get("cookie") || "";
-  return cookieHeader.includes(`${ADMIN_COOKIE_NAME}=true`);
+  const match = cookieHeader.match(new RegExp(`${ADMIN_COOKIE_NAME}=([^;]+)`));
+  if (!match) return false;
+  const val = decodeURIComponent(match[1]).trim();
+  return val.length > 0 && val !== "false";
 }
 
 /**
@@ -84,7 +87,10 @@ export function isAdminAuthenticated(req: Request): boolean {
  */
 export function isRiderAuthenticated(req: Request): boolean {
   const cookieHeader = req.headers.get("cookie") || "";
-  return cookieHeader.includes(`${RIDER_COOKIE_NAME}=true`);
+  const match = cookieHeader.match(new RegExp(`${RIDER_COOKIE_NAME}=([^;]+)`));
+  if (!match) return false;
+  const val = decodeURIComponent(match[1]).trim();
+  return val.length > 0 && val !== "false" && val !== "null" && val !== "undefined";
 }
 
 export { SESSION_COOKIE_NAME, ADMIN_COOKIE_NAME, RIDER_COOKIE_NAME };

@@ -288,9 +288,14 @@ export default function CustomerOrdersPage() {
                         <span className="text-xl font-serif font-black text-[#F5D061]">
                           ₹{ord.total_amount}
                         </span>
-                        {Number(ord.discount_amount) > 0 && (
-                          <span className="block text-[10px] text-emerald-400 font-semibold">
-                            Saved ₹{Number(ord.discount_amount)} ({ord.coupon_code || "Coupon"})
+                        {(Number(ord.discount_amount) > 0 || ord.coupon_code || Number(ord.delivery_charge) === 0) && (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-300 font-bold bg-emerald-950/70 border border-emerald-500/40 px-2 py-0.5 rounded-md mt-0.5">
+                            <span>🏷️ {ord.coupon_code || "OFFER"}:</span>
+                            <span className="text-emerald-400">
+                              {Number(ord.discount_amount) > 0
+                                ? `Saved ₹${Number(ord.discount_amount)}`
+                                : "Free Delivery"}
+                            </span>
                           </span>
                         )}
                         <span

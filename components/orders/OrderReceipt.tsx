@@ -272,11 +272,33 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
               )}
             </div>
 
-            {/* Coupon Discount if applied */}
-            {Number(order.discount_amount) > 0 && (
-              <div className="flex justify-between text-emerald-700 font-semibold">
-                <span>Coupon Discount ({order.coupon_code || "OFFER"})</span>
-                <span className="font-mono font-bold">-₹{Number(order.discount_amount)}</span>
+            {/* Prominent Coupon & Savings Box in Invoice */}
+            {(Number(order.discount_amount) > 0 || order.coupon_code || Number(order.delivery_charge) === 0) && (
+              <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-400/60 space-y-1 my-1">
+                <div className="flex items-center justify-between text-xs font-bold text-emerald-950">
+                  <span className="flex items-center gap-1.5">
+                    <span>🏷️ Coupon:</span>
+                    <strong className="font-mono uppercase bg-emerald-200/70 text-emerald-950 px-2 py-0.5 rounded border border-emerald-400/40">
+                      {order.coupon_code || "DISCOUNT"}
+                    </strong>
+                  </span>
+                  {Number(order.discount_amount) > 0 && (
+                    <span className="font-mono text-emerald-800 text-sm font-black">
+                      -₹{Number(order.discount_amount)} OFF
+                    </span>
+                  )}
+                </div>
+                {Number(order.delivery_charge) === 0 && (
+                  <div className="text-[11px] text-emerald-800 flex justify-between font-semibold">
+                    <span>Free Delivery Waiver:</span>
+                    <span>Saved ₹21</span>
+                  </div>
+                )}
+                {Number(order.discount_amount) > 0 && (
+                  <div className="text-[10px] text-emerald-700/90 font-medium pt-0.5 border-t border-emerald-300/40">
+                    Total Savings: ₹{Number(order.discount_amount) + (Number(order.delivery_charge) === 0 ? 21 : 0)}!
+                  </div>
+                )}
               </div>
             )}
 

@@ -1940,15 +1940,31 @@ export async function setOrderDeliveryQueue(
   queued: boolean,
   groupId?: string
 ): Promise<{ success: boolean; order?: Order }> {
-  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId);
-  if (!order) return { success: false };
+  if (sql) {
+    try {
+      const gId = queued ? (groupId || null) : null;
+      await sql.query(
+        `UPDATE orders 
+         SET delivery_queued = $1, delivery_group_id = $2, updated_at = NOW() 
+         WHERE id = $3 OR order_number = $3;`,
+        [queued, gId, orderId]
+      );
+    } catch (err) {
+      console.error("[STORE] setOrderDeliveryQueue database query error:", err);
+    }
+  }
 
-  order.delivery_queued = queued;
-  if (groupId !== undefined) order.delivery_group_id = groupId;
-  if (!queued) order.delivery_group_id = undefined;
-  order.updated_at = new Date().toISOString();
+  const order = db.orders.find((o) => o.id === orderId || o.order_number === orderId);
+  if (order) {
+    order.delivery_queued = queued;
+    if (groupId !== undefined) order.delivery_group_id = groupId;
+    if (!queued) order.delivery_group_id = undefined;
+    order.updated_at = new Date().toISOString();
+  }
+
   serverCache.invalidateTag("orders");
-  return { success: true, order };
+  const fullOrder = await getOrderById(orderId);
+  return { success: true, order: fullOrder || order };
 }
 
 export async function batchDispatchOrders(
@@ -1958,26 +1974,34 @@ export async function batchDispatchOrders(
   const dispatchedOrders: Order[] = [];
   const batchGroupId = `batch-${Date.now()}`;
 
-  for (const id of orderIds) {
-    const order = db.orders.find((o) => o.id === id || o.order_number === id);
-    if (order) {
-      order.delivery_queued = false;
-      order.delivery_group_id = batchGroupId;
-      order.updated_at = new Date().toISOString();
-      if (!order.status_history) order.status_history = [];
-      order.status_history.push({
-        id: `hist-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        order_id: order.id,
-        previous_status: order.order_status,
-        new_status: order.order_status,
-        changed_by: changedBy,
-        note: `Dispatched in grouped delivery batch (${orderIds.length} orders)`,
-        created_at: new Date().toISOString(),
-      });
-      dispatchedOrders.push(order);
+  if (sql && orderIds.length > 0) {
+    try {
+      await sql.query(
+        `UPDATE orders 
+         SET delivery_queued = FALSE, delivery_group_id = $1, order_status = 'ready_for_dispatch', updated_at = NOW() 
+         WHERE id = ANY($2::text[]) OR order_number = ANY($2::text[]);`,
+        [batchGroupId, orderIds]
+      );
+    } catch (err) {
+      console.error("[STORE] batchDispatchOrders database error:", err);
     }
   }
 
+  for (const id of orderIds) {
+    const fullOrder = await getOrderById(id);
+    if (fullOrder) {
+      dispatchedOrders.push(fullOrder);
+    } else {
+      const memOrder = db.orders.find((o) => o.id === id || o.order_number === id);
+      if (memOrder) {
+        memOrder.delivery_queued = false;
+        memOrder.delivery_group_id = batchGroupId;
+        dispatchedOrders.push(memOrder);
+      }
+    }
+  }
+
+  serverCache.invalidateTag("orders");
   return { success: true, orders: dispatchedOrders };
 }
 

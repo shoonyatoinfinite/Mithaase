@@ -30,6 +30,8 @@ import {
   Upload,
   X,
   Lock,
+  Zap,
+  Smartphone,
 } from "lucide-react";
 import { OrderAlertCard } from "@/components/notifications/OrderAlertCard";
 import { playBeepNotification } from "@/lib/utils/audio";
@@ -816,19 +818,29 @@ export default function RiderDashboardPage() {
                         }`}
                       >
                         <div className="flex items-center gap-2">
-                          <Banknote className="w-4 h-4 shrink-0" />
+                          {order.payment_method === "cod" ? (
+                            <Banknote className="w-4 h-4 shrink-0 text-amber-400" />
+                          ) : order.upi_reference?.toLowerCase().startsWith("youpi:") ? (
+                            <Zap className="w-4 h-4 shrink-0 text-emerald-400" />
+                          ) : (
+                            <Smartphone className="w-4 h-4 shrink-0 text-purple-400" />
+                          )}
                           <div>
                             {order.payment_method === "cod" && order.payment_status !== "paid" ? (
                               <span className="font-bold block text-sm text-[#F5D061]">
                                 💰 CASH TO COLLECT: ₹{order.total_amount}
                               </span>
+                            ) : order.upi_reference?.toLowerCase().startsWith("youpi:") ? (
+                              <span className="font-bold block text-sm text-emerald-300">
+                                ⚡ AUTO-CONFIRMED UPI (₹{order.total_amount}) — No Cash to Collect
+                              </span>
                             ) : (
                               <span className="font-bold block text-sm text-emerald-300">
-                                ✅ PAID ONLINE (₹{order.total_amount}) — No Cash to Collect
+                                ✅ PAID ONLINE UPI (₹{order.total_amount}) — No Cash to Collect
                               </span>
                             )}
                             <span className="text-[10px] opacity-75">
-                              Method: {order.payment_method.toUpperCase()}
+                              Payment: {order.payment_method === "cod" ? "Cash on Delivery" : order.upi_reference?.toLowerCase().startsWith("youpi:") ? "Auto Gateway UPI" : "Manual UPI"}
                             </span>
                           </div>
                         </div>
@@ -839,14 +851,18 @@ export default function RiderDashboardPage() {
                       {/* Purchased Sweets Summary */}
                       <div className="p-2.5 rounded-xl bg-white/[0.02] border border-white/5 mb-3 text-[11px] text-[#D3BEB0]">
                         <span className="text-white/50 block text-[10px] font-semibold mb-1">
-                          Sweets in Box:
+                          Sweets in Box ({order.items?.length || 0}):
                         </span>
                         <div className="flex flex-wrap gap-x-3 gap-y-1">
-                          {order.items.map((it) => (
-                            <span key={it.id} className="text-white font-medium">
-                              • {it.product_name_snapshot} ({it.variant_name_snapshot}) × {it.quantity}
-                            </span>
-                          ))}
+                          {(order.items || []).map((it: any, idx: number) => {
+                            const itemName = it.product_name_snapshot || it.productName || it.name || "Sweet Box";
+                            const itemVariant = it.variant_name_snapshot || it.variantName || it.unit || "";
+                            return (
+                              <span key={it.id || idx} className="text-white font-medium">
+                                • {itemName} {itemVariant ? `(${itemVariant})` : ""} × {it.quantity || 1}
+                              </span>
+                            );
+                          })}
                         </div>
                       </div>
 

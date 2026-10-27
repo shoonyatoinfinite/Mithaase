@@ -7,7 +7,7 @@
 import crypto from "crypto";
 import { sql, withTransaction } from "@/lib/neon/db";
 import { parseItemWeightInKg } from "@/lib/utils/weight";
-import { persistMediaAsset } from "@/lib/data/store";
+import { persistMediaAsset, getOrderById } from "@/lib/data/store";
 import { broadcastRealtimeEvent } from "@/lib/events/broadcast";
 import { serverCache } from "@/lib/cache/server-cache";
 import { Order, PaymentMethod, PaymentStatus, OrderStatus } from "@/types";
@@ -476,13 +476,16 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
       return {
         id: orderId,
         order_number: orderNumber,
-        customer_name: customer.name,
+        customer_name: customer.name || params.customerName || "Customer",
         customer_email: customer.email,
-        customer_phone: customer.phone,
+        customer_phone: finalPhone,
         delivery_address: finalAddress,
         locality: finalLocality,
         landmark: finalLandmark,
         delivery_instructions: finalInstructions,
+        latitude: finalLat,
+        longitude: finalLng,
+        map_url: finalMapUrl,
         subtotal,
         discount_amount: discountAmount,
         delivery_charge: deliveryFee,
@@ -494,7 +497,21 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
         booking_status: initialBookingStatus,
         upi_reference: cleanUtr || undefined,
         upi_screenshot: screenshotUrl || undefined,
-        items: verifiedLines as any,
+        items: verifiedLines.map((vl) => ({
+          id: `item-${vl.variantId}`,
+          order_id: orderId,
+          product_id: vl.productId,
+          variant_id: vl.variantId,
+          product_name_snapshot: vl.productName,
+          variant_name_snapshot: vl.variantName,
+          quantity: vl.quantity,
+          unit_price: vl.unitPrice,
+          line_total: vl.lineTotal,
+          image_url: vl.imageUrl,
+          productName: vl.productName,
+          variantName: vl.variantName,
+          imageUrl: vl.imageUrl,
+        })) as any,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
@@ -508,11 +525,14 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
     serverCache.invalidateTag("products");
     serverCache.invalidateTag("orders");
 
-    broadcastRealtimeEvent("order_created", createdOrder);
+    // Fetch authoritative order with all db relations filled
+    const fullOrder = (await getOrderById(orderId)) || (createdOrder as any);
+
+    broadcastRealtimeEvent("order_created", fullOrder);
 
     return {
       success: true,
-      order: createdOrder as any,
+      order: fullOrder as any,
     };
   } catch (txErr: any) {
     if (txErr.code === "23505" && txErr.message?.includes("idx_orders_unique_upi_ref")) {
