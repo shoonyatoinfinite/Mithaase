@@ -7,7 +7,7 @@
 import crypto from "crypto";
 import { sql, withTransaction } from "@/lib/neon/db";
 import { parseItemWeightInKg } from "@/lib/utils/weight";
-import { persistMediaAsset, getOrderById } from "@/lib/data/store";
+import { persistMediaAsset, getOrderById, validateAndCalculateCoupon } from "@/lib/data/store";
 import { broadcastRealtimeEvent } from "@/lib/events/broadcast";
 import { serverCache } from "@/lib/cache/server-cache";
 import { Order, PaymentMethod, PaymentStatus, OrderStatus } from "@/types";
@@ -258,34 +258,54 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
 
   if (params.couponCode) {
     const cleanCoupon = params.couponCode.trim().toUpperCase();
-    const couponRows = await sql.query(
-      `SELECT code, discount_type, discount_value, min_order_amount, max_discount_amount, free_delivery, is_active 
-       FROM coupons 
-       WHERE UPPER(code) = $1 AND is_active = true LIMIT 1;`,
-      [cleanCoupon]
-    );
 
-    if (couponRows && couponRows.length > 0) {
-      const cp = couponRows[0];
-      const minAmt = Number(cp.min_order_amount) || 0;
-      if (subtotal >= minAmt) {
-        // Free delivery waiver (independent of discount type)
-        const isFreeDel = Boolean(
-          cp.free_delivery || cp.discount_type === "free_delivery" || cp.code === "FREEDEL"
-        );
-        if (isFreeDel) {
-          deliveryFee = 0;
-        }
+    // 1. Authoritative calculation via store engine
+    try {
+      const couponResult = await validateAndCalculateCoupon(
+        cleanCoupon,
+        subtotal,
+        deliveryFee,
+        customer.email,
+        finalPhone
+      );
 
-        // Percentage or Flat discount calculation on items subtotal
-        if (cp.discount_type === "percentage" && Number(cp.discount_value) > 0) {
-          const rawDiscount = (subtotal * Number(cp.discount_value)) / 100;
-          const roundedDiscount = Number(rawDiscount.toFixed(2));
-          discountAmount = cp.max_discount_amount
-            ? Math.min(Number(cp.max_discount_amount), roundedDiscount)
-            : roundedDiscount;
-        } else if (cp.discount_type === "flat_amount" && Number(cp.discount_value) > 0) {
-          discountAmount = Math.min(subtotal, Number(cp.discount_value));
+      if (couponResult.valid) {
+        discountAmount = couponResult.discountAmount;
+        deliveryFee = couponResult.finalDeliveryCharge;
+      }
+    } catch {
+      // Fallback to direct query below
+    }
+
+    // 2. Direct Neon SQL query fallback
+    if (discountAmount === 0 && deliveryFee > 0) {
+      const couponRows = await sql.query(
+        `SELECT code, discount_type, discount_value, min_order_amount, max_discount_amount, free_delivery, is_active 
+         FROM coupons 
+         WHERE UPPER(code) = $1 AND is_active = true LIMIT 1;`,
+        [cleanCoupon]
+      );
+
+      if (couponRows && couponRows.length > 0) {
+        const cp = couponRows[0];
+        const minAmt = Number(cp.min_order_amount) || 0;
+        if (subtotal >= minAmt) {
+          const isFreeDel = Boolean(
+            cp.free_delivery || cp.discount_type === "free_delivery" || cp.code === "FREEDEL"
+          );
+          if (isFreeDel) {
+            deliveryFee = 0;
+          }
+
+          if (cp.discount_type === "percentage" && Number(cp.discount_value) > 0) {
+            const rawDiscount = (subtotal * Number(cp.discount_value)) / 100;
+            const roundedDiscount = Number(rawDiscount.toFixed(2));
+            discountAmount = cp.max_discount_amount
+              ? Math.min(Number(cp.max_discount_amount), roundedDiscount)
+              : roundedDiscount;
+          } else if (cp.discount_type === "flat_amount" && Number(cp.discount_value) > 0) {
+            discountAmount = Math.min(subtotal, Number(cp.discount_value));
+          }
         }
       }
     }

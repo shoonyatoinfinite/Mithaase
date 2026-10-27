@@ -6,6 +6,7 @@ import {
   isAdminAuthenticated,
   isRiderAuthenticated,
 } from "@/lib/auth/session";
+import { processAuthoritativeCheckout } from "@/lib/data/checkout";
 
 export async function GET(req: Request) {
   try {
@@ -126,9 +127,6 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const { getCustomerSessionFromRequest } = await import("@/lib/auth/session");
-    const { processAuthoritativeCheckout } = await import("@/lib/data/checkout");
-
     const session = await getCustomerSessionFromRequest(req);
     if (!session || !session.userId) {
       return NextResponse.json(
