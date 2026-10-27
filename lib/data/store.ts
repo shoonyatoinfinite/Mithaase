@@ -2765,9 +2765,12 @@ export async function validateAndCalculateCoupon(
 
   // Calculate discount on subtotal if coupon has discount value
   if (coupon.discount_type === "percentage" && coupon.discount_value > 0) {
-    discount = Math.round((subtotal * coupon.discount_value) / 100);
+    const rawDiscount = (subtotal * coupon.discount_value) / 100;
+    const roundedDiscount = Number(rawDiscount.toFixed(2));
     if (coupon.max_discount_amount && coupon.max_discount_amount > 0) {
-      discount = Math.min(coupon.max_discount_amount, discount);
+      discount = Math.min(coupon.max_discount_amount, roundedDiscount);
+    } else {
+      discount = roundedDiscount;
     }
   } else if (coupon.discount_type === "flat_amount" && coupon.discount_value > 0) {
     discount = Math.min(subtotal, coupon.discount_value);

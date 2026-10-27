@@ -171,7 +171,7 @@ export default function CheckoutPage() {
   const finalTotal =
     items.length === 0
       ? 0
-      : Math.max(0, subtotal + deliveryFee - couponDiscountAmount);
+      : Number(Math.max(0, subtotal + deliveryFee - couponDiscountAmount).toFixed(2));
 
   // Handler to apply or validate coupon
   const handleApplyCoupon = async (codeToApply?: string) => {
@@ -801,7 +801,7 @@ export default function CheckoutPage() {
               </div>
 
               {/* Delivery Address & Map Doorstep Card */}
-              <form onSubmit={handleOpenPaymentModal} className="space-y-6">
+              <form id="checkout-form" onSubmit={handleOpenPaymentModal} className="space-y-6">
                 <div className="p-6 sm:p-8 rounded-3xl bg-[#20052B] border border-[#D4AF37]/30 shadow-xl space-y-4">
                   <div className="flex items-center justify-between border-b border-white/10 pb-4">
                     <h2 className="text-lg sm:text-xl font-serif font-bold text-white flex items-center gap-2">
@@ -952,7 +952,9 @@ export default function CheckoutPage() {
                               {appliedCoupon.code}
                             </span>
                             <span className="text-emerald-200 block text-[11px]">
-                              {appliedCoupon.discount_type === "free_delivery"
+                              {appliedCoupon.free_delivery && appliedCoupon.discount_amount > 0
+                                ? `🎉 Saved ₹${appliedCoupon.discount_amount} + FREE Delivery!`
+                                : appliedCoupon.free_delivery || appliedCoupon.discount_type === "free_delivery"
                                 ? "🎉 Free Delivery Applied!"
                                 : `🎉 Saved ₹${appliedCoupon.discount_amount} on this order!`}
                             </span>
@@ -1054,34 +1056,11 @@ export default function CheckoutPage() {
                   </div>
                 )}
 
-                {/* Primary Place Order / Booking Request Button */}
-                {items.length > 0 && (
-                  <button
-                    type="submit"
-                    id="place-order-submit-btn"
-                    disabled={isSubmitting}
-                    className="w-full py-4 rounded-full font-black text-sm flex items-center justify-center gap-2 shadow-2xl transition-all active:scale-95 gold-gradient-btn"
-                  >
-                    {isSubmitting ? (
-                      <>
-                        <RefreshCw className="w-4 h-4 animate-spin text-[#16031E]" />
-                        <span>Submitting Request...</span>
-                      </>
-                    ) : isStoreClosed ? (
-                      <>
-                        <Clock className="w-4 h-4 text-[#16031E]" />
-                        <span>Submit After-Hours Booking Request (No Upfront Payment)</span>
-                        <ArrowRight className="w-4 h-4 text-[#16031E]" />
-                      </>
-                    ) : (
-                      <>
-                        <Lock className="w-4 h-4" />
-                        <span>Proceed to Payment / Place Order (₹{finalTotal})</span>
-                        <ArrowRight className="w-4 h-4" />
-                      </>
-                    )}
-                  </button>
-                )}
+                {/* Mobile summary strip */}
+                <div className="lg:hidden p-4 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-between text-xs">
+                  <span className="text-[#D3BEB0]">Total with Delivery & Discount:</span>
+                  <span className="font-serif font-black text-[#F5D061] text-lg">₹{finalTotal}</span>
+                </div>
               </form>
             </div>
 
@@ -1153,6 +1132,36 @@ export default function CheckoutPage() {
                       <span>Total Payable</span>
                       <span className="text-2xl font-serif text-[#F5D061]">₹{finalTotal}</span>
                     </div>
+                  </div>
+
+                  {/* Primary Place Order / Booking Request Button RIGHT BELOW FULL PAY DETAILS */}
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      form="checkout-form"
+                      id="place-order-submit-btn"
+                      disabled={isSubmitting}
+                      className="w-full py-4 rounded-full font-black text-sm flex items-center justify-center gap-2 shadow-2xl transition-all active:scale-95 gold-gradient-btn cursor-pointer"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin text-[#16031E]" />
+                          <span>Submitting Request...</span>
+                        </>
+                      ) : isStoreClosed ? (
+                        <>
+                          <Clock className="w-4 h-4 text-[#16031E]" />
+                          <span>Submit After-Hours Booking Request (No Upfront Payment)</span>
+                          <ArrowRight className="w-4 h-4 text-[#16031E]" />
+                        </>
+                      ) : (
+                        <>
+                          <Lock className="w-4 h-4 text-[#16031E]" />
+                          <span>Proceed to Payment / Place Order (₹{finalTotal})</span>
+                          <ArrowRight className="w-4 h-4 text-[#16031E]" />
+                        </>
+                      )}
+                    </button>
                   </div>
 
                   <div className="pt-2 text-center">

@@ -60,6 +60,18 @@ function sanitizeEventData(raw: any): RealtimeEventPayload["data"] {
     status: raw.status || raw.order_status || undefined,
     order_status: raw.order_status || raw.status || undefined,
     payment_status: raw.payment_status || undefined,
+    payment_method: raw.payment_method || undefined,
+    customer_name: raw.customer_name || undefined,
+    customer_phone: raw.customer_phone || undefined,
+    delivery_address: raw.delivery_address || undefined,
+    locality: raw.locality || undefined,
+    subtotal: raw.subtotal || undefined,
+    discount_amount: raw.discount_amount || undefined,
+    delivery_charge: raw.delivery_charge || undefined,
+    total_amount: raw.total_amount || undefined,
+    coupon_code: raw.coupon_code || undefined,
+    items: raw.items || undefined,
+    created_at: raw.created_at || undefined,
     catalog_version: raw.catalog_version || undefined,
   };
 }

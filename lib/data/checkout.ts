@@ -259,7 +259,7 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
   if (params.couponCode) {
     const cleanCoupon = params.couponCode.trim().toUpperCase();
     const couponRows = await sql.query(
-      `SELECT code, discount_type, discount_value, min_order_amount, max_discount_amount, is_active 
+      `SELECT code, discount_type, discount_value, min_order_amount, max_discount_amount, free_delivery, is_active 
        FROM coupons 
        WHERE UPPER(code) = $1 AND is_active = true LIMIT 1;`,
       [cleanCoupon]
@@ -269,19 +269,29 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
       const cp = couponRows[0];
       const minAmt = Number(cp.min_order_amount) || 0;
       if (subtotal >= minAmt) {
-        if (cp.discount_type === "free_delivery" || cp.code === "FREEDEL") {
+        // Free delivery waiver (independent of discount type)
+        const isFreeDel = Boolean(
+          cp.free_delivery || cp.discount_type === "free_delivery" || cp.code === "FREEDEL"
+        );
+        if (isFreeDel) {
           deliveryFee = 0;
-        } else if (cp.discount_type === "percentage") {
-          const rawDiscount = Math.round((subtotal * Number(cp.discount_value)) / 100);
-          discountAmount = cp.max_discount_amount ? Math.min(Number(cp.max_discount_amount), rawDiscount) : rawDiscount;
-        } else if (cp.discount_type === "flat_amount") {
+        }
+
+        // Percentage or Flat discount calculation on items subtotal
+        if (cp.discount_type === "percentage" && Number(cp.discount_value) > 0) {
+          const rawDiscount = (subtotal * Number(cp.discount_value)) / 100;
+          const roundedDiscount = Number(rawDiscount.toFixed(2));
+          discountAmount = cp.max_discount_amount
+            ? Math.min(Number(cp.max_discount_amount), roundedDiscount)
+            : roundedDiscount;
+        } else if (cp.discount_type === "flat_amount" && Number(cp.discount_value) > 0) {
           discountAmount = Math.min(subtotal, Number(cp.discount_value));
         }
       }
     }
   }
 
-  const totalAmount = Math.max(0, subtotal - discountAmount + deliveryFee);
+  const totalAmount = Number(Math.max(0, subtotal - discountAmount + deliveryFee).toFixed(2));
 
   // 6. UPI Reference Validation (anti-replay check)
   // Strictly only validate or assign cleanUtr if paymentMethod is 'upi' and NOT a booking request

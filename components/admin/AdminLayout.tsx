@@ -44,21 +44,92 @@ export function AdminLayout({ children }: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [incomingOrderAlert, setIncomingOrderAlert] = useState<Order | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const lastAlertedOrderIdRef = React.useRef<string | null>(null);
+  const isInitialLoadRef = React.useRef(true);
+
+  // Helper to trigger incoming order alert
+  const triggerOrderAlert = React.useCallback((order: Order) => {
+    if (!order || !order.id) return;
+    if (lastAlertedOrderIdRef.current === order.id) return;
+    lastAlertedOrderIdRef.current = order.id;
+
+    // 1. Play continuous chime
+    playBeepNotification(3);
+    // 2. Display alert card
+    setIncomingOrderAlert(order);
+  }, []);
 
   // Real-time listener for incoming orders
   const { isConnected } = useRealtime({
     events: ["order_created"],
     enablePollingFallback: true,
-    pollingIntervalMs: 5000,
-    onEvent: (payload) => {
-      if (payload.type === "order_created" && payload.data && !payload.data.isFallbackTick) {
-        // 1. Play 3-second continuous beep chime
-        playBeepNotification(3);
-        // 2. Display 10-second alert card
-        setIncomingOrderAlert(payload.data as Order);
+    pollingIntervalMs: 3500,
+    onEvent: async (payload) => {
+      if (payload.type === "order_created" && payload.data) {
+        const orderData = payload.data as Order;
+        const orderId = orderData.id || (orderData as any).orderId;
+
+        // If payload already has full fields, show immediately
+        if (orderData.items && orderData.customer_name) {
+          triggerOrderAlert(orderData);
+        }
+
+        // Fetch authoritative fresh order from database to ensure complete relations
+        if (orderId) {
+          try {
+            const res = await fetch(`/api/orders/${orderId}?t=${Date.now()}`);
+            if (res.ok) {
+              const fullOrder = await res.json();
+              triggerOrderAlert(fullOrder);
+            }
+          } catch {}
+        }
       }
     },
   });
+
+  // Active polling fallback: ensures admin receives alert cards even in serverless process decoupling
+  React.useEffect(() => {
+    let isCancelled = false;
+
+    const checkLatestOrders = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const res = await fetch(`/api/orders?limit=1&t=${Date.now()}`);
+        if (!res.ok) return;
+        const orders = await res.json();
+        if (!Array.isArray(orders) || orders.length === 0) return;
+
+        const latest = orders[0] as Order;
+
+        // On first mount, record the latest order so we don't alert old past orders
+        if (isInitialLoadRef.current) {
+          isInitialLoadRef.current = false;
+          lastAlertedOrderIdRef.current = latest.id;
+          return;
+        }
+
+        // Subsequent polls: if a new order arrives within the last 90 seconds
+        if (latest.id && latest.id !== lastAlertedOrderIdRef.current) {
+          const orderAgeMs = Date.now() - new Date(latest.created_at).getTime();
+          if (orderAgeMs < 120000 && !isCancelled) {
+            triggerOrderAlert(latest);
+          } else {
+            lastAlertedOrderIdRef.current = latest.id;
+          }
+        }
+      } catch {}
+    };
+
+    const interval = setInterval(checkLatestOrders, 4000);
+    // Run initial fetch to prime lastAlertedOrderIdRef
+    checkLatestOrders();
+
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+    };
+  }, [triggerOrderAlert]);
 
   const handleAdminAccept = async (order: Order) => {
     try {

@@ -24,6 +24,8 @@ import {
   MessageSquare,
   Phone,
   FileText,
+  XCircle,
+  ArrowLeft,
 } from "lucide-react";
 
 interface PaymentSelectionModalProps {
@@ -100,6 +102,8 @@ export function PaymentSelectionModal({
     return () => clearInterval(interval);
   }, [waCountdown]);
 
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+
   // Session WhatsApp verification state
   useEffect(() => {
     if (isOpen) {
@@ -108,15 +112,9 @@ export function PaymentSelectionModal({
       setWaOtpError("");
       setWaCountdown(0);
       setInstantPaymentMode("qr");
-      if (typeof window !== "undefined" && customerPhone) {
-        const clean = customerPhone.replace(/[^0-9]/g, "").slice(-10);
-        const alreadyVerified = localStorage.getItem(`youpi_wa_verified_${clean}`);
-        if (alreadyVerified) {
-          setIsWhatsappVerified(true);
-        } else {
-          setIsWhatsappVerified(false);
-        }
-      }
+      setShowCancelConfirm(false);
+      // STRICT REQUIREMENT: User must verify WhatsApp OTP fresh EVERY TIME they want to pay via auto UPI
+      setIsWhatsappVerified(false);
     }
   }, [isOpen, customerPhone]);
 
@@ -170,9 +168,6 @@ export function PaymentSelectionModal({
         throw new Error(data.error || "Incorrect WhatsApp OTP.");
       }
       setIsWhatsappVerified(true);
-      if (typeof window !== "undefined") {
-        localStorage.setItem(`youpi_wa_verified_${clean}`, "1");
-      }
     } catch (err: any) {
       setWaOtpError(err.message || "Invalid OTP code.");
     } finally {
@@ -597,9 +592,11 @@ export function PaymentSelectionModal({
           </div>
 
           <button
-            onClick={onClose}
+            type="button"
+            onClick={() => setShowCancelConfirm(true)}
             disabled={isSubmitting}
-            className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-colors"
+            className="p-2 rounded-full bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-colors cursor-pointer"
+            title="Cancel Payment & Return to Cart"
           >
             <X className="w-5 h-5" />
           </button>
@@ -1549,8 +1546,61 @@ export function PaymentSelectionModal({
                 🔒 End-to-end encrypted festival booking for Shree Shyam Sweets.
               </p>
             )}
+
+            {/* Cancel Pay Option */}
+            <div className="pt-3 border-t border-white/10 text-center">
+              <button
+                type="button"
+                onClick={() => setShowCancelConfirm(true)}
+                disabled={isSubmitting}
+                className="text-xs text-rose-300 hover:text-rose-200 underline font-semibold inline-flex items-center justify-center gap-1.5 py-1 px-3 rounded-lg hover:bg-rose-950/40 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                <span>Cancel Payment & Return to Saved Cart</span>
+              </button>
+            </div>
           </div>
         </form>
+
+        {/* Cancel Confirmation Prompt */}
+        {showCancelConfirm && (
+          <div className="absolute inset-0 z-[100000] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in zoom-in-95">
+            <div className="bg-[#24052B] border-2 border-rose-500/60 rounded-3xl p-6 sm:p-7 max-w-sm w-full text-center space-y-4 shadow-2xl">
+              <div className="w-12 h-12 rounded-full bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center mx-auto shadow-inner">
+                <AlertCircle className="w-6 h-6 text-rose-400" />
+              </div>
+              <div className="space-y-1.5">
+                <h3 className="text-lg font-serif font-black text-white">
+                  Cancel Payment?
+                </h3>
+                <p className="text-xs text-white/80 leading-relaxed">
+                  Your sweets are completely safe and saved in your cart. Are you sure you want to cancel payment and return to cart?
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCancelConfirm(false)}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs transition-all active:scale-95 cursor-pointer"
+                >
+                  No, Continue Pay
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCancelConfirm(false);
+                    setYoupiSession(null);
+                    setYoupiStatus("IDLE");
+                    onClose();
+                  }}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg transition-all active:scale-95 cursor-pointer"
+                >
+                  Yes, Cancel & Return
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

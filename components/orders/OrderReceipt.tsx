@@ -315,7 +315,7 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
                   : "Total Paid"}
               </span>
               <span className={`font-mono text-xl ${order.order_status === "cancelled" && order.refund_status === "refunded" ? "text-emerald-700" : order.order_status === "cancelled" ? "text-rose-700" : "text-[#B45309]"}`}>
-                ₹{order.total_amount > 0 ? order.total_amount : order.subtotal}
+                ₹{order.total_amount != null ? order.total_amount : order.subtotal}
               </span>
             </div>
           </div>

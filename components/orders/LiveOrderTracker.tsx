@@ -328,7 +328,7 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
                   </span>
                 </div>
                 <p className="text-xs text-[#E8D4C8] leading-relaxed">
-                  Our shop is currently closed for instant deliveries. We have received your booking request for <strong>₹{order.total_amount > 0 ? order.total_amount : order.subtotal}</strong>. Our store manager will review your request. <strong>No payment is needed right now</strong>. Once approved, you will be notified right here to select your payment method (UPI or COD).
+                  Our shop is currently closed for instant deliveries. We have received your booking request for <strong>₹{order.total_amount != null ? order.total_amount : order.subtotal}</strong>. Our store manager will review your request. <strong>No payment is needed right now</strong>. Once approved, you will be notified right here to select your payment method (UPI or COD).
                 </p>
               </div>
             </div>
@@ -352,7 +352,7 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
                   </span>
                 </div>
                 <p className="text-xs text-emerald-100/90 leading-relaxed">
-                  Your booking request for <strong>₹{order.total_amount > 0 ? order.total_amount : order.subtotal}</strong> has been approved! Please choose your payment method (Online UPI or Cash on Delivery) now to finalize your order.
+                  Your booking request for <strong>₹{order.total_amount != null ? order.total_amount : order.subtotal}</strong> has been approved! Please choose your payment method (Online UPI or Cash on Delivery) now to finalize your order.
                 </p>
               </div>
             </div>
@@ -808,7 +808,7 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
               <div className="pt-2 border-t border-white/10 flex justify-between text-base font-bold text-[#FFF8EE]">
                 <span>{order.payment_method === "cod" ? "Total Payable (COD)" : "Total Amount"}</span>
                 <span className="text-xl font-serif text-[#F5D061]">
-                  ₹{Number(order.total_amount) > 0 ? order.total_amount : order.subtotal}
+                  ₹{order.total_amount != null ? order.total_amount : order.subtotal}
                 </span>
               </div>
 
@@ -905,7 +905,7 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
         <PaymentSelectionModal
           isOpen={isPaymentModalOpen}
           onClose={() => setIsPaymentModalOpen(false)}
-          amount={order.total_amount > 0 ? order.total_amount : order.subtotal}
+          amount={order.total_amount != null ? order.total_amount : order.subtotal}
           customerName={order.customer_name}
           customerPhone={order.customer_phone}
           locality={order.locality}
