@@ -299,19 +299,27 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
 
           if (cp.discount_type === "percentage" && Number(cp.discount_value) > 0) {
             const rawDiscount = (subtotal * Number(cp.discount_value)) / 100;
-            const roundedDiscount = Number(rawDiscount.toFixed(2));
+            const roundedDiscount = Math.round(rawDiscount);
             discountAmount = cp.max_discount_amount
-              ? Math.min(Number(cp.max_discount_amount), roundedDiscount)
+              ? Math.min(Math.round(Number(cp.max_discount_amount)), roundedDiscount)
               : roundedDiscount;
           } else if (cp.discount_type === "flat_amount" && Number(cp.discount_value) > 0) {
-            discountAmount = Math.min(subtotal, Number(cp.discount_value));
+            discountAmount = Math.min(subtotal, Math.round(Number(cp.discount_value)));
           }
         }
       }
     }
   }
 
-  const totalAmount = Number(Math.max(0, subtotal - discountAmount + deliveryFee).toFixed(2));
+  // Ensure discountAmount is in nearest integer
+  discountAmount = Math.round(discountAmount);
+
+  // For UPI, all amounts must be in nearest integer only and strictly > 0 (minimum ₹1)
+  const isUpiOrder = !params.isBookingRequest && params.paymentMethod === "upi";
+  const rawTotal = subtotal - discountAmount + deliveryFee;
+  const totalAmount = isUpiOrder
+    ? Math.max(1, Math.round(rawTotal))
+    : Math.max(0, Math.round(rawTotal));
 
   // 6. UPI Reference Validation (anti-replay check)
   // Strictly only validate or assign cleanUtr if paymentMethod is 'upi' and NOT a booking request

@@ -161,17 +161,18 @@ export default function CheckoutPage() {
 
   const isReturningUser = hasPastOrders;
   const isFirstOrder = !hasPastOrders;
-  const standardDeliveryFee = Number(settings.default_delivery_fee) || 21;
+  const standardDeliveryFee = Math.round(Number(settings.default_delivery_fee) || 21);
   const initialDeliveryFee = items.length === 0 ? 0 : isFirstOrder ? 0 : standardDeliveryFee;
   const isFreeDeliveryCoupon = Boolean(
     appliedCoupon?.free_delivery || appliedCoupon?.discount_type === "free_delivery"
   );
   const deliveryFee = isFreeDeliveryCoupon ? 0 : initialDeliveryFee;
-  const couponDiscountAmount = appliedCoupon ? appliedCoupon.discount_amount : 0;
+  const couponDiscountAmount = appliedCoupon ? Math.round(Number(appliedCoupon.discount_amount) || 0) : 0;
+  const rawTotal = subtotal + deliveryFee - couponDiscountAmount;
   const finalTotal =
     items.length === 0
       ? 0
-      : Number(Math.max(0, subtotal + deliveryFee - couponDiscountAmount).toFixed(2));
+      : Math.max(1, Math.round(rawTotal));
 
   // Handler to apply or validate coupon
   const handleApplyCoupon = async (codeToApply?: string) => {

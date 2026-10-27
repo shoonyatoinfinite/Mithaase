@@ -177,12 +177,16 @@ export function PaymentSelectionModal({
     }
   };
 
+  // Nearest integer only (>0) for UPI
+  const upiAmount = Math.max(1, Math.round(Number(amount) || 0));
+  const codAmount = Math.max(0, Math.round(Number(amount) || 0));
+
   // Standard NPCI-compliant UPI URI format
   // Ensure the UPI ID preserves the literal '@' and is not corrupted by '%40' percent-encoding
   const rawUpiId = (settings.upi_id || process.env.NEXT_PUBLIC_STORE_UPI_ID || "vinay20@kotakbank").trim();
   const upiId = decodeURIComponent(rawUpiId).replace(/%40/g, "@").trim();
   const payeeName = (settings.upi_payee_name || "Shree Shyam Sweets").trim();
-  const formattedAmount = Number(amount || 0).toFixed(2);
+  const formattedAmount = String(upiAmount);
   const cleanNote = "Mithaase Sweets Order";
 
   // NPCI UPI URI specification: P2P VPAs reject 'tr' or 36-char hyphenated UUIDs with 'Bad Request'.
@@ -354,7 +358,7 @@ export function PaymentSelectionModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          amount,
+          amount: upiAmount,
           customerName,
           customerPhone,
         }),
@@ -1296,7 +1300,7 @@ export function PaymentSelectionModal({
                           Amount Pre-filled
                         </span>
                         <span className="text-[#F5D061] font-serif font-black text-base">
-                          ₹{amount}
+                          ₹{upiAmount}
                         </span>
                       </div>
                     </div>
@@ -1322,7 +1326,7 @@ export function PaymentSelectionModal({
                   {/* Quick-Launch UPI App Buttons */}
                   <div className="space-y-3">
                     <label className="text-[11px] uppercase tracking-wider font-bold text-white/60 block">
-                      Tap Your UPI App to Pay ₹{amount} (Pre-filled):
+                      Tap Your UPI App to Pay ₹{upiAmount} (Pre-filled):
                     </label>
 
                     {/* Universal Launch Button */}
@@ -1335,7 +1339,7 @@ export function PaymentSelectionModal({
                       className="w-full py-3 px-4 rounded-xl gold-gradient-btn font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all text-center cursor-pointer"
                     >
                       <Smartphone className="w-4 h-4" />
-                      <span>Open Any UPI App (₹{amount})</span>
+                      <span>Open Any UPI App (₹{upiAmount})</span>
                       <ExternalLink className="w-3.5 h-3.5 ml-1" />
                     </a>
 
@@ -1427,7 +1431,7 @@ export function PaymentSelectionModal({
                               Opening {openingApp}...
                             </strong>
                             <span className="text-[11px] text-emerald-300/90">
-                              Approve ₹{amount} in your app, then copy & paste the 12-digit UTR below.
+                              Approve ₹{upiAmount} in your app, then copy & paste the 12-digit UTR below.
                             </span>
                           </div>
                         </div>
@@ -1471,7 +1475,7 @@ export function PaymentSelectionModal({
 
                   <div className="space-y-1">
                     <span className="px-3 py-1 rounded-full bg-[#D4AF37]/20 border border-[#F5D061]/40 text-[#F5D061] text-xs font-bold inline-block">
-                      Amount: ₹{amount}
+                      Amount: ₹{upiAmount}
                     </span>
                     <p className="text-xs text-[#D3BEB0]">
                       Scan using Google Pay, PhonePe, Paytm, BHIM, or any UPI app.
@@ -1626,13 +1630,13 @@ export function PaymentSelectionModal({
               ) : selectedMethod === "cod" ? (
                 <>
                   <Lock className="w-4 h-4" />
-                  <span>Confirm COD Order (₹{amount})</span>
+                  <span>Confirm COD Order (₹{codAmount})</span>
                 </>
               ) : selectedMethod === "upi_auto" ? (
                 youpiStatus === "SUCCESS" ? (
                   <>
                     <Check className="w-4 h-4 text-emerald-300" />
-                    <span>Payment Verified! Placing Order (₹{amount})</span>
+                    <span>Payment Verified! Placing Order (₹{upiAmount})</span>
                   </>
                 ) : youpiStatus === "EXPIRED" ? (
                   <>
@@ -1642,13 +1646,13 @@ export function PaymentSelectionModal({
                 ) : (
                   <>
                     <Zap className="w-4 h-4 text-[#16031E] fill-current" />
-                    <span>Waiting for Bank Payment (₹{amount})</span>
+                    <span>Waiting for Bank Payment (₹{upiAmount})</span>
                   </>
                 )
               ) : (
                 <>
                   <ShieldCheck className="w-4 h-4 text-[#16031E]" />
-                  <span>Place Order & Submit for Verification (₹{amount})</span>
+                  <span>Place Order & Submit for Verification (₹{upiAmount})</span>
                 </>
               )}
             </button>

@@ -2763,17 +2763,17 @@ export async function validateAndCalculateCoupon(
   let discount = 0;
   let newDeliveryCharge = offersFreeDelivery ? 0 : deliveryCharge;
 
-  // Calculate discount on subtotal if coupon has discount value
+  // Calculate discount on subtotal if coupon has discount value (nearest integer)
   if (coupon.discount_type === "percentage" && coupon.discount_value > 0) {
     const rawDiscount = (subtotal * coupon.discount_value) / 100;
-    const roundedDiscount = Number(rawDiscount.toFixed(2));
+    const roundedDiscount = Math.round(rawDiscount);
     if (coupon.max_discount_amount && coupon.max_discount_amount > 0) {
-      discount = Math.min(coupon.max_discount_amount, roundedDiscount);
+      discount = Math.min(Math.round(coupon.max_discount_amount), roundedDiscount);
     } else {
       discount = roundedDiscount;
     }
   } else if (coupon.discount_type === "flat_amount" && coupon.discount_value > 0) {
-    discount = Math.min(subtotal, coupon.discount_value);
+    discount = Math.min(subtotal, Math.round(coupon.discount_value));
   }
 
   let successMsg = `Coupon ${coupon.code} applied!`;

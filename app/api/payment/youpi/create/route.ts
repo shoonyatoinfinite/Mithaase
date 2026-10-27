@@ -21,8 +21,9 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { amount, customerName, customerPhone, customerEmail, orderId } = body;
+    const finalAmount = Math.max(1, Math.round(Number(amount) || 0));
 
-    if (!amount || amount <= 0) {
+    if (!finalAmount || finalAmount <= 0) {
       return NextResponse.json({ error: "Invalid payment amount" }, { status: 400 });
     }
 
@@ -46,7 +47,7 @@ export async function POST(req: Request) {
         },
         body: JSON.stringify({
           orderId: generatedOrderId,
-          amount: Number(amount).toFixed(2),
+          amount: finalAmount,
           currency: "INR",
           customer: {
             name: customerName || "Guest Customer",
@@ -69,7 +70,7 @@ export async function POST(req: Request) {
           paymentId: data.paymentId || data.id,
           orderId: generatedOrderId,
           checkoutUrl: data.checkoutUrl,
-          amount: Number(amount),
+          amount: finalAmount,
           gatewayUrl: youpiBaseUrl,
         });
       }
@@ -83,7 +84,7 @@ export async function POST(req: Request) {
     sandboxSessions.set(sandboxPaymentId, {
       paymentId: sandboxPaymentId,
       orderId: generatedOrderId,
-      amount: Number(amount),
+      amount: finalAmount,
       customerName: customerName || "Customer",
       customerPhone: cleanPhone,
       status: "PENDING",
