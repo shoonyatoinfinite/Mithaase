@@ -34,6 +34,8 @@ export interface CreateOrderParams {
   upiScreenshot?: string;
   idempotencyKey?: string;
   isBookingRequest?: boolean;
+  customerPhone?: string;
+  customerName?: string;
 }
 
 export interface CreateOrderResult {
@@ -109,16 +111,20 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
 
   const customer = customerRows[0];
 
-  // Require WhatsApp verified phone number (honest reachability requirement)
-  if (!customer.phone_verified_at && process.env.NODE_ENV === "production") {
+  const rawPhone = params.customerPhone || customer.phone || "";
+  const cleanPhone = rawPhone.replace(/[^0-9]/g, "").slice(-10);
+  if (!cleanPhone || cleanPhone.length < 10) {
     return {
       success: false,
-      error: "Please verify your mobile number on WhatsApp before placing an order.",
-      code: 403,
+      error: "A valid 10-digit mobile number is required to place your order.",
+      code: 400,
     };
   }
 
-  // If customer provided updated delivery address at checkout, update their profile (CANNOT change phone)
+  const finalPhone = cleanPhone;
+  const nowVerifiedAt = customer.phone_verified_at || new Date().toISOString();
+
+  // If customer provided updated delivery address at checkout, update their profile
   const finalAddress = (params.deliveryAddress || customer.delivery_address || "").trim();
   const finalLocality = (params.locality || customer.locality || "").trim();
   const finalLandmark = (params.landmark || customer.landmark || "").trim();
@@ -134,19 +140,21 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
     return { success: false, error: "Locality/Village is required.", code: 400 };
   }
 
-  // Update address on customer profile
+  // Update address and phone on customer profile
   await sql.query(
     `UPDATE customer_accounts SET
-       delivery_address = $1,
-       locality = $2,
-       landmark = $3,
-       delivery_instructions = $4,
-       latitude = $5,
-       longitude = $6,
-       map_url = $7,
+       phone = COALESCE(phone, $1),
+       phone_verified_at = COALESCE(phone_verified_at, $2::timestamptz),
+       delivery_address = $3,
+       locality = $4,
+       landmark = $5,
+       delivery_instructions = $6,
+       latitude = $7,
+       longitude = $8,
+       map_url = $9,
        updated_at = NOW()
-     WHERE id = $8;`,
-    [finalAddress, finalLocality, finalLandmark || null, finalInstructions || null, finalLat, finalLng, finalMapUrl, customer.id]
+     WHERE id = $10;`,
+    [finalPhone, nowVerifiedAt, finalAddress, finalLocality, finalLandmark || null, finalInstructions || null, finalLat, finalLng, finalMapUrl, customer.id]
   );
 
   // 4. Fetch live products and variants from Neon DB (IGNORE client-sent prices/totals completely)
@@ -380,9 +388,9 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
         [
           orderId,
           orderNumber,
-          customer.name,
+          customer.name || params.customerName || "Customer",
           customer.email,
-          customer.phone,
+          finalPhone,
           finalAddress,
           finalLocality,
           finalLandmark || null,

@@ -1,21 +1,28 @@
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
+
+let cachedTransporter: Transporter | null = null;
 
 function getTransporter() {
-  const host = process.env.SMTP_HOST || "smtp.gmail.com";
+  if (cachedTransporter) return cachedTransporter;
+  const host = process.env.SMTP_HOST || "smtp-relay.brevo.com";
   const port = parseInt(process.env.SMTP_PORT || "587", 10);
   const user = process.env.SMTP_USER?.trim();
   const pass = process.env.SMTP_PASS?.trim();
 
   if (user && pass) {
-    return nodemailer.createTransport({
+    cachedTransporter = nodemailer.createTransport({
       host,
       port,
       secure: port === 465,
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 100,
       auth: {
         user,
         pass,
       },
     });
+    return cachedTransporter;
   }
 
   return null;
@@ -71,49 +78,15 @@ export async function sendOtpEmail(
       return { success: true, messageId: info.messageId };
     } catch (err: any) {
       console.error(`[EMAIL SERVICE] SMTP delivery failed for ${toEmail}:`, err?.message || err);
-      // Fall through to test account
     }
   }
 
-  // 3. Fallback: Automated Test Transporter (ensures OTP delivery is testable and never blocked)
-  try {
-    const testAccount = await nodemailer.createTestAccount();
-    const testTransporter = nodemailer.createTransport({
-      host: "smtp.ethereal.email",
-      port: 587,
-      secure: false,
-      auth: {
-        user: testAccount.user,
-        pass: testAccount.pass,
-      },
-    });
-
-    const info = await testTransporter.sendMail({
-      from: `"Shree Shyam Sweets" <${testAccount.user}>`,
-      to: toEmail,
-      subject: `Your Mithaasé Verification Code: ${otp}`,
-      text: `Your Mithaasé verification code is: ${otp}. It expires in 10 minutes.`,
-      html: getEmailHtml(otp),
-    });
-
-    const previewUrl = nodemailer.getTestMessageUrl(info);
-    console.log(`\n======================================================`);
-    console.log(`[EMAIL OTP DELIVERED] To: ${toEmail}`);
-    console.log(`[VERIFICATION CODE]: >>> ${otp} <<<`);
-    if (previewUrl) {
-      console.log(`[ETHEREAL WEB INBOX]: ${previewUrl}`);
-    }
-    console.log(`======================================================\n`);
-
-    return { success: true, messageId: info.messageId };
-  } catch {
-    // If offline or test account provisioning fails, log OTP directly to console
-    console.log(`\n======================================================`);
-    console.log(`[EMAIL OTP DISPATCHED TO]: ${toEmail}`);
-    console.log(`[VERIFICATION CODE]: >>> ${otp} <<<`);
-    console.log(`======================================================\n`);
-    return { success: true };
-  }
+  // 3. Fallback: Fast logging to console without blocking external network calls
+  console.log(`\n======================================================`);
+  console.log(`[EMAIL OTP DISPATCHED TO]: ${toEmail}`);
+  console.log(`[VERIFICATION CODE]: >>> ${otp} <<<`);
+  console.log(`======================================================\n`);
+  return { success: true };
 }
 
 function getEmailHtml(otp: string): string {

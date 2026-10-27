@@ -100,10 +100,9 @@ export function PaymentSelectionModal({
     return () => clearInterval(interval);
   }, [waCountdown]);
 
-  // Mandatory fresh WhatsApp verification per payment session (strictly verified every time, never cached)
+  // Session WhatsApp verification state
   useEffect(() => {
     if (isOpen) {
-      setIsWhatsappVerified(false);
       setWaOtpSent(false);
       setWhatsappOtpInput("");
       setWaOtpError("");
@@ -111,7 +110,12 @@ export function PaymentSelectionModal({
       setInstantPaymentMode("qr");
       if (typeof window !== "undefined" && customerPhone) {
         const clean = customerPhone.replace(/[^0-9]/g, "").slice(-10);
-        localStorage.removeItem(`youpi_wa_verified_${clean}`);
+        const alreadyVerified = localStorage.getItem(`youpi_wa_verified_${clean}`);
+        if (alreadyVerified) {
+          setIsWhatsappVerified(true);
+        } else {
+          setIsWhatsappVerified(false);
+        }
       }
     }
   }, [isOpen, customerPhone]);
@@ -166,6 +170,9 @@ export function PaymentSelectionModal({
         throw new Error(data.error || "Incorrect WhatsApp OTP.");
       }
       setIsWhatsappVerified(true);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`youpi_wa_verified_${clean}`, "1");
+      }
     } catch (err: any) {
       setWaOtpError(err.message || "Invalid OTP code.");
     } finally {

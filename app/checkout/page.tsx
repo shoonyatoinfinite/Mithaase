@@ -496,7 +496,7 @@ export default function CheckoutPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        if (data.storeClosed || res.status === 403) {
+        if (data.storeClosed) {
           setIsPaymentModalOpen(false);
           setIsStoreClosedModalOpen(true);
         }

@@ -160,6 +160,8 @@ export async function POST(req: Request) {
       upiScreenshot: body.upi_screenshot,
       idempotencyKey,
       isBookingRequest: Boolean(body.is_booking_request || body.isBookingRequest),
+      customerPhone: body.customer_phone,
+      customerName: body.customer_name,
     });
 
     if (!result.success || !result.order) {

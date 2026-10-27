@@ -263,13 +263,6 @@ export async function updateStoreSettings(updates: Partial<StoreSettings>): Prom
 
   if (sql) {
     try {
-      // Ensure columns exist in database
-      await sql.query(`
-        ALTER TABLE store_settings 
-        ADD COLUMN IF NOT EXISTS upi_id VARCHAR(100) DEFAULT 'shreeshyam@upi',
-        ADD COLUMN IF NOT EXISTS upi_payee_name VARCHAR(100) DEFAULT 'Shree Shyam Sweets';
-      `).catch(() => {});
-
       const serviceAreasJson = updates.service_areas ? JSON.stringify(updates.service_areas) : null;
 
       await sql.query(

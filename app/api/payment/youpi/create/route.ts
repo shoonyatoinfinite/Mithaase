@@ -35,7 +35,7 @@ export async function POST(req: Request) {
     // Attempt to connect to live YouPI-PG Gateway
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
 
       const gatewayRes = await fetch(`${youpiBaseUrl}/api/v1/payments`, {
         method: "POST",
