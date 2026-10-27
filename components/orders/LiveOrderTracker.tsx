@@ -767,19 +767,25 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
               <div className="flex justify-between">
                 <span>Doorstep Delivery Fee</span>
                 <span className="font-semibold text-[#F5D061]">
-                  {order.delivery_charge === 0 ? "FREE" : `₹${order.delivery_charge}`}
+                  {Number(order.delivery_charge) === 0 ? (
+                    <span className="text-emerald-400 font-bold">
+                      FREE {order.coupon_code ? `(${order.coupon_code})` : ""}
+                    </span>
+                  ) : (
+                    `₹${order.delivery_charge}`
+                  )}
                 </span>
               </div>
-              {order.discount_amount && order.discount_amount > 0 && order.coupon_code?.toUpperCase() !== "FREEDEL" && (
+              {Number(order.discount_amount) > 0 && (
                 <div className="flex justify-between text-emerald-400 font-semibold">
                   <span>Coupon Discount ({order.coupon_code || "OFFER"})</span>
-                  <span>-₹{order.discount_amount}</span>
+                  <span className="font-mono">-₹{Number(order.discount_amount)}</span>
                 </div>
               )}
               <div className="pt-2 border-t border-white/10 flex justify-between text-base font-bold text-[#FFF8EE]">
                 <span>{order.payment_method === "cod" ? "Total Payable (COD)" : "Total Amount"}</span>
                 <span className="text-xl font-serif text-[#F5D061]">
-                  ₹{order.total_amount > 0 ? order.total_amount : order.subtotal}
+                  ₹{Number(order.total_amount) > 0 ? order.total_amount : order.subtotal}
                 </span>
               </div>
 

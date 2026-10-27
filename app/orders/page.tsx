@@ -288,6 +288,11 @@ export default function CustomerOrdersPage() {
                         <span className="text-xl font-serif font-black text-[#F5D061]">
                           ₹{ord.total_amount}
                         </span>
+                        {Number(ord.discount_amount) > 0 && (
+                          <span className="block text-[10px] text-emerald-400 font-semibold">
+                            Saved ₹{Number(ord.discount_amount)} ({ord.coupon_code || "Coupon"})
+                          </span>
+                        )}
                         <span
                           className={`block text-[10px] font-bold ${
                             ord.payment_method === "upi"

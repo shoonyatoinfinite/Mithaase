@@ -263,22 +263,22 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
 
             <div className="flex justify-between text-black/70">
               <span>Doorstep Delivery</span>
-              {order.delivery_charge === 0 ? (
+              {Number(order.delivery_charge) === 0 ? (
                 <span className="font-bold text-emerald-700 font-mono">
-                  FREE {order.coupon_code?.toUpperCase() === "FREEDEL" ? "(FREEDEL) " : ""}<span className="line-through text-black/40 text-[10px]">₹21</span>
+                  FREE {order.coupon_code ? `(${order.coupon_code}) ` : ""}<span className="line-through text-black/40 text-[10px]">₹21</span>
                 </span>
               ) : (
                 <span className="font-mono font-bold text-black">₹{order.delivery_charge}</span>
               )}
             </div>
 
-            {/* Coupon Discount if applied on sweets */}
-            {order.discount_amount && order.discount_amount > 0 && order.coupon_code?.toUpperCase() !== "FREEDEL" ? (
+            {/* Coupon Discount if applied */}
+            {Number(order.discount_amount) > 0 && (
               <div className="flex justify-between text-emerald-700 font-semibold">
-                <span>Coupon ({order.coupon_code || "OFFER"})</span>
-                <span className="font-mono font-bold">-₹{order.discount_amount}</span>
+                <span>Coupon Discount ({order.coupon_code || "OFFER"})</span>
+                <span className="font-mono font-bold">-₹{Number(order.discount_amount)}</span>
               </div>
-            ) : null}
+            )}
 
             <div className="pt-2 border-t border-black/15 flex justify-between text-base font-black text-[#3B0820]">
               <span>

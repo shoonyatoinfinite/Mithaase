@@ -32,6 +32,7 @@ import {
   Ban,
   RotateCcw,
   UploadCloud,
+  Zap,
 } from "lucide-react";
 import { useRealtime } from "@/lib/hooks/useRealtime";
 import { LiveCameraCapture } from "@/components/camera/LiveCameraCapture";
@@ -519,6 +520,33 @@ export default function AdminOrdersPage() {
     }
   };
 
+  // Mark Manual UPI Paid Handler
+  const handleMarkUpiPaid = async () => {
+    if (!selectedOrder) return;
+    setIsUpdating(true);
+    try {
+      const res = await fetch(`/api/orders/${selectedOrder.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          payment_status: "paid",
+          note: "Manual UPI Payment Verified & Confirmed by Admin",
+        }),
+      });
+
+      if (res.ok) {
+        const updated = await res.json();
+        setSelectedOrder(updated);
+        setActionSuccess(`Order #${selectedOrder.order_number} UPI payment verified & marked as PAID!`);
+        fetchOrders(true);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   // Update Booking Status Handler (Approve Request or Reapprove/Confirm Order)
   const handleUpdateBooking = async (
     targetBookingStatus: "approved_for_payment" | "confirmed",
@@ -869,6 +897,38 @@ export default function AdminOrdersPage() {
                     </span>
                   </div>
 
+                  {/* Row 2.5: Payment Method Badge (Auto UPI vs Manual UPI vs COD) */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {o.payment_method === "cod" ? (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                        <span>💵 COD</span>
+                        <span className={`text-[9px] font-normal ${o.payment_status === "paid" ? "text-emerald-400 font-bold" : "text-amber-200"}`}>
+                          ({o.payment_status === "paid" ? "Paid ✓" : `Collect ₹${o.total_amount}`})
+                        </span>
+                      </span>
+                    ) : o.upi_reference?.toLowerCase().startsWith("youpi:") ? (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                        <Zap className="w-3 h-3 text-emerald-400" />
+                        <span>Auto-Confirmed UPI</span>
+                        <span className="text-[9px] text-emerald-400 font-semibold">✓</span>
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-950/80 text-purple-300 border border-purple-500/40 flex items-center gap-1">
+                        <Smartphone className="w-3 h-3 text-purple-400" />
+                        <span>Manual UPI</span>
+                        <span className={`text-[9px] ${o.payment_status === "paid" ? "text-emerald-400 font-bold" : "text-amber-300 font-bold"}`}>
+                          ({o.payment_status === "paid" ? "Verified ✓" : "Verify UTR"})
+                        </span>
+                      </span>
+                    )}
+
+                    {o.coupon_code && (
+                      <span className="px-1.5 py-0.5 rounded-md text-[9px] font-mono font-semibold bg-white/5 text-[#F5D061] border border-white/10">
+                        🏷️ {o.coupon_code}
+                      </span>
+                    )}
+                  </div>
+
                   {/* Row 3: Amount & View Details Trigger */}
                   <div className="pt-2.5 border-t border-white/10 flex items-center justify-between">
                     <div>
@@ -937,6 +997,157 @@ export default function AdminOrdersPage() {
                 <div className="p-3.5 rounded-2xl bg-rose-950/90 border border-rose-500/40 text-rose-200 text-xs flex items-center gap-2 shadow">
                   <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
                   <span>{actionError}</span>
+                </div>
+              )}
+
+              {/* ============================================================== */}
+              {/* PAYMENT CLASSIFICATION & VERIFICATION BANNER                   */}
+              {/* Shows: Auto-Confirmed UPI vs Manual UPI vs Cash on Delivery    */}
+              {/* ============================================================== */}
+              {selectedOrder.payment_method === "cod" ? (
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-950/80 via-[#261505] to-amber-950/80 border-2 border-amber-500/50 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                        <Banknote className="w-5 h-5 text-amber-400" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black uppercase tracking-wider text-amber-300">
+                            💵 Cash on Delivery (COD)
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-amber-200/80 block">
+                          Payment to be collected in cash from customer upon sweet delivery
+                        </span>
+                      </div>
+                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-black border ${
+                        selectedOrder.payment_status === "paid"
+                          ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                          : "bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse"
+                      }`}
+                    >
+                      {selectedOrder.payment_status === "paid" ? "✓ Cash Collected & Paid" : `Collect ₹${selectedOrder.total_amount} Cash`}
+                    </span>
+                  </div>
+
+                  {selectedOrder.payment_status !== "paid" && selectedOrder.order_status !== "cancelled" && (
+                    <div className="pt-2 border-t border-amber-500/20 flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-amber-100/90 font-mono">
+                        Cash amount to collect: <strong>₹{selectedOrder.total_amount}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isUpdating}
+                        onClick={handleMarkCodPaid}
+                        className="py-1.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#16031E] font-bold text-xs flex items-center gap-1.5 shadow active:scale-95 transition-all cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#16031E]" />
+                        <span>Mark Cash Collected</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : selectedOrder.upi_reference?.toLowerCase().startsWith("youpi:") ? (
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/80 via-[#052615] to-emerald-950/80 border-2 border-emerald-500/60 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
+                        <Zap className="w-5 h-5 text-emerald-400" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black uppercase tracking-wider text-emerald-300">
+                            ⚡ Auto-Confirmed UPI (Instant Gateway)
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                            Verified Automatically ✓
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-emerald-200/80 block">
+                          Payment verified and confirmed in real-time via YouPI Gateway
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] text-emerald-300/60 block uppercase font-mono">Amount Paid</span>
+                      <span className="font-serif font-black text-emerald-300 text-sm">₹{selectedOrder.total_amount}</span>
+                    </div>
+                  </div>
+                  <div className="bg-black/40 p-2.5 rounded-xl border border-emerald-500/20 flex items-center justify-between text-xs font-mono">
+                    <span className="text-emerald-200/70 text-[11px]">Gateway Reference / ID:</span>
+                    <span className="text-white font-bold text-[11px]">{selectedOrder.upi_reference}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/80 via-[#1C0526] to-purple-950/80 border-2 border-purple-500/50 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center shrink-0">
+                        <Smartphone className="w-5 h-5 text-purple-400" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black uppercase tracking-wider text-purple-300">
+                            📱 Manual UPI Payment (Customer Transfer)
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[9px] font-black border ${
+                              selectedOrder.payment_status === "paid"
+                                ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                : "bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse"
+                            }`}
+                          >
+                            {selectedOrder.payment_status === "paid" ? "✓ Verified by Admin" : "⚠️ Needs Admin Verification"}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-purple-200/70 block">
+                          Customer sent UPI directly to shop VPA and entered UTR / screenshot proof
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] text-purple-300/60 block uppercase font-mono">Total Order</span>
+                      <span className="font-serif font-black text-[#F5D061] text-sm">₹{selectedOrder.total_amount}</span>
+                    </div>
+                  </div>
+
+                  <div className="bg-black/40 p-2.5 rounded-xl border border-purple-500/20 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="font-mono text-[11px]">
+                      <span className="text-white/60">Customer UTR / Ref: </span>
+                      <strong className="text-white font-bold">{selectedOrder.upi_reference || "No UTR provided"}</strong>
+                    </div>
+                    {selectedOrder.upi_screenshot && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreviewImage({
+                            url: selectedOrder.upi_screenshot!,
+                            title: `Manual UPI Proof - Order #${selectedOrder.order_number}`,
+                          })
+                        }
+                        className="text-[11px] text-[#F5D061] underline font-bold hover:text-white cursor-pointer"
+                      >
+                        View Proof Screenshot ↗
+                      </button>
+                    )}
+                  </div>
+
+                  {selectedOrder.payment_status !== "paid" && selectedOrder.order_status !== "cancelled" && (
+                    <div className="pt-1 flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        disabled={isUpdating}
+                        onClick={handleMarkUpiPaid}
+                        className="py-1.5 px-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow active:scale-95 transition-all cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                        <span>Verify & Mark UPI Paid</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1463,13 +1674,19 @@ export default function AdminOrdersPage() {
                     <div className="flex justify-between text-white/70">
                       <span>Delivery Fee</span>
                       <span className="text-[#F5D061] font-mono">
-                        {selectedOrder.delivery_charge === 0 ? "FREE" : `₹${selectedOrder.delivery_charge}`}
+                        {Number(selectedOrder.delivery_charge) === 0 ? (
+                          <span className="text-emerald-400 font-bold">
+                            FREE {selectedOrder.coupon_code ? `(${selectedOrder.coupon_code})` : ""}
+                          </span>
+                        ) : (
+                          `₹${selectedOrder.delivery_charge}`
+                        )}
                       </span>
                     </div>
-                    {selectedOrder.discount_amount && selectedOrder.discount_amount > 0 && (
+                    {Number(selectedOrder.discount_amount) > 0 && (
                       <div className="flex justify-between text-emerald-400 font-semibold">
                         <span>Coupon Discount ({selectedOrder.coupon_code || "OFFER"})</span>
-                        <span className="font-mono">-₹{selectedOrder.discount_amount}</span>
+                        <span className="font-mono">-₹{Number(selectedOrder.discount_amount)}</span>
                       </div>
                     )}
                     <div className="pt-2 border-t border-white/10 flex justify-between font-bold text-white text-base">
@@ -1631,13 +1848,47 @@ export default function AdminOrdersPage() {
                   )}
                 </div>
 
-                {/* 3. Customer UPI Transaction Proof Screenshot */}
-                {(selectedOrder.payment_method === "upi" || selectedOrder.upi_screenshot) && (
+                {/* 3. Customer UPI / Payment Transaction Details */}
+                {selectedOrder.payment_method === "cod" ? (
+                  <div className="p-3.5 rounded-2xl bg-amber-950/30 border border-amber-500/40 space-y-2 mt-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-amber-300 font-bold text-xs">
+                        <Banknote className="w-4 h-4 text-amber-400" />
+                        <span>Cash on Delivery (COD) Payment Record</span>
+                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${selectedOrder.payment_status === "paid" ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" : "bg-amber-500/20 text-amber-300 border border-amber-500/40"}`}>
+                        {selectedOrder.payment_status === "paid" ? "Paid in Cash ✓" : "Collect Cash on Delivery"}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-amber-200/80">
+                      Rider collects ₹{selectedOrder.total_amount} in cash upon physical delivery of sweets.
+                    </p>
+                  </div>
+                ) : selectedOrder.upi_reference?.toLowerCase().startsWith("youpi:") ? (
+                  <div className="p-3.5 rounded-2xl bg-emerald-950/30 border border-emerald-500/40 space-y-2 mt-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-emerald-300 font-bold text-xs">
+                        <Zap className="w-4 h-4 text-emerald-400" />
+                        <span>Auto-Confirmed UPI Gateway Record</span>
+                      </div>
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded font-bold border border-emerald-500/40">
+                        Instant Verified ✓
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-emerald-200/90 font-mono bg-black/40 p-2 rounded-lg border border-emerald-500/20">
+                      <span>Gateway Ref: </span>
+                      <strong className="text-white">{selectedOrder.upi_reference}</strong>
+                    </div>
+                    <p className="text-[11px] text-emerald-200/70">
+                      Payment was validated via YouPI webhook intent callback.
+                    </p>
+                  </div>
+                ) : (
                   <div className="p-3.5 rounded-2xl bg-purple-950/30 border border-purple-500/40 space-y-2 mt-2">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5 text-purple-300 font-bold text-xs">
                         <Smartphone className="w-4 h-4 text-purple-400" />
-                        <span>UPI Payment Screenshot Proof</span>
+                        <span>Manual UPI Payment Proof & Verification</span>
                       </div>
                       {selectedOrder.upi_reference && (
                         <span className="text-[11px] font-mono text-[#F5D061]">
@@ -1667,7 +1918,7 @@ export default function AdminOrdersPage() {
                       </div>
                     ) : (
                       <p className="text-[11px] text-white/50">
-                        Customer confirmed payment without uploading a screenshot.
+                        Customer submitted manual UTR without uploading a screenshot.
                       </p>
                     )}
                   </div>
