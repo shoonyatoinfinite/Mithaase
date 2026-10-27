@@ -160,7 +160,7 @@ export async function sendPinResetEmail(
       <div class="card">
         <div class="badge">Security Notification</div>
         <h1>Your New Security PIN</h1>
-        <p>Hello ${customerName || "Valued Customer"}, your account PIN has been reset as requested after dual Email and WhatsApp verification.</p>
+        <p>Hello ${customerName || "Valued Customer"}, your account PIN has been reset as requested after identity verification.</p>
         <div class="pin-box">
           <div class="pin-val">${newPin}</div>
         </div>

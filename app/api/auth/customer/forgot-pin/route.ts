@@ -216,29 +216,7 @@ export async function POST(req: Request) {
       // 4. Dispatch new PIN to Email
       await sendPinResetEmail(customer.email, customer.name, finalPin);
 
-      // 5. Dispatch new PIN to WhatsApp via YouPI
-      try {
-        const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
-        const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 6000);
-
-        await fetch(`${youpiBaseUrl}/api/v1/customer/send-otp`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            mobileNumber: customer.phone,
-            name: customer.name,
-            otp: finalPin, // Transmit new PIN
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-      } catch (e) {
-        console.warn("[PIN_RESET] WhatsApp dispatch warning:", e);
-      }
-
-      // 6. Clear any login lockout rate limits for this customer
+      // 5. Clear any login lockout rate limits for this customer
       await clearRateLimit(customer.email.toLowerCase(), "login_fail");
       if (customer.phone) {
         await clearRateLimit(customer.phone, "login_fail");
@@ -247,7 +225,7 @@ export async function POST(req: Request) {
       return NextResponse.json({
         success: true,
         resetCompleted: true,
-        message: `Your 6-digit security PIN has been successfully reset! A confirmation has been sent to both your email (${maskEmail(customer.email)}) and WhatsApp (${maskPhone(customer.phone)}).`,
+        message: `Your 6-digit security PIN has been successfully reset! A confirmation with your new PIN has been sent to your registered email (${maskEmail(customer.email)}).`,
       });
     }
 

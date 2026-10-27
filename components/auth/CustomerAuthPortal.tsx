@@ -431,7 +431,7 @@ export function CustomerAuthPortal({
         return;
       }
       setForgotSuccessMsg(
-        data.message || "Your new 6-digit PIN has been generated and sent to your Email and WhatsApp!"
+        data.message || "Your new 6-digit PIN has been set and sent to your registered Email!"
       );
       setForgotStep(4);
     } catch {
@@ -531,7 +531,7 @@ export function CustomerAuthPortal({
             (activeTab === "google_complete"
               ? "Add your mobile and village doorstep pin once for fast 1-click mithai delivery."
               : activeTab === "forgot_pin"
-              ? "Verify your registered email and WhatsApp to receive your new 6-digit security PIN."
+              ? "Verify your account to receive your new 6-digit security PIN on your registered email."
               : activeTab === "login"
               ? "Access your saved addresses, festival bookings, and order receipts."
               : "Sign up with verified email & WhatsApp OTP — next time order with 1-click!")}
@@ -1404,7 +1404,7 @@ export function CustomerAuthPortal({
                   className="w-full bg-[#16031E] border border-white/20 focus:border-[#D4AF37] rounded-xl px-4 py-3 text-center text-lg font-mono tracking-widest text-[#FFF8EE] outline-none transition-colors"
                 />
                 <span className="text-[11px] text-white/50 mt-1 block">
-                  Leave blank if you prefer an auto-generated random PIN sent to your email &amp; WhatsApp.
+                  Leave blank if you prefer an auto-generated random PIN sent to your registered email.
                 </span>
               </div>
 
@@ -1439,7 +1439,7 @@ export function CustomerAuthPortal({
               </div>
               <h3 className="font-serif font-black text-white text-xl">New PIN Dispatched!</h3>
               <p className="text-xs text-white/80 max-w-sm mx-auto leading-relaxed">
-                A fresh random 6-digit PIN has been generated and dispatched to both your <strong>Email ({forgotMaskedEmail})</strong> and <strong>WhatsApp ({forgotMaskedPhone})</strong>.
+                Your 6-digit security PIN has been set and dispatched to your registered <strong>Email ({forgotMaskedEmail})</strong>. Please check your inbox or spam folder.
               </p>
               <div className="pt-2">
                 <button
