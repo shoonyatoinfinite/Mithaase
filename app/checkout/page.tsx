@@ -495,7 +495,17 @@ export default function CheckoutPage() {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const responseText = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        if (res.status === 413 || responseText.includes("Request Entity Too Large")) {
+          throw new Error("Screenshot or order payload is too large. Image was compressed, please retry placing order.");
+        }
+        throw new Error(responseText || `Server responded with status ${res.status}`);
+      }
+
       if (!res.ok) {
         if (data.storeClosed) {
           setIsPaymentModalOpen(false);

@@ -27,6 +27,7 @@ import {
   XCircle,
   ArrowLeft,
 } from "lucide-react";
+import { compressImage, formatBytes } from "@/lib/utils/image-compression";
 
 interface PaymentSelectionModalProps {
   isOpen: boolean;
@@ -65,6 +66,8 @@ export function PaymentSelectionModal({
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
   const [screenshotPreviewUrl, setScreenshotPreviewUrl] = useState<string>("");
   const [screenshotName, setScreenshotName] = useState<string>("");
+  const [screenshotSize, setScreenshotSize] = useState<number>(0);
+  const [isCompressingScreenshot, setIsCompressingScreenshot] = useState<boolean>(false);
   const [isUploadingScreenshot, setIsUploadingScreenshot] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string>("");
   const [openingApp, setOpeningApp] = useState<string | null>(null);
@@ -494,33 +497,51 @@ export function PaymentSelectionModal({
     }
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    if (file.size > 8 * 1024 * 1024) {
-      setValidationError("Screenshot file must be under 8MB");
-      return;
-    }
 
     if (!file.type.startsWith("image/")) {
       setValidationError("Please select a valid image file (JPG, PNG, WebP).");
       return;
     }
 
-    setScreenshotFile(file);
-    setScreenshotName(file.name);
-    setValidationError("");
+    if (file.size > 20 * 1024 * 1024) {
+      setValidationError("Screenshot file must be under 20MB");
+      return;
+    }
 
-    // Create immediate local object URL for visual preview without sending to server yet
-    const preview = URL.createObjectURL(file);
-    setScreenshotPreviewUrl(preview);
+    setValidationError("");
+    setIsCompressingScreenshot(true);
+
+    try {
+      // Compress client-side to ~100-250KB before storing/uploading
+      const compressed = await compressImage(file, {
+        maxWidth: 1280,
+        maxHeight: 1280,
+        quality: 0.8,
+      });
+
+      setScreenshotFile(compressed.file);
+      setScreenshotName(compressed.file.name);
+      setScreenshotPreviewUrl(compressed.dataUrl);
+      setScreenshotSize(compressed.size);
+    } catch (err) {
+      console.warn("Client compression fallback:", err);
+      setScreenshotFile(file);
+      setScreenshotName(file.name);
+      setScreenshotPreviewUrl(URL.createObjectURL(file));
+      setScreenshotSize(file.size);
+    } finally {
+      setIsCompressingScreenshot(false);
+    }
   };
 
   const handleRemoveScreenshot = () => {
     setScreenshotFile(null);
     setScreenshotPreviewUrl("");
     setScreenshotName("");
+    setScreenshotSize(0);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -534,23 +555,38 @@ export function PaymentSelectionModal({
 
     setIsUploadingScreenshot(true);
     try {
+      // Ensure file is compressed before sending over the network
+      let fileToUpload = screenshotFile;
+      if (fileToUpload.size > 600 * 1024) {
+        const compressed = await compressImage(fileToUpload);
+        fileToUpload = compressed.file;
+      }
+
       const formData = new FormData();
-      formData.append("file", screenshotFile);
+      formData.append("file", fileToUpload);
       const res = await fetch("/api/media/upload", {
         method: "POST",
         body: formData,
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.url) {
-          return data.url;
-        }
+      const responseText = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        console.warn("[CHECKOUT] Non-JSON response from /api/media/upload:", responseText);
       }
-      throw new Error("Media server upload failed");
+
+      if (res.ok && data.url) {
+        return data.url;
+      }
+      throw new Error(data.error || "Media server upload failed");
     } catch (err) {
-      console.warn("[CHECKOUT] Upload error, encoding as base64 fallback:", err);
-      // Fallback: convert file to Base64 so the proof is never lost
+      console.warn("[CHECKOUT] Upload error, encoding as compressed base64 fallback:", err);
+      // Fallback: return compressed base64 dataUrl (which is only ~100KB!) so the proof is never lost
+      if (screenshotPreviewUrl && screenshotPreviewUrl.startsWith("data:image/")) {
+        return screenshotPreviewUrl;
+      }
       return new Promise<string>((resolve) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
@@ -1161,9 +1197,14 @@ export function PaymentSelectionModal({
                           <div className="space-y-1.5">
                             <label className="text-xs font-bold text-white flex items-center justify-between">
                               <span>Payment Screenshot (Optional)</span>
-                              <span className="text-[10px] text-amber-300">Uploads on click</span>
+                              <span className="text-[10px] text-amber-300">Uploads on submit</span>
                             </label>
-                            {screenshotPreviewUrl ? (
+                            {isCompressingScreenshot ? (
+                              <div className="p-3 rounded-xl bg-[#23052A] border border-amber-500/40 flex items-center justify-center gap-2 text-xs text-amber-300">
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Compressing & optimizing image...</span>
+                              </div>
+                            ) : screenshotPreviewUrl ? (
                               <div className="p-2.5 rounded-xl bg-[#23052A] border border-emerald-500/40 flex items-center justify-between gap-2 text-xs">
                                 <div className="flex items-center gap-2 overflow-hidden">
                                   <img
@@ -1175,7 +1216,9 @@ export function PaymentSelectionModal({
                                     <span className="text-emerald-300 truncate font-semibold block text-[11px]">
                                       {screenshotName || "Screenshot attached"}
                                     </span>
-                                    <span className="text-[9px] text-amber-300">Will upload on submit</span>
+                                    <span className="text-[9px] text-emerald-400/90 font-medium">
+                                      {screenshotSize > 0 ? `${formatBytes(screenshotSize)} • Compressed` : "Optimized for upload"}
+                                    </span>
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
@@ -1202,7 +1245,7 @@ export function PaymentSelectionModal({
                                 className="w-full py-2.5 px-3 rounded-xl border border-dashed border-white/20 hover:border-[#D4AF37]/60 bg-white/[0.02] text-center text-xs text-white/70 hover:text-white flex items-center justify-center gap-2 cursor-pointer"
                               >
                                 <Upload className="w-3.5 h-3.5 text-[#F5D061]" />
-                                <span>Attach Payment Screenshot (Uploads on click)</span>
+                                <span>Attach Payment Screenshot (Auto-compressed)</span>
                               </button>
                             )}
                           </div>
@@ -1532,7 +1575,12 @@ export function PaymentSelectionModal({
                     className="hidden"
                   />
 
-                  {screenshotPreviewUrl ? (
+                  {isCompressingScreenshot ? (
+                    <div className="p-4 rounded-2xl bg-[#23052A] border border-amber-500/40 flex items-center justify-center gap-2 text-xs text-amber-300 shadow-md">
+                      <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                      <span>Optimizing and compressing screenshot for fast upload...</span>
+                    </div>
+                  ) : screenshotPreviewUrl ? (
                     <div className="p-3 rounded-2xl bg-[#23052A] border border-emerald-500/40 flex items-center justify-between gap-3 shadow-md">
                       <div className="flex items-center gap-3 overflow-hidden">
                         <img
@@ -1544,8 +1592,8 @@ export function PaymentSelectionModal({
                           <span className="font-semibold text-emerald-300 block truncate">
                             {screenshotName || "Payment Screenshot"}
                           </span>
-                          <span className="text-[10px] text-amber-300/90 font-medium">
-                            📸 Selected — will upload on clicking Place Order
+                          <span className="text-[10px] text-emerald-400/90 font-medium flex items-center gap-1">
+                            <span>✓ {screenshotSize > 0 ? `${formatBytes(screenshotSize)} • Compressed` : "Optimized"} (Uploads on Place Order)</span>
                           </span>
                         </div>
                       </div>
@@ -1578,7 +1626,7 @@ export function PaymentSelectionModal({
                         Click to Choose Payment Screenshot
                       </span>
                       <span className="text-[10px] text-white/40">
-                        File will be uploaded automatically when you click Place Order (Max 8MB)
+                        Automatically compressed to ~100KB • Uploads when you click Place Order
                       </span>
                     </button>
                   )}
