@@ -1115,7 +1115,7 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
   verifiedItems.forEach((it) => (it.order_id = orderId));
 
   const isAutoConfirmedUpi =
-    params.payment_method === "upi" && Boolean(params.upi_reference?.startsWith("youpi:"));
+    params.payment_method === "upi" && Boolean(params.upi_reference?.toLowerCase().startsWith("youpi:"));
 
   const initialPaymentStatus: PaymentStatus = isAutoConfirmedUpi
     ? "paid"
@@ -1123,14 +1123,18 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
     ? "pending_verification"
     : "unpaid";
 
+  const initialOrderStatus: OrderStatus = isAutoConfirmedUpi
+    ? "confirmed"
+    : "pending_confirmation";
+
   const initialStatusHistory: OrderStatusHistory = {
     id: `hist-${Date.now()}`,
     order_id: orderId,
-    previous_status: "pending_confirmation",
-    new_status: "pending_confirmation",
-    changed_by: "Customer",
+    previous_status: initialOrderStatus,
+    new_status: initialOrderStatus,
+    changed_by: isAutoConfirmedUpi ? "YouPI Auto-Gateway" : "Customer",
     note: isAutoConfirmedUpi
-      ? "Order placed online with instant YouPI confirmation"
+      ? "⚡ Instant UPI Payment Auto-Verified by YouPI Gateway. Order auto-confirmed."
       : params.payment_method === "upi"
       ? "Order submitted with manual UPI reference — Awaiting admin verification before order confirmation"
       : "Order placed online with Cash on Delivery",
@@ -1158,7 +1162,7 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
     coupon_code: params.coupon_code ? params.coupon_code.toUpperCase().trim() : undefined,
     payment_method: params.payment_method,
     payment_status: initialPaymentStatus,
-    order_status: "pending_confirmation",
+    order_status: initialOrderStatus,
     upi_reference: params.upi_reference,
     upi_screenshot: persistedScreenshot,
     latitude: params.latitude,
@@ -1199,8 +1203,8 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
         totalAmount,
         params.coupon_code ? params.coupon_code.toUpperCase().trim() : null,
         params.payment_method,
-        params.payment_method === "upi" ? "paid" : "unpaid",
-        "pending_confirmation",
+        initialPaymentStatus,
+        initialOrderStatus,
         params.upi_reference || null,
         params.upi_screenshot || null,
         params.latitude || null,

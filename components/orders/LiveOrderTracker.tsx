@@ -66,10 +66,15 @@ function getOrderStatusHeadline(status: OrderStatus, order?: Order) {
     };
   }
 
+  const isAutoVerified = Boolean(
+    order?.upi_reference && order.upi_reference.toLowerCase().startsWith("youpi:")
+  );
+
   const isManualUpiPending =
     order &&
     order.payment_method === "upi" &&
-    (!order.upi_reference?.startsWith("youpi:") || order.payment_status === "pending_verification") &&
+    !isAutoVerified &&
+    order.payment_status === "pending_verification" &&
     status === "pending_confirmation";
 
   if (isManualUpiPending) {
@@ -78,6 +83,15 @@ function getOrderStatusHeadline(status: OrderStatus, order?: Order) {
       highlight: "Awaiting Admin Verification",
       desc: "Your order is NOT placed yet. Our admin is verifying your payment reference number. Once verified, your order will be confirmed and sent to the halwai workshop.",
       iconColor: "text-amber-400 bg-amber-950/80 border-amber-400",
+    };
+  }
+
+  if (isAutoVerified && (status === "confirmed" || status === "pending_confirmation")) {
+    return {
+      title: "Auto-Verified Payment Received —",
+      highlight: "Order Confirmed! 🎉",
+      desc: "Your instant UPI payment was verified automatically via YouPI Gateway. Halwai workshop has queued your fresh batch!",
+      iconColor: "text-emerald-400 bg-emerald-950/80 border-emerald-400",
     };
   }
 
@@ -251,11 +265,15 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
   const isDelivered = order.order_status === "delivered";
   const isPaid = order.payment_status === "paid";
   const isCancelled = order.order_status === "cancelled";
+  const isAutoVerified = Boolean(
+    order.upi_reference && order.upi_reference.toLowerCase().startsWith("youpi:")
+  );
   const isManualUpiPending =
     order.booking_status !== "requested" &&
     order.booking_status !== "approved_for_payment" &&
     order.payment_method === "upi" &&
-    (!order.upi_reference?.startsWith("youpi:") || order.payment_status === "pending_verification") &&
+    !isAutoVerified &&
+    order.payment_status === "pending_verification" &&
     order.order_status === "pending_confirmation";
   const headline = getOrderStatusHeadline(order.order_status, order);
 

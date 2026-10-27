@@ -363,14 +363,22 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
   const finalPaymentMethod: PaymentMethod = params.isBookingRequest ? "cod" : params.paymentMethod;
   const initialBookingStatus = params.isBookingRequest ? "requested" : "standard";
 
-  // Payment Status: NEVER mark 'paid' automatically from client request!
+  // Payment Status: Auto-verified YouPI payments are marked 'paid' and 'confirmed' immediately!
+  const isAutoVerifiedUpi = Boolean(
+    cleanUtr && cleanUtr.toUpperCase().startsWith("YOUPI:")
+  );
+
   const initialPaymentStatus: PaymentStatus =
     params.isBookingRequest
       ? "unpaid"
-      : finalPaymentMethod === "upi"
-        ? "pending_verification"
-        : "unpaid";
-  const initialOrderStatus: OrderStatus = "pending_confirmation";
+      : isAutoVerifiedUpi
+        ? "paid"
+        : finalPaymentMethod === "upi"
+          ? "pending_verification"
+          : "unpaid";
+  const initialOrderStatus: OrderStatus = isAutoVerifiedUpi
+    ? "confirmed"
+    : "pending_confirmation";
 
   try {
     const createdOrder = await withTransaction(async (client) => {
@@ -494,9 +502,11 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
       // E. Insert initial order_status_history
       const initialHistoryNote = params.isBookingRequest
         ? "🌙 After-hours booking request received. Awaiting Store Manager review to approve and unlock payment options."
-        : params.paymentMethod === "upi"
-          ? "Order submitted with UPI reference — awaiting verification"
-          : "Order submitted with Cash on Delivery";
+        : isAutoVerifiedUpi
+          ? `⚡ Instant UPI Payment Auto-Verified by YouPI Gateway (Ref: ${cleanUtr}). Order auto-confirmed.`
+          : params.paymentMethod === "upi"
+            ? "Order submitted with UPI reference — awaiting verification"
+            : "Order submitted with Cash on Delivery";
 
       await client.query(
         `INSERT INTO order_status_history (id, order_id, previous_status, new_status, changed_by, note, created_at)
@@ -504,9 +514,9 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
         [
           crypto.randomUUID(),
           orderId,
-          "pending_confirmation",
-          "pending_confirmation",
-          "Customer",
+          initialOrderStatus,
+          initialOrderStatus,
+          isAutoVerifiedUpi ? "YouPI Auto-Gateway" : "Customer",
           initialHistoryNote,
         ]
       );

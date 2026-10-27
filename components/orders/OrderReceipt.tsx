@@ -244,8 +244,8 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
                   {order.order_status === "delivered" ? "DELIVERED & PAID IN FULL" : "OFFICIAL ORDER INVOICE"}
                 </span>
                 <span className="text-[11px] text-emerald-900 font-medium block">
-                  Payment Method: {order.payment_method.toUpperCase()}
-                  {order.payment_method === "upi" && order.upi_reference ? ` • Ref: ${order.upi_reference}` : ""}
+                  Payment Method: {order.payment_method === "upi" ? (order.upi_reference?.toLowerCase().startsWith("youpi:") ? "AUTO UPI (INSTANT)" : "DIRECT UPI") : "CASH ON DELIVERY"}
+                  {order.payment_method === "upi" && order.upi_reference ? ` • Ref: ${order.upi_reference.replace(/^youpi:/i, "")}` : ""}
                 </span>
                 <span className="text-[10px] text-emerald-700 block">
                   Verified by Shree Shyam Sweets Delivery Fleet
