@@ -196,6 +196,57 @@ export function PaymentSelectionModal({
 
   const upiUri = `upi://pay?${upiParams}`;
 
+  // Dedicated BHIM UPI URI Generator
+  // BHIM strictly enforces clean alphanumeric note without spaces or special symbols and native bhim:// scheme
+  const getBhimUpiUrl = () => {
+    const bhimNote = "MithaaseOrder";
+    const bhimParams = `pa=${upiId}&pn=${encodeURIComponent(
+      payeeName
+    )}&am=${formattedAmount}&cu=INR&tn=${encodeURIComponent(bhimNote)}`;
+    return `bhim://pay?${bhimParams}`;
+  };
+
+  // Dedicated separate handler for BHIM UPI App
+  const handleOpenBhimApp = () => {
+    const bhimUrl = getBhimUpiUrl();
+    setOpeningApp("BHIM UPI");
+
+    // Copy store UPI ID to clipboard as instant backup for customer
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        navigator.clipboard.writeText(upiId);
+      }
+    } catch {}
+
+    if (typeof window !== "undefined") {
+      // 1. Direct native BHIM protocol without package intent wrapper that blocks transactions
+      try {
+        window.location.assign(bhimUrl);
+      } catch {
+        window.location.href = bhimUrl;
+      }
+
+      // 2. Safe, non-interfering fallback timer (3500ms) only if BHIM app is not installed
+      const bhimFallbackTimer = setTimeout(() => {
+        try {
+          const fallbackUpi = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(
+            payeeName
+          )}&am=${formattedAmount}&cu=INR&tn=MithaaseOrder`;
+          window.location.href = fallbackUpi;
+        } catch (e) {
+          console.warn("BHIM fallback navigation error:", e);
+        }
+      }, 3500);
+
+      // Cancel fallback if window loses focus (meaning BHIM app launched successfully)
+      const onBlur = () => {
+        clearTimeout(bhimFallbackTimer);
+        window.removeEventListener("blur", onBlur);
+      };
+      window.addEventListener("blur", onBlur, { once: true });
+    }
+  };
+
   // Dedicated app scheme / intent URLs with verified NPCI and vendor protocols
   const getUpiUrlForApp = (app: "gpay" | "phonepe" | "paytm" | "bhim" | "generic") => {
     const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
@@ -222,17 +273,18 @@ export function PaymentSelectionModal({
         }
         return `paytmmp://pay?${params}`;
       case "bhim":
-        if (isAndroid) {
-          // Official NPCI BHIM intent with VIEW action
-          return `intent://pay?${params}#Intent;action=android.intent.action.VIEW;scheme=upi;package=in.org.npci.upiapp;end`;
-        }
-        return `bhim://pay?${params}`;
+        return getBhimUpiUrl();
       default:
         return `upi://pay?${params}`;
     }
   };
 
   const handleOpenUpiApp = (app: "gpay" | "phonepe" | "paytm" | "bhim" | "generic", appName: string) => {
+    if (app === "bhim") {
+      handleOpenBhimApp();
+      return;
+    }
+
     const targetUrl = getUpiUrlForApp(app);
     setOpeningApp(appName);
 
