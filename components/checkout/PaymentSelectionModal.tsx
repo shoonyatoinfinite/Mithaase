@@ -208,20 +208,15 @@ export function PaymentSelectionModal({
   ).trim();
   // Exact 2 decimal places per NPCI specification (e.g. "150.00")
   const formattedAmount = upiAmount.toFixed(2);
-  // NPCI-compliant alphanumeric note without special characters/spaces to guarantee universal compatibility
-  const cleanNote = "MithaaseOrder";
-
-  // NPCI UPI URI specification: P2P VPAs reject 'tr' or 36-char hyphenated UUIDs with 'Bad Request'.
-  // Using pure standard pa, pn, am, cu, tn parameters ensures 100% universal compatibility across all UPI apps.
+  // Ultra-clean minimal URI containing ONLY payee UPI ID (pa) and Amount (am)
+  // as requested, removing tn and extraneous params that trigger strict parser rejections in BHIM/GPay/Paytm
   const { upiParams, upiUri } = useMemo(() => {
-    const params = `pa=${upiId}&pn=${encodeURIComponent(
-      payeeName
-    )}&am=${formattedAmount}&cu=INR&tn=${cleanNote}`;
+    const params = `pa=${upiId}&am=${formattedAmount}`;
     return {
       upiParams: params,
       upiUri: `upi://pay?${params}`,
     };
-  }, [upiId, payeeName, formattedAmount, cleanNote]);
+  }, [upiId, formattedAmount]);
 
   // Dedicated app scheme / intent URLs with verified NPCI and vendor protocols
   const getUpiUrlForApp = (app: "gpay" | "phonepe" | "paytm" | "bhim" | "generic") => {
@@ -1051,30 +1046,117 @@ export function PaymentSelectionModal({
                               <span className="text-[10px] text-white/50">Prefilled amount: ₹{upiAmount}</span>
                             </div>
 
-                            {/* Native Installed UPI Apps Launcher */}
+                            {/* App Launchers: 4 Major Apps + Fast Universal (Navi / Supermoney) */}
                             <div className="space-y-2">
+                              {/* 4 Major Apps Grid */}
+                              <div className="grid grid-cols-2 gap-2">
+                                {/* 1. Google Pay */}
+                                <a
+                                  href={getUpiUrlForApp("gpay")}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    handleOpenUpiApp("gpay", "Google Pay");
+                                  }}
+                                  className="p-2.5 rounded-xl bg-[#1B2234] hover:bg-[#232C43] border border-[#4285F4]/40 hover:border-[#4285F4] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#4285F4] text-xs">
+                                      G
+                                    </div>
+                                    <div className="text-left">
+                                      <span className="block font-bold text-xs leading-tight">Google Pay</span>
+                                      <span className="block text-[9px] text-white/50">Direct App</span>
+                                    </div>
+                                  </div>
+                                  <ExternalLink className="w-3 h-3 text-[#4285F4] group-hover:translate-x-0.5 transition-transform" />
+                                </a>
 
+                                {/* 2. PhonePe */}
+                                <a
+                                  href={getUpiUrlForApp("phonepe")}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    handleOpenUpiApp("phonepe", "PhonePe");
+                                  }}
+                                  className="p-2.5 rounded-xl bg-[#251036] hover:bg-[#34164D] border border-[#A855F7]/40 hover:border-[#A855F7] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#A855F7] text-xs">
+                                      Pe
+                                    </div>
+                                    <div className="text-left">
+                                      <span className="block font-bold text-xs leading-tight">PhonePe</span>
+                                      <span className="block text-[9px] text-white/50">Direct App</span>
+                                    </div>
+                                  </div>
+                                  <ExternalLink className="w-3 h-3 text-[#A855F7] group-hover:translate-x-0.5 transition-transform" />
+                                </a>
+
+                                {/* 3. Paytm */}
+                                <a
+                                  href={getUpiUrlForApp("paytm")}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    handleOpenUpiApp("paytm", "Paytm");
+                                  }}
+                                  className="p-2.5 rounded-xl bg-[#08223B] hover:bg-[#0D2F52] border border-[#00BAF2]/40 hover:border-[#00BAF2] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#00BAF2] text-xs">
+                                      ₹
+                                    </div>
+                                    <div className="text-left">
+                                      <span className="block font-bold text-xs leading-tight">Paytm</span>
+                                      <span className="block text-[9px] text-white/50">Direct App</span>
+                                    </div>
+                                  </div>
+                                  <ExternalLink className="w-3 h-3 text-[#00BAF2] group-hover:translate-x-0.5 transition-transform" />
+                                </a>
+
+                                {/* 4. BHIM */}
+                                <a
+                                  href={getUpiUrlForApp("bhim")}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    handleOpenUpiApp("bhim", "BHIM UPI");
+                                  }}
+                                  className="p-2.5 rounded-xl bg-[#132E27] hover:bg-[#1A3D34] border border-[#10B981]/40 hover:border-[#10B981] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#10B981] text-xs">
+                                      B
+                                    </div>
+                                    <div className="text-left">
+                                      <span className="block font-bold text-xs leading-tight">BHIM UPI</span>
+                                      <span className="block text-[9px] text-white/50">Direct App</span>
+                                    </div>
+                                  </div>
+                                  <ExternalLink className="w-3 h-3 text-[#10B981] group-hover:translate-x-0.5 transition-transform" />
+                                </a>
+                              </div>
+
+                              {/* 5. Navi / Supermoney / Other Apps (Universal 1-Tap) */}
                               <a
                                 href={upiUri}
-                                onClick={() => handleOpenUpiApp("generic", "Installed UPI App")}
-                                className="w-full py-3 px-3.5 rounded-xl gold-gradient-btn font-black text-xs flex items-center justify-between shadow-lg active:scale-95 transition-all cursor-pointer group"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  handleOpenUpiApp("generic", "Navi / Supermoney / Other UPI");
+                                }}
+                                className="w-full py-2.5 px-3.5 rounded-xl gold-gradient-btn font-black text-xs flex items-center justify-between shadow-lg active:scale-95 transition-all cursor-pointer group"
                               >
-                                <div className="flex items-center gap-2.5">
-                                  <Smartphone className="w-4 h-4 text-[#16031E] shrink-0" />
+                                <div className="flex items-center gap-2">
+                                  <Zap className="w-3.5 h-3.5 text-[#16031E] shrink-0" />
                                   <div className="text-left">
                                     <span className="block font-black text-[#16031E] leading-tight text-xs">
-                                      Pay via Installed UPI App (₹{upiAmount})
+                                      Pay via Navi, Supermoney, CRED &amp; Others (₹{upiAmount})
                                     </span>
                                     <span className="block text-[9px] text-[#16031E]/80 font-medium">
-                                      Opens GPay, PhonePe, Paytm, CRED &amp; more on your phone
+                                      Fastest 1-Tap instant prefill on Navi, Supermoney &amp; others
                                     </span>
                                   </div>
                                 </div>
                                 <ExternalLink className="w-3.5 h-3.5 text-[#16031E] group-hover:translate-x-0.5 transition-transform shrink-0" />
                               </a>
-                              <span className="block text-[10px] text-white/50 text-center">
-                                Tip: 1-Tap payment automatically opens your phone's installed UPI app.
-                              </span>
 
                               {/* YouPI PG Configured Payee UPI Badge (Dynamic, Non-Hardcoded) */}
                               {upiId && (
@@ -1360,31 +1442,119 @@ export function PaymentSelectionModal({
                   {/* Native Installed UPI Apps Launcher */}
                   <div className="space-y-2.5">
                     <label className="text-[11px] uppercase tracking-wider font-bold text-white/70 flex items-center justify-between">
-                      <span>1-Tap Payment via Installed App:</span>
+                      <span>Choose Payment App:</span>
                       <span className="text-[#F5D061] text-[10px] font-mono">₹{upiAmount} Pre-filled</span>
                     </label>
 
+                    {/* 4 Major Apps Grid */}
+                    <div className="grid grid-cols-2 gap-2">
+                      {/* 1. Google Pay */}
+                      <a
+                        href={getUpiUrlForApp("gpay")}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleOpenUpiApp("gpay", "Google Pay");
+                        }}
+                        className="p-2.5 rounded-xl bg-[#1B2234] hover:bg-[#232C43] border border-[#4285F4]/40 hover:border-[#4285F4] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#4285F4] text-xs">
+                            G
+                          </div>
+                          <div className="text-left">
+                            <span className="block font-bold text-xs leading-tight">Google Pay</span>
+                            <span className="block text-[9px] text-white/50">Direct App</span>
+                          </div>
+                        </div>
+                        <ExternalLink className="w-3 h-3 text-[#4285F4] group-hover:translate-x-0.5 transition-transform" />
+                      </a>
+
+                      {/* 2. PhonePe */}
+                      <a
+                        href={getUpiUrlForApp("phonepe")}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleOpenUpiApp("phonepe", "PhonePe");
+                        }}
+                        className="p-2.5 rounded-xl bg-[#251036] hover:bg-[#34164D] border border-[#A855F7]/40 hover:border-[#A855F7] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#A855F7] text-xs">
+                            Pe
+                          </div>
+                          <div className="text-left">
+                            <span className="block font-bold text-xs leading-tight">PhonePe</span>
+                            <span className="block text-[9px] text-white/50">Direct App</span>
+                          </div>
+                        </div>
+                        <ExternalLink className="w-3 h-3 text-[#A855F7] group-hover:translate-x-0.5 transition-transform" />
+                      </a>
+
+                      {/* 3. Paytm */}
+                      <a
+                        href={getUpiUrlForApp("paytm")}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleOpenUpiApp("paytm", "Paytm");
+                        }}
+                        className="p-2.5 rounded-xl bg-[#08223B] hover:bg-[#0D2F52] border border-[#00BAF2]/40 hover:border-[#00BAF2] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#00BAF2] text-xs">
+                            ₹
+                          </div>
+                          <div className="text-left">
+                            <span className="block font-bold text-xs leading-tight">Paytm</span>
+                            <span className="block text-[9px] text-white/50">Direct App</span>
+                          </div>
+                        </div>
+                        <ExternalLink className="w-3 h-3 text-[#00BAF2] group-hover:translate-x-0.5 transition-transform" />
+                      </a>
+
+                      {/* 4. BHIM */}
+                      <a
+                        href={getUpiUrlForApp("bhim")}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleOpenUpiApp("bhim", "BHIM UPI");
+                        }}
+                        className="p-2.5 rounded-xl bg-[#132E27] hover:bg-[#1A3D34] border border-[#10B981]/40 hover:border-[#10B981] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#10B981] text-xs">
+                            B
+                          </div>
+                          <div className="text-left">
+                            <span className="block font-bold text-xs leading-tight">BHIM UPI</span>
+                            <span className="block text-[9px] text-white/50">Direct App</span>
+                          </div>
+                        </div>
+                        <ExternalLink className="w-3 h-3 text-[#10B981] group-hover:translate-x-0.5 transition-transform" />
+                      </a>
+                    </div>
+
+                    {/* 5. Navi / Supermoney / Other Apps (Universal 1-Tap) */}
                     <a
                       href={upiUri}
-                      onClick={() => handleOpenUpiApp("generic", "Installed UPI App")}
-                      className="w-full py-3.5 px-4 rounded-xl gold-gradient-btn font-black text-xs sm:text-sm flex items-center justify-between shadow-lg active:scale-95 transition-all cursor-pointer group"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        handleOpenUpiApp("generic", "Navi / Supermoney / Other UPI");
+                      }}
+                      className="w-full py-3 px-3.5 rounded-xl gold-gradient-btn font-black text-xs sm:text-sm flex items-center justify-between shadow-lg active:scale-95 transition-all cursor-pointer group"
                     >
                       <div className="flex items-center gap-2.5">
-                        <Smartphone className="w-4 h-4 text-[#16031E] shrink-0" />
+                        <Zap className="w-4 h-4 text-[#16031E] shrink-0" />
                         <div className="text-left">
                           <span className="block font-black text-[#16031E] leading-tight text-xs sm:text-sm">
-                            Pay via Installed UPI App (₹{upiAmount})
+                            Pay via Navi, Supermoney, CRED &amp; Others (₹{upiAmount})
                           </span>
                           <span className="block text-[10px] text-[#16031E]/80 font-medium">
-                            Opens GPay, PhonePe, Paytm, CRED &amp; more on your phone
+                            Fastest 1-Tap instant prefill on Navi, Supermoney &amp; others
                           </span>
                         </div>
                       </div>
                       <ExternalLink className="w-4 h-4 text-[#16031E] group-hover:translate-x-0.5 transition-transform shrink-0" />
                     </a>
-                    <span className="block text-[10px] text-white/50 text-center">
-                      Tip: If BHIM or Paytm shows a security check, use Option 2 (QR Code) above.
-                    </span>
 
                     {/* Active App Opening Notice */}
                     {openingApp && (
