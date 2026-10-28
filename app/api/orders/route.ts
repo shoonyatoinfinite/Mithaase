@@ -161,6 +161,7 @@ export async function POST(req: Request) {
       customerPhone: body.customer_phone,
       customerName: body.customer_name,
       orderNumber: body.order_number || body.orderNumber,
+      orderRef: body.order_ref || body.orderRef,
     });
 
     if (!result.success || !result.order) {

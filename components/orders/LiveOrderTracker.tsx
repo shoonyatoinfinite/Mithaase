@@ -723,7 +723,7 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
           </div>
 
           <div className="text-[11px] text-white/40">
-            Order Ref: <span className="font-mono text-white/80 font-bold">{order.order_number}</span>
+            Order Ref: <span className="font-mono text-[#F5D061] font-bold">{order.order_ref || order.order_number}</span>
           </div>
         </div>
       </div>

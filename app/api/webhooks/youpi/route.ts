@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { sql } from "@/lib/neon/db";
 import { broadcastRealtimeEvent } from "@/lib/events/broadcast";
 import { serverCache } from "@/lib/cache/server-cache";
+import { expireStaleAttempts, markVerified } from "@/lib/payments";
 
 export const dynamic = "force-dynamic";
 
@@ -54,11 +55,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Database unavailable" }, { status: 503 });
     }
 
+    expireStaleAttempts().catch(() => {});
+
     // 2. Query order directly from Neon PostgreSQL
     const orderRows = await sql.query(
-      `SELECT id, order_number, total_amount, payment_status, order_status 
+      `SELECT id, order_number, order_ref, total_amount, payment_status, order_status 
        FROM orders 
-       WHERE id = $1 OR order_number = $1 
+       WHERE id = $1 OR order_number = $1 OR order_ref = $1
        LIMIT 1;`,
       [orderId]
     );
@@ -103,39 +106,59 @@ export async function POST(req: Request) {
 
     // 5. Idempotent state transition (only updates if payment_status is not already 'paid')
     if (event === "SUCCESS") {
-      const cleanUtr = utr ? String(utr).trim().toUpperCase() : null;
-      const updateRes = await sql.query(
-        `UPDATE orders SET
-           payment_status = 'paid',
-           gateway_transaction_id = COALESCE($1, gateway_transaction_id),
-           upi_reference = COALESCE($2, upi_reference),
-           order_status = CASE WHEN order_status = 'pending_confirmation' THEN 'confirmed' ELSE order_status END,
-           updated_at = NOW()
-         WHERE (id = $3 OR order_number = $3) AND payment_status <> 'paid'
-         RETURNING id, order_number, order_status, payment_status, total_amount;`,
-        [paymentId || null, cleanUtr, orderId]
+      const cleanUtr = utr ? String(utr).trim().toUpperCase() : paymentId;
+      const finalAmountReceived = Number(amount ?? order.total_amount);
+
+      // Attempt strict payment tracking verification
+      const vRes = await markVerified({
+        youpiPaymentId: paymentId,
+        attemptRef: orderId,
+        amountReceived: finalAmountReceived,
+        upiTxnRef: cleanUtr,
+        payerVpaRaw: payload.payerVpa || payload.customerVpa || null,
+        source: "youpi_webhook",
+        raw: payload,
+      });
+
+      if (vRes?.status === "mismatch") {
+        return NextResponse.json(
+          { error: "Amount mismatch detected on payment attempt" },
+          { status: 400 }
+        );
+      }
+
+      // If legacy in-flight payment (vRes === null, no payments row found)
+      if (!vRes) {
+        await sql.query(
+          `UPDATE orders SET
+             payment_status = 'paid',
+             gateway_transaction_id = COALESCE($1, gateway_transaction_id),
+             upi_reference = COALESCE($2, upi_reference),
+             order_status = CASE WHEN order_status = 'pending_confirmation' THEN 'confirmed' ELSE order_status END,
+             updated_at = NOW()
+           WHERE (id = $3 OR order_number = $3) AND payment_status <> 'paid';`,
+          [paymentId || null, cleanUtr, orderId]
+        );
+      }
+
+      // Record status history if not already recorded
+      await sql.query(
+        `INSERT INTO order_status_history (id, order_id, previous_status, new_status, changed_by, note, created_at)
+         VALUES ($1, $2, $3, $4, 'YouPI Webhook', $5, NOW());`,
+        [
+          crypto.randomUUID(),
+          order.id,
+          order.order_status,
+          order.order_status === "pending_confirmation" ? "confirmed" : order.order_status,
+          `Instant UPI Auto-Verification via YouPI Gateway (UTR: ${cleanUtr})`,
+        ]
       );
 
-      if (updateRes && updateRes.length > 0) {
-        // Record status history
-        await sql.query(
-          `INSERT INTO order_status_history (id, order_id, previous_status, new_status, changed_by, note, created_at)
-           VALUES ($1, $2, $3, $4, 'YouPI Webhook', $5, NOW());`,
-          [
-            crypto.randomUUID(),
-            order.id,
-            order.order_status,
-            order.order_status === "pending_confirmation" ? "confirmed" : order.order_status,
-            `Instant UPI Auto-Verification via YouPI Gateway (UTR: ${cleanUtr || paymentId})`,
-          ]
-        );
+      serverCache.invalidateTag("orders");
 
-        serverCache.invalidateTag("orders");
-
-        const updatedOrder = await sql.query(`SELECT * FROM orders WHERE id = $1 LIMIT 1;`, [order.id]);
-        if (updatedOrder && updatedOrder.length > 0) {
-          broadcastRealtimeEvent("order_status_updated", updatedOrder[0]);
-        }
+      const updatedOrder = await sql.query(`SELECT * FROM orders WHERE id = $1 LIMIT 1;`, [order.id]);
+      if (updatedOrder && updatedOrder.length > 0) {
+        broadcastRealtimeEvent("order_status_updated", updatedOrder[0]);
       }
     }
 

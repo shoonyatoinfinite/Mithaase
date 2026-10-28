@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sandboxSessions } from "../create/route";
+import { expireStaleAttempts, markVerified } from "@/lib/payments";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,9 @@ export async function GET(req: Request) {
     if (!paymentId) {
       return NextResponse.json({ error: "Missing paymentId parameter" }, { status: 400 });
     }
+
+    // Lazily expire stale attempts older than expires_at
+    expireStaleAttempts().catch(() => {});
 
     const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
     const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
@@ -34,8 +38,57 @@ export async function GET(req: Request) {
           if (normalizedStatus === "COMPLETED" || normalizedStatus === "PAID") {
             normalizedStatus = "SUCCESS";
           }
+
+          if (normalizedStatus === "SUCCESS") {
+            const utr = data.utr || data.bankRrn || `YOUPI-${paymentId}`;
+            const amountReceived = Number(data.amount || 0);
+
+            // Server-side authoritative verification & exact amount check
+            const vRes = await markVerified({
+              youpiPaymentId: data.paymentId || data.id || paymentId,
+              attemptRef: data.orderId,
+              amountReceived,
+              upiTxnRef: utr,
+              payerVpaRaw: data.payerVpa || data.customerVpa || null,
+              source: "youpi_poll",
+              raw: data,
+            });
+
+            if (vRes?.status === "mismatch") {
+              return NextResponse.json({
+                status: "FAILED",
+                error: "Amount mismatch: Payment received does not match expected amount.",
+                mismatch: true,
+                paymentId,
+                mode: "live",
+              });
+            }
+
+            // In-flight safety fallback: if no payments row matches (started before deploy), run legacy update
+            if (!vRes && (data.orderId || paymentId)) {
+              const targetRef = data.orderId || paymentId;
+              try {
+                const { sql: dbSql } = await import("@/lib/neon/db");
+                if (dbSql) {
+                  await dbSql.query(
+                    `UPDATE orders SET
+                       payment_status = 'paid',
+                       gateway_transaction_id = COALESCE($1, gateway_transaction_id),
+                       upi_reference = COALESCE($2, upi_reference),
+                       order_status = CASE WHEN order_status = 'pending_confirmation' THEN 'confirmed' ELSE order_status END,
+                       updated_at = NOW()
+                     WHERE (id = $3 OR order_number = $3) AND payment_status <> 'paid';`,
+                    [paymentId || null, utr, targetRef]
+                  );
+                }
+              } catch (legacyErr) {
+                console.warn("[YouPI Status] Legacy fallback order update warning:", legacyErr);
+              }
+            }
+          }
+
           return NextResponse.json({
-            status: normalizedStatus, // Normalized to "SUCCESS" for auto-confirmation
+            status: normalizedStatus,
             rawStatus: data.status,
             paymentId: data.paymentId || data.id,
             orderId: data.orderId,
@@ -45,7 +98,7 @@ export async function GET(req: Request) {
           });
         }
       } catch (err) {
-        // Fall through to check memory store if gateway is offline
+        // Fall through to check sandbox store if gateway is offline
       }
     }
 
@@ -57,10 +110,34 @@ export async function GET(req: Request) {
         sbx.status = "EXPIRED";
       }
 
+      if (sbx.status === "SUCCESS") {
+        const utr = sbx.utr || `SBX-${sbx.paymentId}`;
+        const vRes = await markVerified({
+          youpiPaymentId: sbx.paymentId,
+          attemptRef: sbx.attemptRef,
+          amountReceived: sbx.amount,
+          upiTxnRef: utr,
+          payerVpaRaw: "sandbox@upi",
+          source: "youpi_poll",
+          raw: sbx,
+        });
+
+        if (vRes?.status === "mismatch") {
+          return NextResponse.json({
+            status: "FAILED",
+            error: "Amount mismatch",
+            mismatch: true,
+            mode: "sandbox",
+          });
+        }
+      }
+
       return NextResponse.json({
         status: sbx.status,
         paymentId: sbx.paymentId,
         orderId: sbx.orderId,
+        orderRef: sbx.orderRef,
+        attemptRef: sbx.attemptRef,
         utr: sbx.utr,
         amount: sbx.amount,
         mode: "sandbox",
@@ -80,7 +157,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { paymentId, status = "SUCCESS", utr } = body;
+    const { paymentId, status = "SUCCESS", utr, amount, attemptRef } = body;
 
     if (!paymentId) {
       return NextResponse.json({ error: "Missing paymentId" }, { status: 400 });
@@ -94,6 +171,27 @@ export async function POST(req: Request) {
       );
     }
 
+    expireStaleAttempts().catch(() => {});
+
+    if (status === "SUCCESS") {
+      const vRes = await markVerified({
+        youpiPaymentId: paymentId,
+        attemptRef,
+        amountReceived: Number(amount) || 0,
+        upiTxnRef: userUtr,
+        payerVpaRaw: body.payerVpa || null,
+        source: "youpi_poll",
+        raw: body,
+      });
+
+      if (vRes?.status === "mismatch") {
+        return NextResponse.json(
+          { error: "Amount mismatch detected. Payment cannot be marked as paid." },
+          { status: 400 }
+        );
+      }
+    }
+
     const sbx = sandboxSessions.get(paymentId);
     if (sbx) {
       sbx.status = status;
@@ -103,7 +201,9 @@ export async function POST(req: Request) {
       sandboxSessions.set(paymentId, {
         paymentId,
         orderId: `ord-${Date.now()}`,
-        amount: Number(body.amount) || 0,
+        orderRef: `MTH-SBX-${Date.now().toString().slice(-4)}`,
+        attemptRef: attemptRef || `ATT-${Date.now()}`,
+        amount: Number(amount) || 0,
         customerName: "Customer",
         customerPhone: "",
         status: status as any,

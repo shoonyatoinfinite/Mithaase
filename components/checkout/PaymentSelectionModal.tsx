@@ -26,8 +26,47 @@ import {
   FileText,
   XCircle,
   ArrowLeft,
+  Download,
 } from "lucide-react";
 import { compressImage, formatBytes } from "@/lib/utils/image-compression";
+
+// ===== UPI Experiment & Intent Configurations (Module Level) =====
+const IS_PERSONAL_VPA = process.env.NEXT_PUBLIC_UPI_IS_PERSONAL !== "false"; // default true
+const ENV_FLAGS = {
+  // independent override so SKIP_STRICT_AMOUNT="false" works for a control test
+  skipStrictAmount:
+    process.env.NEXT_PUBLIC_UPI_SKIP_STRICT_AMOUNT !== undefined
+      ? process.env.NEXT_PUBLIC_UPI_SKIP_STRICT_AMOUNT === "true"
+      : IS_PERSONAL_VPA,
+  nativeSchemes: process.env.NEXT_PUBLIC_UPI_EXP_NATIVE_SCHEMES === "true",
+  packageIntent: process.env.NEXT_PUBLIC_UPI_EXP_PACKAGE_INTENT === "true",
+  mc0000: process.env.NEXT_PUBLIC_UPI_EXP_MC0000 === "true",
+};
+type Flags = typeof ENV_FLAGS;
+type ExpName = "env" | "default" | "amount" | "package" | "native" | "mc0000";
+const EXP_NAMES = new Set<ExpName>(["default", "amount", "package", "native", "mc0000"]);
+
+function resolveFlags(exp: ExpName): Flags {
+  const base = { skipStrictAmount: true, nativeSchemes: false, packageIntent: false, mc0000: false };
+  switch (exp) {
+    case "default": return base;                                          // generic upi://pay, am skipped for strict apps
+    case "amount":  return { ...base, skipStrictAmount: false };          // control: am included for all apps
+    case "package": return { ...base, packageIntent: true };              // Android scheme=upi + package
+    case "native":  return { ...base, nativeSchemes: true };              // tez:// phonepe:// paytmmp://
+    case "mc0000":  return { ...base, mc0000: true };                     // adds mc=0000
+    default:        return ENV_FLAGS;                                     // "env"
+  }
+}
+
+const STORE_NAME = "Mithaase"; // real store name, never a generic placeholder
+const STRICT_APPS = new Set(["gpay", "googlepay", "phonepe", "paytm", "bhim"]);
+const PKG: Record<string, string> = {
+  gpay: "com.google.android.apps.nbu.paisa.user",
+  googlepay: "com.google.android.apps.nbu.paisa.user",
+  phonepe: "com.phonepe.app",
+  paytm: "net.one97.paytm",
+  bhim: "in.org.npci.upiapp",
+};
 
 interface PaymentSelectionModalProps {
   isOpen: boolean;
@@ -43,6 +82,7 @@ interface PaymentSelectionModalProps {
     upiReference?: string;
     upiScreenshot?: string;
     orderNumber?: string;
+    orderRef?: string;
   }) => Promise<void>;
 }
 
@@ -80,6 +120,8 @@ export function PaymentSelectionModal({
     mode: "live" | "sandbox";
     checkoutUrl?: string | null;
     orderId: string;
+    orderRef?: string;
+    attemptRef?: string;
     payeeVpa?: string;
     payeeName?: string;
   } | null>(null);
@@ -192,6 +234,16 @@ export function PaymentSelectionModal({
     .replace(/[^0-9]/g, "");
   const storePhone = rawStorePhone.length >= 10 ? rawStorePhone.slice(-10) : "";
 
+  // Runtime experiment switcher via ?upiexp= URL param (default, amount, package, native, mc0000)
+  const [activeExp, setActiveExp] = useState<ExpName>("env");
+  useEffect(() => {
+    try {
+      const v = new URLSearchParams(window.location.search).get("upiexp") as ExpName | null;
+      if (v && EXP_NAMES.has(v)) setActiveExp(v);
+    } catch { }
+  }, []);
+  const flags = resolveFlags(activeExp);
+
   // UPI ID dynamically resolved strictly from YouPI-PG gateway session or store configuration (no hardcoded VPAs)
   const upiId = (
     youpiSession?.payeeVpa ||
@@ -206,89 +258,146 @@ export function PaymentSelectionModal({
     process.env.NEXT_PUBLIC_STORE_UPI_NAME ||
     "Shree Shyam Sweets"
   ).trim();
-  // Exact 2 decimal places per NPCI specification (e.g. "150.00")
+
+  const orderRef = (youpiSession?.orderRef || "").trim();
+  const attemptRef = (youpiSession?.attemptRef || "").trim();
+
+  const cleanUpiId = (upiId || "").trim();            // CRITICAL: do NOT URL-encode '@'
+  const cleanOrderRef = (orderRef || "").trim();
+  const cleanAttemptRef = (attemptRef || "").trim();
   const formattedAmount = upiAmount.toFixed(2);
-  // Ultra-clean minimal URI containing ONLY payee UPI ID (pa) and Amount (am)
-  // as requested, removing tn and extraneous params that trigger strict parser rejections in BHIM/GPay/Paytm
-  const { upiParams, upiUri } = useMemo(() => {
-    const params = `pa=${upiId}&am=${formattedAmount}`;
-    return {
-      upiParams: params,
-      upiUri: `upi://pay?${params}`,
-    };
-  }, [upiId, formattedAmount]);
 
-  // Dedicated app scheme / intent URLs with verified NPCI and vendor protocols
-  const getUpiUrlForApp = (app: "gpay" | "phonepe" | "paytm" | "bhim" | "generic") => {
-    const isAndroid = typeof navigator !== "undefined" && /android/i.test(navigator.userAgent);
-    const isIos = typeof navigator !== "undefined" && /iphone|ipad|ipod/i.test(navigator.userAgent);
-    const params = upiParams;
+  const isUpiSessionReady = Boolean(
+    cleanUpiId && cleanOrderRef && cleanAttemptRef && Number(formattedAmount) > 0
+  );
 
-    switch (app) {
-      case "gpay":
-        if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end`;
-        }
-        if (isIos) {
-          return `gpay://upi/pay?${params}`;
-        }
-        return `tez://upi/pay?${params}`;
-      case "phonepe":
-        if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=com.phonepe.app;end`;
-        }
-        return `phonepe://pay?${params}`;
-      case "paytm":
-        if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=net.one97.paytm;end`;
-        }
-        return `paytmmp://pay?${params}`;
-      case "bhim":
-        if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=in.org.npci.upiapp;end`;
-        }
-        return `upi://pay?${params}`;
-      default:
-        return `upi://pay?${params}`;
-    }
+  const skipAmountFor = (app: string) =>
+    flags.skipStrictAmount && STRICT_APPS.has(app.toLowerCase().trim());
+
+  const buildUpiQuery = (includeAmount: boolean): string => {
+    const parts = [
+      `pa=${cleanUpiId}`,
+      `pn=${encodeURIComponent(STORE_NAME)}`,
+      `cu=INR`,
+      `tr=${encodeURIComponent(cleanAttemptRef)}`,              // unique per payment attempt
+      `tn=${encodeURIComponent(`Order ${cleanOrderRef}`)}`,
+    ];
+    if (includeAmount) parts.push(`am=${formattedAmount}`);
+    if (flags.mc0000) parts.push(`mc=0000`);
+    return parts.join("&");
   };
 
-  const handleOpenUpiApp = (app: "gpay" | "phonepe" | "paytm" | "bhim" | "generic", appName: string) => {
-    // Copy store UPI ID / phone to clipboard as safety backup for customer
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard) {
-        navigator.clipboard.writeText(upiId);
+  const isIOS = () =>
+    typeof navigator !== "undefined" && /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+  // Precedence: nativeSchemes > packageIntent > generic upi://pay
+  const getUpiUrlForApp = (appName: string): string => {
+    const app = appName.toLowerCase().trim();
+    const q = buildUpiQuery(!skipAmountFor(app));
+    const ios = isIOS();
+
+    if (flags.nativeSchemes) {
+      switch (app) {
+        case "gpay":
+        case "googlepay":
+          return ios
+            ? `tez://upi/pay?${q}`
+            : `intent://upi/pay?${q}#Intent;scheme=tez;package=com.google.android.apps.nbu.paisa.user;end`;
+        case "phonepe":
+          return ios
+            ? `phonepe://pay?${q}`
+            : `intent://pay?${q}#Intent;scheme=phonepe;package=com.phonepe.app;end`;
+        case "paytm":
+          return ios
+            ? `paytmmp://pay?${q}`
+            : `intent://pay?${q}#Intent;scheme=paytmmp;package=net.one97.paytm;end`;
       }
+    }
+
+    if (flags.packageIntent && !ios && PKG[app]) {
+      return `intent://pay?${q}#Intent;scheme=upi;package=${PKG[app]};end`;
+    }
+
+    return `upi://pay?${q}`; // generic chooser: Navi, Supermoney, BHIM, default mode
+  };
+
+  const upiUri = useMemo(() => {
+    if (isUpiSessionReady) {
+      return `upi://pay?${buildUpiQuery(true)}`;
+    }
+    if (cleanUpiId) {
+      return `upi://pay?pa=${cleanUpiId}&pn=${encodeURIComponent(STORE_NAME)}&cu=INR&am=${formattedAmount}`;
+    }
+    return "";
+  }, [isUpiSessionReady, cleanUpiId, cleanOrderRef, cleanAttemptRef, formattedAmount, flags.mc0000]);
+
+  const sendEvent = (event: "launch_clicked" | "app_open_fallback", app?: string) => {
+    if (!cleanAttemptRef) return;
+    try {
+      navigator.sendBeacon?.(
+        "/api/payment/event",
+        new Blob(
+          [
+            JSON.stringify({
+              attemptRef: cleanAttemptRef,
+              event,
+              app,
+              exp: activeExp,
+              ua: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 160) : "",
+            }),
+          ],
+          { type: "application/json" }
+        )
+      );
     } catch { }
+  };
+
+  const launchWithFallback = (targetUrl: string, fallbackUrl: string, app: string) => {
+    let handled = false;
+    const cleanup = () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur", cancel);
+      window.removeEventListener("pagehide", cancel);
+    };
+    const cancel = () => {
+      handled = true;
+      clearTimeout(timer);
+      cleanup();
+    };
+    const onVisibility = () => {
+      if (document.hidden) cancel();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", cancel);
+    window.addEventListener("pagehide", cancel);
+
+    const timer = setTimeout(() => {
+      cleanup();
+      if (!handled && !document.hidden && fallbackUrl !== targetUrl) {
+        sendEvent("app_open_fallback", app);
+        window.location.href = fallbackUrl;
+      }
+    }, 3000);
+
+    window.location.href = targetUrl; // synchronous, directly inside the click handler
+  };
+
+  const handleOpenUpiApp = (appName: string, legacyLabel?: string) => {
+    if (!isUpiSessionReady) return;
+    const app = appName.toLowerCase().trim();
+    setOpeningApp(legacyLabel || appName);
+
+    // fire-and-forget, NEVER await before the redirect
+    try {
+      const toCopy = skipAmountFor(app) ? formattedAmount : cleanUpiId;
+      navigator.clipboard?.writeText(toCopy).catch(() => { });
+    } catch { }
+    sendEvent("launch_clicked", app);
 
     const targetUrl = getUpiUrlForApp(app);
-    setOpeningApp(appName);
-
-    if (typeof window !== "undefined") {
-      // 1. Direct intent/scheme navigation
-      try {
-        window.location.assign(targetUrl);
-      } catch {
-        window.location.href = targetUrl;
-      }
-
-      // 2. Failsafe timeout: if specific app intent doesn't launch (e.g. app not installed or blocked),
-      // smoothly fallback to universal upi:// scheme after a safe delay (3500ms) without cutting off target app launch
-      const fallbackTimer = setTimeout(() => {
-        try {
-          window.location.href = upiUri;
-        } catch (e) {
-          console.warn("Fallback navigation error:", e);
-        }
-      }, 3500);
-
-      // Cancel fallback if window loses focus (meaning the target UPI app opened successfully)
-      const onBlur = () => {
-        clearTimeout(fallbackTimer);
-        window.removeEventListener("blur", onBlur);
-      };
-      window.addEventListener("blur", onBlur, { once: true });
-    }
+    const fallbackUrl = `upi://pay?${buildUpiQuery(!skipAmountFor(app))}`;
+    launchWithFallback(targetUrl, fallbackUrl, app);
   };
 
   // Immediate confirmation for Instant Pay (Customer clicks "I Have Paid / Verify Now")
@@ -315,6 +424,8 @@ export function PaymentSelectionModal({
         paymentMethod: "upi",
         upiReference: utrToUse,
         upiScreenshot: finalScreenshotUrl || undefined,
+        orderNumber: youpiSession?.orderId,
+        orderRef: youpiSession?.orderRef,
       });
     } catch (err: any) {
       setValidationError(err.message || "Failed to submit order for admin confirmation.");
@@ -352,6 +463,8 @@ export function PaymentSelectionModal({
         mode: data.mode,
         checkoutUrl: data.checkoutUrl,
         orderId: data.orderId,
+        orderRef: data.orderRef,
+        attemptRef: data.attemptRef,
         payeeVpa: data.payeeVpa,
         payeeName: data.payeeName,
       });
@@ -433,6 +546,7 @@ export function PaymentSelectionModal({
               paymentMethod: "upi",
               upiReference: fullRef,
               orderNumber: youpiSession.orderId,
+              orderRef: youpiSession.orderRef,
             });
           }, 1200);
         } else if (isMounted && data.status === "FAILED") {
@@ -668,9 +782,16 @@ export function PaymentSelectionModal({
         {/* Order Summary Strip */}
         <div className="px-5 sm:px-6 py-3 bg-[#130119] border-b border-white/5 flex items-center justify-between text-xs text-[#D3BEB0]">
           <div>
-            <span>Delivery for </span>
-            <strong className="text-white font-semibold">{customerName}</strong>
-            <span className="opacity-70"> ({locality})</span>
+            <div>
+              <span>Delivery for </span>
+              <strong className="text-white font-semibold">{customerName}</strong>
+              <span className="opacity-70"> ({locality})</span>
+            </div>
+            {cleanOrderRef && (
+              <div className="text-[11px] text-[#F5D061] mt-0.5 font-medium">
+                Order Ref: <span className="font-mono font-bold text-white bg-white/10 px-1.5 py-0.5 rounded">{cleanOrderRef}</span>
+              </div>
+            )}
           </div>
           <div className="text-right">
             <span className="text-white/50 text-[11px] block">Payable Amount</span>
@@ -1044,20 +1165,53 @@ export function PaymentSelectionModal({
                                 Scan with Any UPI App
                               </span>
                               <span className="text-[10px] text-white/50">Prefilled amount: ₹{upiAmount}</span>
+
+                              {/* Download QR Button & Gallery Hint */}
+                              {qrDataUrl && (
+                                <div className="mt-2 flex flex-col items-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const a = document.createElement("a");
+                                      a.href = qrDataUrl;
+                                      a.download = `Mithaase-QR-${cleanOrderRef || "order"}.png`;
+                                      a.click();
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-[#F5D061] text-[11px] font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                    <span>Download QR</span>
+                                  </button>
+                                  <span className="text-[9px] text-white/50 mt-1">
+                                    In your UPI app use &lsquo;Scan from gallery&rsquo;
+                                  </span>
+                                </div>
+                              )}
                             </div>
 
                             {/* App Launchers: 4 Major Apps + Fast Universal (Navi / Supermoney) */}
                             <div className="space-y-2">
+                              {/* Session Guard Warning */}
+                              {!isUpiSessionReady && (
+                                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center gap-2">
+                                  <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" />
+                                  <span>Payment session not ready, please retry</span>
+                                </div>
+                              )}
+
                               {/* 4 Major Apps Grid */}
                               <div className="grid grid-cols-2 gap-2">
                                 {/* 1. Google Pay */}
                                 <a
-                                  href={getUpiUrlForApp("gpay")}
+                                  href={isUpiSessionReady ? getUpiUrlForApp("gpay") : "#"}
                                   onClick={(e) => {
                                     e.preventDefault();
                                     handleOpenUpiApp("gpay", "Google Pay");
                                   }}
-                                  className="p-2.5 rounded-xl bg-[#1B2234] hover:bg-[#232C43] border border-[#4285F4]/40 hover:border-[#4285F4] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                                  aria-disabled={!isUpiSessionReady}
+                                  className={`p-2.5 rounded-xl bg-[#1B2234] hover:bg-[#232C43] border border-[#4285F4]/40 hover:border-[#4285F4] text-white flex items-center justify-between transition-all shadow-md group ${
+                                    !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
+                                  }`}
                                 >
                                   <div className="flex items-center gap-2">
                                     <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#4285F4] text-xs">
@@ -1073,12 +1227,15 @@ export function PaymentSelectionModal({
 
                                 {/* 2. PhonePe */}
                                 <a
-                                  href={getUpiUrlForApp("phonepe")}
+                                  href={isUpiSessionReady ? getUpiUrlForApp("phonepe") : "#"}
                                   onClick={(e) => {
                                     e.preventDefault();
                                     handleOpenUpiApp("phonepe", "PhonePe");
                                   }}
-                                  className="p-2.5 rounded-xl bg-[#251036] hover:bg-[#34164D] border border-[#A855F7]/40 hover:border-[#A855F7] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                                  aria-disabled={!isUpiSessionReady}
+                                  className={`p-2.5 rounded-xl bg-[#251036] hover:bg-[#34164D] border border-[#A855F7]/40 hover:border-[#A855F7] text-white flex items-center justify-between transition-all shadow-md group ${
+                                    !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
+                                  }`}
                                 >
                                   <div className="flex items-center gap-2">
                                     <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#A855F7] text-xs">
@@ -1094,12 +1251,15 @@ export function PaymentSelectionModal({
 
                                 {/* 3. Paytm */}
                                 <a
-                                  href={getUpiUrlForApp("paytm")}
+                                  href={isUpiSessionReady ? getUpiUrlForApp("paytm") : "#"}
                                   onClick={(e) => {
                                     e.preventDefault();
                                     handleOpenUpiApp("paytm", "Paytm");
                                   }}
-                                  className="p-2.5 rounded-xl bg-[#08223B] hover:bg-[#0D2F52] border border-[#00BAF2]/40 hover:border-[#00BAF2] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                                  aria-disabled={!isUpiSessionReady}
+                                  className={`p-2.5 rounded-xl bg-[#08223B] hover:bg-[#0D2F52] border border-[#00BAF2]/40 hover:border-[#00BAF2] text-white flex items-center justify-between transition-all shadow-md group ${
+                                    !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
+                                  }`}
                                 >
                                   <div className="flex items-center gap-2">
                                     <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#00BAF2] text-xs">
@@ -1115,12 +1275,15 @@ export function PaymentSelectionModal({
 
                                 {/* 4. BHIM */}
                                 <a
-                                  href={getUpiUrlForApp("bhim")}
+                                  href={isUpiSessionReady ? getUpiUrlForApp("bhim") : "#"}
                                   onClick={(e) => {
                                     e.preventDefault();
                                     handleOpenUpiApp("bhim", "BHIM UPI");
                                   }}
-                                  className="p-2.5 rounded-xl bg-[#132E27] hover:bg-[#1A3D34] border border-[#10B981]/40 hover:border-[#10B981] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                                  aria-disabled={!isUpiSessionReady}
+                                  className={`p-2.5 rounded-xl bg-[#132E27] hover:bg-[#1A3D34] border border-[#10B981]/40 hover:border-[#10B981] text-white flex items-center justify-between transition-all shadow-md group ${
+                                    !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
+                                  }`}
                                 >
                                   <div className="flex items-center gap-2">
                                     <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#10B981] text-xs">
@@ -1135,14 +1298,24 @@ export function PaymentSelectionModal({
                                 </a>
                               </div>
 
+                              {/* Strict Apps Amount Skipping Helper */}
+                              {flags.skipStrictAmount && (
+                                <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 text-center font-medium leading-tight">
+                                  Amount ₹{formattedAmount} copied, enter exactly ₹{formattedAmount}. Please send the exact amount (verification needs an exact match).
+                                </div>
+                              )}
+
                               {/* 5. Navi / Supermoney / Other Apps (Universal 1-Tap) */}
                               <a
-                                href={upiUri}
+                                href={upiUri || "#"}
                                 onClick={(e) => {
                                   e.preventDefault();
                                   handleOpenUpiApp("generic", "Navi / Supermoney / Other UPI");
                                 }}
-                                className="w-full py-2.5 px-3.5 rounded-xl gold-gradient-btn font-black text-xs flex items-center justify-between shadow-lg active:scale-95 transition-all cursor-pointer group"
+                                aria-disabled={!isUpiSessionReady}
+                                className={`w-full py-2.5 px-3.5 rounded-xl gold-gradient-btn font-black text-xs flex items-center justify-between shadow-lg transition-all group ${
+                                  !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
+                                }`}
                               >
                                 <div className="flex items-center gap-2">
                                   <Zap className="w-3.5 h-3.5 text-[#16031E] shrink-0" />
@@ -1157,6 +1330,11 @@ export function PaymentSelectionModal({
                                 </div>
                                 <ExternalLink className="w-3.5 h-3.5 text-[#16031E] group-hover:translate-x-0.5 transition-transform shrink-0" />
                               </a>
+
+                              {/* Helper Text */}
+                              <p className="text-[10px] text-white/50 text-center pt-1">
+                                If the app doesn&apos;t open or declines, use the QR option
+                              </p>
 
                               {/* YouPI PG Configured Payee UPI Badge (Dynamic, Non-Hardcoded) */}
                               {upiId && (
@@ -1446,16 +1624,27 @@ export function PaymentSelectionModal({
                       <span className="text-[#F5D061] text-[10px] font-mono">₹{upiAmount} Pre-filled</span>
                     </label>
 
+                    {/* Session Guard Warning */}
+                    {!isUpiSessionReady && (
+                      <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" />
+                        <span>Payment session not ready, please retry</span>
+                      </div>
+                    )}
+
                     {/* 4 Major Apps Grid */}
                     <div className="grid grid-cols-2 gap-2">
                       {/* 1. Google Pay */}
                       <a
-                        href={getUpiUrlForApp("gpay")}
+                        href={isUpiSessionReady ? getUpiUrlForApp("gpay") : "#"}
                         onClick={(e) => {
                           e.preventDefault();
                           handleOpenUpiApp("gpay", "Google Pay");
                         }}
-                        className="p-2.5 rounded-xl bg-[#1B2234] hover:bg-[#232C43] border border-[#4285F4]/40 hover:border-[#4285F4] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                        aria-disabled={!isUpiSessionReady}
+                        className={`p-2.5 rounded-xl bg-[#1B2234] hover:bg-[#232C43] border border-[#4285F4]/40 hover:border-[#4285F4] text-white flex items-center justify-between transition-all shadow-md group ${
+                          !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
+                        }`}
                       >
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#4285F4] text-xs">
@@ -1471,12 +1660,15 @@ export function PaymentSelectionModal({
 
                       {/* 2. PhonePe */}
                       <a
-                        href={getUpiUrlForApp("phonepe")}
+                        href={isUpiSessionReady ? getUpiUrlForApp("phonepe") : "#"}
                         onClick={(e) => {
                           e.preventDefault();
                           handleOpenUpiApp("phonepe", "PhonePe");
                         }}
-                        className="p-2.5 rounded-xl bg-[#251036] hover:bg-[#34164D] border border-[#A855F7]/40 hover:border-[#A855F7] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                        aria-disabled={!isUpiSessionReady}
+                        className={`p-2.5 rounded-xl bg-[#251036] hover:bg-[#34164D] border border-[#A855F7]/40 hover:border-[#A855F7] text-white flex items-center justify-between transition-all shadow-md group ${
+                          !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
+                        }`}
                       >
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#A855F7] text-xs">
@@ -1492,12 +1684,15 @@ export function PaymentSelectionModal({
 
                       {/* 3. Paytm */}
                       <a
-                        href={getUpiUrlForApp("paytm")}
+                        href={isUpiSessionReady ? getUpiUrlForApp("paytm") : "#"}
                         onClick={(e) => {
                           e.preventDefault();
                           handleOpenUpiApp("paytm", "Paytm");
                         }}
-                        className="p-2.5 rounded-xl bg-[#08223B] hover:bg-[#0D2F52] border border-[#00BAF2]/40 hover:border-[#00BAF2] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                        aria-disabled={!isUpiSessionReady}
+                        className={`p-2.5 rounded-xl bg-[#08223B] hover:bg-[#0D2F52] border border-[#00BAF2]/40 hover:border-[#00BAF2] text-white flex items-center justify-between transition-all shadow-md group ${
+                          !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
+                        }`}
                       >
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#00BAF2] text-xs">
@@ -1513,12 +1708,15 @@ export function PaymentSelectionModal({
 
                       {/* 4. BHIM */}
                       <a
-                        href={getUpiUrlForApp("bhim")}
+                        href={isUpiSessionReady ? getUpiUrlForApp("bhim") : "#"}
                         onClick={(e) => {
                           e.preventDefault();
                           handleOpenUpiApp("bhim", "BHIM UPI");
                         }}
-                        className="p-2.5 rounded-xl bg-[#132E27] hover:bg-[#1A3D34] border border-[#10B981]/40 hover:border-[#10B981] text-white flex items-center justify-between transition-all active:scale-95 shadow-md cursor-pointer group"
+                        aria-disabled={!isUpiSessionReady}
+                        className={`p-2.5 rounded-xl bg-[#132E27] hover:bg-[#1A3D34] border border-[#10B981]/40 hover:border-[#10B981] text-white flex items-center justify-between transition-all shadow-md group ${
+                          !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
+                        }`}
                       >
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#10B981] text-xs">
@@ -1533,14 +1731,24 @@ export function PaymentSelectionModal({
                       </a>
                     </div>
 
+                    {/* Strict Apps Amount Skipping Helper */}
+                    {flags.skipStrictAmount && (
+                      <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 text-center font-medium leading-tight">
+                        Amount ₹{formattedAmount} copied, enter exactly ₹{formattedAmount}. Please send the exact amount (verification needs an exact match).
+                      </div>
+                    )}
+
                     {/* 5. Navi / Supermoney / Other Apps (Universal 1-Tap) */}
                     <a
-                      href={upiUri}
+                      href={upiUri || "#"}
                       onClick={(e) => {
                         e.preventDefault();
                         handleOpenUpiApp("generic", "Navi / Supermoney / Other UPI");
                       }}
-                      className="w-full py-3 px-3.5 rounded-xl gold-gradient-btn font-black text-xs sm:text-sm flex items-center justify-between shadow-lg active:scale-95 transition-all cursor-pointer group"
+                      aria-disabled={!isUpiSessionReady}
+                      className={`w-full py-3 px-3.5 rounded-xl gold-gradient-btn font-black text-xs sm:text-sm flex items-center justify-between shadow-lg transition-all group ${
+                        !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
+                      }`}
                     >
                       <div className="flex items-center gap-2.5">
                         <Zap className="w-4 h-4 text-[#16031E] shrink-0" />
@@ -1555,6 +1763,11 @@ export function PaymentSelectionModal({
                       </div>
                       <ExternalLink className="w-4 h-4 text-[#16031E] group-hover:translate-x-0.5 transition-transform shrink-0" />
                     </a>
+
+                    {/* Helper Text */}
+                    <p className="text-[10px] text-white/50 text-center pt-1">
+                      If the app doesn&apos;t open or declines, use the QR option
+                    </p>
 
                     {/* Active App Opening Notice */}
                     {openingApp && (
@@ -1615,6 +1828,28 @@ export function PaymentSelectionModal({
                     <p className="text-xs text-[#D3BEB0]">
                       Scan using Google Pay, PhonePe, Paytm, BHIM, or any UPI app.
                     </p>
+
+                    {/* Download QR Button & Gallery Hint */}
+                    {qrDataUrl && (
+                      <div className="mt-2 flex flex-col items-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const a = document.createElement("a");
+                            a.href = qrDataUrl;
+                            a.download = `Mithaase-QR-${cleanOrderRef || "order"}.png`;
+                            a.click();
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-[#F5D061] text-[11px] font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Download QR</span>
+                        </button>
+                        <span className="text-[9px] text-white/50 mt-1">
+                          In your UPI app use &lsquo;Scan from gallery&rsquo;
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {upiId && (

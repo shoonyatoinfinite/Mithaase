@@ -29,6 +29,7 @@ import {
 } from "./initial-data";
 import { sql } from "@/lib/neon/db";
 import { serverCache } from "@/lib/cache/server-cache";
+import { generateOrderRef } from "@/lib/utils/order-ref";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -1145,9 +1146,12 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
     ? await persistMediaAsset(params.upi_screenshot, "upi_payment.jpg")
     : undefined;
 
+  const orderRef = generateOrderRef();
+
   const newOrder: Order = {
     id: orderId,
     order_number: orderNumber,
+    order_ref: orderRef,
     customer_name: params.customer_name.trim(),
     customer_email: params.customer_email?.trim(),
     customer_phone: params.customer_phone.trim(),
@@ -1179,17 +1183,18 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
     try {
       await sql.query(`
         INSERT INTO orders (
-          id, order_number, customer_name, customer_email, customer_phone,
+          id, order_number, order_ref, customer_name, customer_email, customer_phone,
           delivery_address, locality, landmark, delivery_instructions,
           subtotal, discount_amount, delivery_charge, total_amount,
           coupon_code, payment_method, payment_status, order_status,
           upi_reference, upi_screenshot, latitude, longitude, map_url, source
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
         );
       `, [
         orderId,
         orderNumber,
+        orderRef,
         params.customer_name.trim(),
         params.customer_email?.trim() || null,
         params.customer_phone.trim(),
@@ -1319,7 +1324,7 @@ export async function getOrders(
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
       const rows = await sql.query(`
         SELECT 
-          id, order_number, customer_name, customer_email, customer_phone,
+          id, order_number, order_ref, customer_name, customer_email, customer_phone,
           delivery_address, locality, landmark, delivery_instructions,
           subtotal, discount_amount, delivery_charge, total_amount, coupon_code,
           payment_method, payment_status, order_status, upi_reference,
@@ -1378,6 +1383,7 @@ export async function getOrders(
         const dbMapped: Order[] = rows.map((o: any) => ({
           id: o.id,
           order_number: o.order_number,
+          order_ref: o.order_ref || undefined,
           customer_name: o.customer_name,
           customer_email: o.customer_email || undefined,
           customer_phone: o.customer_phone,
@@ -1486,7 +1492,7 @@ export async function getOrderById(id: string): Promise<Order | null> {
   if (sql) {
     try {
       const rows = await sql.query(
-        `SELECT * FROM orders WHERE LOWER(id) = $1 OR LOWER(order_number) = $1 OR id = $2 OR order_number = $2 LIMIT 1;`,
+        `SELECT * FROM orders WHERE LOWER(id) = $1 OR LOWER(order_number) = $1 OR LOWER(order_ref) = $1 OR id = $2 OR order_number = $2 OR order_ref = $2 LIMIT 1;`,
         [lower, cleanId]
       );
 
@@ -1503,6 +1509,7 @@ export async function getOrderById(id: string): Promise<Order | null> {
         const mappedOrder: Order = {
           id: o.id,
           order_number: o.order_number,
+          order_ref: o.order_ref || undefined,
           customer_name: o.customer_name,
           customer_email: o.customer_email || undefined,
           customer_phone: o.customer_phone,

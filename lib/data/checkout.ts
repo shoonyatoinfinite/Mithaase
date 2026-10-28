@@ -11,6 +11,7 @@ import { persistMediaAsset, getOrderById, validateAndCalculateCoupon } from "@/l
 import { broadcastRealtimeEvent } from "@/lib/events/broadcast";
 import { serverCache } from "@/lib/cache/server-cache";
 import { Order, PaymentMethod, PaymentStatus, OrderStatus } from "@/types";
+import { generateOrderRef } from "@/lib/utils/order-ref";
 
 export interface CheckoutItemInput {
   productId: string;
@@ -37,6 +38,7 @@ export interface CreateOrderParams {
   customerPhone?: string;
   customerName?: string;
   orderNumber?: string;
+  orderRef?: string;
 }
 
 export interface CreateOrderResult {
@@ -357,7 +359,6 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
       : null;
 
   // 7. Execute in ONE ACID Transaction via Neon Pool / WebSocket Driver
-  const orderId = crypto.randomUUID();
   const year = new Date().getFullYear();
   const orderNumber =
     params.orderNumber && /^SSS-\d{4}-\d+$/i.test(params.orderNumber.trim())
@@ -384,79 +385,141 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
     ? "confirmed"
     : "pending_confirmation";
 
-  try {
-    const createdOrder = await withTransaction(async (client) => {
-      // A. Conditionally deduct stock atomically
-      const inventoryLogs: Array<{
-        variantId: string;
-        productName: string;
-        variantName: string;
-        quantity: number;
-        stockAfter: number;
-      }> = [];
+  let createdOrderResult: any = null;
+  let lastCheckoutErr: any = null;
 
-      for (const line of verifiedLines) {
-        const updateRes = await client.query(
-          `UPDATE product_variants 
-           SET stock_quantity = stock_quantity - $1, updated_at = NOW() 
-           WHERE id = $2 AND stock_quantity >= $1 
-           RETURNING stock_quantity;`,
-          [line.quantity, line.variantId]
-        );
+  for (let retry = 0; retry < 3; retry++) {
+    try {
+      createdOrderResult = await withTransaction(async (client) => {
+        // A. Conditionally deduct stock atomically
+        const inventoryLogs: Array<{
+          variantId: string;
+          productName: string;
+          variantName: string;
+          quantity: number;
+          stockAfter: number;
+        }> = [];
 
-        if (updateRes.rowCount === 0) {
-          throw new Error(`Insufficient stock for ${line.productName} (${line.variantName}).`);
+        for (const line of verifiedLines) {
+          const updateRes = await client.query(
+            `UPDATE product_variants 
+             SET stock_quantity = stock_quantity - $1, updated_at = NOW() 
+             WHERE id = $2 AND stock_quantity >= $1 
+             RETURNING stock_quantity;`,
+            [line.quantity, line.variantId]
+          );
+
+          if (updateRes.rowCount === 0) {
+            throw new Error(`Insufficient stock for ${line.productName} (${line.variantName}).`);
+          }
+
+          const newStock = updateRes.rows[0].stock_quantity;
+          inventoryLogs.push({
+            variantId: line.variantId,
+            productName: line.productName,
+            variantName: line.variantName,
+            quantity: line.quantity,
+            stockAfter: newStock,
+          });
         }
 
-        const newStock = updateRes.rows[0].stock_quantity;
-        inventoryLogs.push({
-          variantId: line.variantId,
-          productName: line.productName,
-          variantName: line.variantName,
-          quantity: line.quantity,
-          stockAfter: newStock,
-        });
-      }
+        // B. Check if order was pre-created (e.g. by payment session initialization)
+        let orderId = crypto.randomUUID();
+        let finalOrderRef = params.orderRef || generateOrderRef();
 
-      // B. Insert into orders table
-      await client.query(
-        `INSERT INTO orders (
-           id, order_number, customer_name, customer_email, customer_phone,
-           delivery_address, locality, landmark, delivery_instructions,
-           subtotal, discount_amount, delivery_charge, total_amount, coupon_code,
-           payment_method, payment_status, order_status, upi_reference, upi_screenshot,
-           latitude, longitude, map_url, source, idempotency_key, booking_status, created_at, updated_at
-         ) VALUES (
-           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), NOW()
-         );`,
-        [
-          orderId,
-          orderNumber,
-          customer.name || params.customerName || "Customer",
-          customer.email,
-          finalPhone,
-          finalAddress,
-          finalLocality,
-          finalLandmark || null,
-          finalInstructions || null,
-          subtotal,
-          discountAmount,
-          deliveryFee,
-          totalAmount,
-          params.couponCode ? params.couponCode.toUpperCase().trim() : null,
-          finalPaymentMethod,
-          initialPaymentStatus,
-          initialOrderStatus,
-          cleanUtr,
-          screenshotUrl,
-          finalLat,
-          finalLng,
-          finalMapUrl,
-          "online",
-          params.idempotencyKey || null,
-          initialBookingStatus,
-        ]
-      );
+        const existingRes = await client.query(
+          `SELECT id, order_ref, payment_status, order_status FROM orders WHERE order_number = $1 OR id = $1 LIMIT 1;`,
+          [orderNumber]
+        );
+
+        if (existingRes.rows && existingRes.rows.length > 0) {
+          const ex = existingRes.rows[0];
+          orderId = ex.id;
+          if (ex.order_ref) finalOrderRef = ex.order_ref;
+
+          const keepPaid = ex.payment_status === "paid" || isAutoVerifiedUpi;
+          const statusToSet = keepPaid ? "paid" : initialPaymentStatus;
+          const orderStatusToSet = keepPaid ? "confirmed" : initialOrderStatus;
+
+          await client.query(
+            `UPDATE orders SET
+               customer_name = $1, customer_email = $2, customer_phone = $3,
+               delivery_address = $4, locality = $5, landmark = $6, delivery_instructions = $7,
+               subtotal = $8, discount_amount = $9, delivery_charge = $10, total_amount = $11,
+               coupon_code = $12, payment_method = $13, payment_status = $14, order_status = $15,
+               upi_reference = COALESCE($16, upi_reference), upi_screenshot = COALESCE($17, upi_screenshot),
+               latitude = $18, longitude = $19, map_url = $20, source = 'online',
+               idempotency_key = COALESCE($21, idempotency_key), booking_status = $22,
+               order_ref = COALESCE(order_ref, $23), updated_at = NOW()
+             WHERE id = $24;`,
+            [
+              customer.name || params.customerName || "Customer",
+              customer.email,
+              finalPhone,
+              finalAddress,
+              finalLocality,
+              finalLandmark || null,
+              finalInstructions || null,
+              subtotal,
+              discountAmount,
+              deliveryFee,
+              totalAmount,
+              params.couponCode ? params.couponCode.toUpperCase().trim() : null,
+              finalPaymentMethod,
+              statusToSet,
+              orderStatusToSet,
+              cleanUtr,
+              screenshotUrl,
+              finalLat,
+              finalLng,
+              finalMapUrl,
+              params.idempotencyKey || null,
+              initialBookingStatus,
+              finalOrderRef,
+              orderId,
+            ]
+          );
+        } else {
+          await client.query(
+            `INSERT INTO orders (
+               id, order_number, order_ref, customer_name, customer_email, customer_phone,
+               delivery_address, locality, landmark, delivery_instructions,
+               subtotal, discount_amount, delivery_charge, total_amount, coupon_code,
+               payment_method, payment_status, order_status, upi_reference, upi_screenshot,
+               latitude, longitude, map_url, source, idempotency_key, booking_status, created_at, updated_at
+             ) VALUES (
+               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), NOW()
+             );`,
+            [
+              orderId,
+              orderNumber,
+              finalOrderRef,
+              customer.name || params.customerName || "Customer",
+              customer.email,
+              finalPhone,
+              finalAddress,
+              finalLocality,
+              finalLandmark || null,
+              finalInstructions || null,
+              subtotal,
+              discountAmount,
+              deliveryFee,
+              totalAmount,
+              params.couponCode ? params.couponCode.toUpperCase().trim() : null,
+              finalPaymentMethod,
+              initialPaymentStatus,
+              initialOrderStatus,
+              cleanUtr,
+              screenshotUrl,
+              finalLat,
+              finalLng,
+              finalMapUrl,
+              "online",
+              params.idempotencyKey || null,
+              initialBookingStatus,
+            ]
+          );
+        }
 
       // C. Insert order_items (price snapshots)
       for (const line of verifiedLines) {
@@ -564,35 +627,24 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
           variantName: vl.variantName,
           imageUrl: vl.imageUrl,
         })) as any,
+        order_ref: finalOrderRef,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
     });
-
-    // 8. After commit: Bump database catalog_version and clear cached product queries
-    await sql.query(
-      `UPDATE store_settings SET catalog_version = COALESCE(catalog_version, 1) + 1, updated_at = NOW() WHERE id = 1;`
-    ).catch(() => { });
-
-    serverCache.invalidateTag("products");
-    serverCache.invalidateTag("orders");
-
-    // Fetch authoritative order with all db relations filled
-    const fullOrder = (await getOrderById(orderId)) || (createdOrder as any);
-
-    broadcastRealtimeEvent("order_created", fullOrder);
-
-    return {
-      success: true,
-      order: fullOrder as any,
-    };
+    break; // Transaction succeeded
   } catch (txErr: any) {
-    if (txErr.code === "23505" && txErr.message?.includes("idx_orders_unique_upi_ref")) {
-      return {
-        success: false,
-        error: "This UPI reference (UTR) has already been used on another order. Please check your transaction receipt.",
-        code: 409,
-      };
+    lastCheckoutErr = txErr;
+    if (txErr.code === "23505") {
+      if (txErr.message?.includes("idx_orders_unique_upi_ref")) {
+        return {
+          success: false,
+          error: "This UPI reference (UTR) has already been used on another order. Please check your transaction receipt.",
+          code: 409,
+        };
+      }
+      // Retry on order_ref collision
+      if (retry < 2) continue;
     }
     console.error("[CHECKOUT] Transaction aborted:", txErr);
     return {
@@ -601,4 +653,33 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
       code: 400,
     };
   }
+}
+
+if (!createdOrderResult) {
+  return {
+    success: false,
+    error: lastCheckoutErr?.message || "Failed to process checkout transaction.",
+    code: 500,
+  };
+}
+
+const createdOrder = createdOrderResult;
+
+  // 8. After commit: Bump database catalog_version and clear cached product queries
+  await sql.query(
+    `UPDATE store_settings SET catalog_version = COALESCE(catalog_version, 1) + 1, updated_at = NOW() WHERE id = 1;`
+  ).catch(() => { });
+
+  serverCache.invalidateTag("products");
+  serverCache.invalidateTag("orders");
+
+  // Fetch authoritative order with all db relations filled
+  const fullOrder = (await getOrderById(createdOrder.id)) || (createdOrder as any);
+
+  broadcastRealtimeEvent("order_created", fullOrder);
+
+  return {
+    success: true,
+    order: fullOrder as any,
+  };
 }
