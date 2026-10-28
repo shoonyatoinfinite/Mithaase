@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import { StoreSettings } from "@/types";
@@ -190,37 +190,43 @@ export function PaymentSelectionModal({
     .replace(/[^0-9]/g, "");
   const storePhone = rawStorePhone.length >= 10 ? rawStorePhone.slice(-10) : "8290683668";
 
-  // Robust UPI ID resolution: prioritize verified store UPI ID, env fallback, or default Kotak VPA
+  // Robust UPI ID resolution with phone number fallback for UPI safety compliance
   let rawUpiId = (settings.upi_id || "").trim();
-  if (!rawUpiId || rawUpiId === "shreeshyam@upi" || rawUpiId === "8290683668@upi") {
+  if (!rawUpiId || rawUpiId === "8290683668@upi") {
     rawUpiId = (process.env.NEXT_PUBLIC_STORE_UPI_ID || "").trim();
   }
-  if (!rawUpiId || rawUpiId === "shreeshyam@upi" || rawUpiId === "8290683668@upi") {
-    rawUpiId = "vinay20@kotakbank";
+  if (!rawUpiId || rawUpiId === "8290683668@upi") {
+    rawUpiId = storePhone ? `${storePhone}@upi` : "vinay20@kotakbank";
   }
 
   // Ensure '@' is unescaped and whitespace trimmed
   let upiId = decodeURIComponent(rawUpiId).replace(/%40/g, "@").trim();
 
-  // If handle is missing or malformed, fallback to verified Kotak VPA
+  // If a 10-digit phone number was entered without handle, append @upi for UPI safety rules compliance
+  if (/^\d{10}$/.test(upiId)) {
+    upiId = `${upiId}@upi`;
+  }
   if (!upiId.includes("@")) {
-    upiId = "vinay20@kotakbank";
+    upiId = storePhone ? `${storePhone}@upi` : "vinay20@kotakbank";
   }
 
-  const payeeName = (settings.upi_payee_name || process.env.NEXT_PUBLIC_STORE_UPI_NAME || "VINAY").trim();
-  // Exact 2 decimal places per NPCI specification (e.g. "150.00")
-  const formattedAmount = upiAmount.toFixed(2);
+  const payeeName = (settings.upi_payee_name || "Shree Shyam Sweets").trim();
+  // Nearest integer only (>0)
+  const formattedAmount = String(upiAmount);
   // NPCI-compliant alphanumeric note without special characters/spaces to guarantee universal compatibility
   const cleanNote = "MithaaseOrder";
-  // Clean alphanumeric reference ID (max 35 chars, no hyphens) mandatory for UPI apps like PhonePe
-  const transactionRef = `MITH${Date.now().toString().slice(-8)}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-  // NPCI UPI URI specification: keep pa unencoded with raw '@' for universal parser compatibility, while encoding text fields
-  const upiParams = `pa=${upiId}&pn=${encodeURIComponent(
-    payeeName
-  )}&am=${formattedAmount}&cu=INR&tn=${cleanNote}&tr=${transactionRef}`;
-
-  const upiUri = `upi://pay?${upiParams}`;
+  // NPCI UPI URI specification: P2P VPAs reject 'tr' or 36-char hyphenated UUIDs with 'Bad Request'.
+  // Using pure standard pa, pn, am, cu, tn parameters ensures 100% universal compatibility across all UPI apps.
+  const { upiParams, upiUri } = useMemo(() => {
+    const params = `pa=${upiId}&pn=${encodeURIComponent(
+      payeeName
+    )}&am=${formattedAmount}&cu=INR&tn=${cleanNote}`;
+    return {
+      upiParams: params,
+      upiUri: `upi://pay?${params}`,
+    };
+  }, [upiId, payeeName, formattedAmount, cleanNote]);
 
   // Dedicated app scheme / intent URLs with verified NPCI and vendor protocols
   const getUpiUrlForApp = (app: "gpay" | "phonepe" | "paytm" | "bhim" | "generic") => {
@@ -231,7 +237,7 @@ export function PaymentSelectionModal({
     switch (app) {
       case "gpay":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;action=android.intent.action.VIEW;end;`;
+          return `intent://pay?${params}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end`;
         }
         if (isIos) {
           return `gpay://upi/pay?${params}`;
@@ -239,17 +245,17 @@ export function PaymentSelectionModal({
         return `tez://upi/pay?${params}`;
       case "phonepe":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=com.phonepe.app;action=android.intent.action.VIEW;end;`;
+          return `intent://pay?${params}#Intent;scheme=upi;package=com.phonepe.app;end`;
         }
         return `phonepe://pay?${params}`;
       case "paytm":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=net.one97.paytm;action=android.intent.action.VIEW;end;`;
+          return `intent://pay?${params}#Intent;scheme=upi;package=net.one97.paytm;end`;
         }
         return `paytmmp://pay?${params}`;
       case "bhim":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=in.org.npci.upiapp;action=android.intent.action.VIEW;end;`;
+          return `intent://pay?${params}#Intent;scheme=upi;package=in.org.npci.upiapp;end`;
         }
         return `upi://pay?${params}`;
       default:
@@ -269,29 +275,6 @@ export function PaymentSelectionModal({
     setOpeningApp(appName);
 
     if (typeof window !== "undefined") {
-      let isAppOpened = false;
-
-      const cleanupListeners = () => {
-        window.removeEventListener("blur", onAppOpened);
-        document.removeEventListener("visibilitychange", onVisibilityChange);
-        window.removeEventListener("pagehide", onAppOpened);
-      };
-
-      const onAppOpened = () => {
-        isAppOpened = true;
-        cleanupListeners();
-      };
-
-      const onVisibilityChange = () => {
-        if (document.hidden || document.visibilityState === "hidden") {
-          onAppOpened();
-        }
-      };
-
-      window.addEventListener("blur", onAppOpened, { once: true });
-      document.addEventListener("visibilitychange", onVisibilityChange);
-      window.addEventListener("pagehide", onAppOpened, { once: true });
-
       // 1. Direct intent/scheme navigation
       try {
         window.location.assign(targetUrl);
@@ -299,22 +282,22 @@ export function PaymentSelectionModal({
         window.location.href = targetUrl;
       }
 
-      // 2. Failsafe timeout: ONLY triggers if user is STILL on the webpage (i.e. app failed to open / not installed)
-      // Never interrupts an active payment screen if the user switched to the app
-      setTimeout(() => {
-        cleanupListeners();
-        if (isAppOpened || document.hidden || document.visibilityState === "hidden") {
-          return;
-        }
-
-        if (app !== "generic") {
-          try {
-            window.location.href = upiUri;
-          } catch (e) {
-            console.warn("Fallback navigation error:", e);
-          }
+      // 2. Failsafe timeout: if specific app intent doesn't launch (e.g. app not installed or blocked),
+      // smoothly fallback to universal upi:// scheme after a safe delay (3500ms) without cutting off target app launch
+      const fallbackTimer = setTimeout(() => {
+        try {
+          window.location.href = upiUri;
+        } catch (e) {
+          console.warn("Fallback navigation error:", e);
         }
       }, 3500);
+
+      // Cancel fallback if window loses focus (meaning the target UPI app opened successfully)
+      const onBlur = () => {
+        clearTimeout(fallbackTimer);
+        window.removeEventListener("blur", onBlur);
+      };
+      window.addEventListener("blur", onBlur, { once: true });
     }
   };
 
@@ -477,8 +460,9 @@ export function PaymentSelectionModal({
 
 
 
-  // Generate QR Code data URL when amount or UPI ID changes
+  // Generate QR Code data URL when amount or UPI ID changes (only when modal is open)
   useEffect(() => {
+    if (!isOpen) return;
     QRCode.toDataURL(upiUri, {
       width: 280,
       margin: 1.5,
@@ -489,7 +473,7 @@ export function PaymentSelectionModal({
     })
       .then((url) => setQrDataUrl(url))
       .catch((err) => console.error("QR Code generation error:", err));
-  }, [upiUri]);
+  }, [upiUri, isOpen]);
 
   if (!isOpen) return null;
 
@@ -1067,85 +1051,27 @@ export function PaymentSelectionModal({
                               <span className="text-[10px] text-white/50">Prefilled amount: ₹{upiAmount}</span>
                             </div>
 
-                            {/* 1-Tap App Switcher */}
-                            <div className="space-y-2.5">
-                              <span className="text-[10px] font-bold text-white/60 uppercase tracking-wider block">
-                                Pay via Any UPI App:
-                              </span>
+                            {/* Native Installed UPI Apps Launcher */}
+                            <div className="space-y-2">
 
-                              {/* Primary Choice: Choose Any App of User's Preference */}
                               <a
-                                href={getUpiUrlForApp("generic")}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  handleOpenUpiApp("generic", "Your Preferred UPI App");
-                                }}
-                                className="w-full py-2.5 px-3.5 rounded-xl gold-gradient-btn font-black text-xs flex items-center justify-between shadow-lg active:scale-95 transition-all cursor-pointer group"
+                                href={upiUri}
+                                onClick={() => handleOpenUpiApp("generic", "Installed UPI App")}
+                                className="w-full py-3 px-3.5 rounded-xl gold-gradient-btn font-black text-xs flex items-center justify-between shadow-lg active:scale-95 transition-all cursor-pointer group"
                               >
                                 <div className="flex items-center gap-2.5">
                                   <Smartphone className="w-4 h-4 text-[#16031E] shrink-0" />
                                   <div className="text-left">
-                                    <span className="block text-xs font-black text-[#16031E] leading-tight">
-                                      Choose Any App of Your Choice (₹{upiAmount})
+                                    <span className="block font-black text-[#16031E] leading-tight text-xs">
+                                      Pay via Installed UPI App (₹{upiAmount})
                                     </span>
                                     <span className="block text-[9px] text-[#16031E]/80 font-medium">
-                                      CRED, Amazon Pay, Navi, WhatsApp &amp; more • Prefilled
+                                      Opens GPay, PhonePe, Paytm, CRED &amp; more on your phone
                                     </span>
                                   </div>
                                 </div>
                                 <ExternalLink className="w-3.5 h-3.5 text-[#16031E] group-hover:translate-x-0.5 transition-transform shrink-0" />
                               </a>
-
-                              <div className="flex items-center gap-2 pt-0.5">
-                                <div className="h-px flex-1 bg-white/10" />
-                                <span className="text-[10px] text-white/40 uppercase font-bold tracking-wider">
-                                  or quick 1-tap:
-                                </span>
-                                <div className="h-px flex-1 bg-white/10" />
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-2">
-                                <a
-                                  href={getUpiUrlForApp("gpay")}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    handleOpenUpiApp("gpay", "Google Pay");
-                                  }}
-                                  className="p-2.5 rounded-xl bg-[#1B2234] hover:bg-[#232C43] border border-[#4285F4]/40 text-white flex items-center gap-2 transition-all active:scale-95 text-xs font-bold"
-                                >
-                                  <span className="text-xs">Google Pay</span>
-                                </a>
-                                <a
-                                  href={getUpiUrlForApp("phonepe")}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    handleOpenUpiApp("phonepe", "PhonePe");
-                                  }}
-                                  className="p-2.5 rounded-xl bg-[#251036] hover:bg-[#34164D] border border-[#A855F7]/40 text-white flex items-center gap-2 transition-all active:scale-95 text-xs font-bold"
-                                >
-                                  <span className="text-xs">PhonePe</span>
-                                </a>
-                                <a
-                                  href={getUpiUrlForApp("paytm")}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    handleOpenUpiApp("paytm", "Paytm");
-                                  }}
-                                  className="p-2.5 rounded-xl bg-[#08223B] hover:bg-[#0D2F52] border border-[#00BAF2]/40 text-white flex items-center gap-2 transition-all active:scale-95 text-xs font-bold"
-                                >
-                                  <span className="text-xs">Paytm</span>
-                                </a>
-                                <a
-                                  href={getUpiUrlForApp("bhim")}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    handleOpenUpiApp("bhim", "BHIM UPI");
-                                  }}
-                                  className="p-2.5 rounded-xl bg-[#1E293B] hover:bg-[#334155] border border-white/20 text-white flex items-center gap-2 transition-all active:scale-95 text-xs font-bold"
-                                >
-                                  <span className="text-xs">BHIM UPI</span>
-                                </a>
-                              </div>
 
                               {/* UPI Safety ID / Phone Badge */}
                               <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-[11px]">
@@ -1427,103 +1353,31 @@ export function PaymentSelectionModal({
                     </div>
                   </div>
 
-                  {/* Quick-Launch UPI App Buttons */}
-                  <div className="space-y-3">
-                    <label className="text-[11px] uppercase tracking-wider font-bold text-white/60 block">
-                      Tap Your UPI App to Pay ₹{upiAmount} (Pre-filled):
+                  {/* Native Installed UPI Apps Launcher */}
+                  <div className="space-y-2.5">
+                    <label className="text-[11px] uppercase tracking-wider font-bold text-white/70 flex items-center justify-between">
+                      <span>1-Tap Payment via Installed App:</span>
+                      <span className="text-[#F5D061] text-[10px] font-mono">₹{upiAmount} Pre-filled</span>
                     </label>
 
-                    {/* Universal Launch Button */}
                     <a
-                      href={getUpiUrlForApp("generic")}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        handleOpenUpiApp("generic", "Default UPI App");
-                      }}
-                      className="w-full py-3 px-4 rounded-xl gold-gradient-btn font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all text-center cursor-pointer"
+                      href={upiUri}
+                      onClick={() => handleOpenUpiApp("generic", "Installed UPI App")}
+                      className="w-full py-3.5 px-4 rounded-xl gold-gradient-btn font-black text-xs sm:text-sm flex items-center justify-between shadow-lg active:scale-95 transition-all cursor-pointer group"
                     >
-                      <Smartphone className="w-4 h-4" />
-                      <span>Open Any UPI App (₹{upiAmount})</span>
-                      <ExternalLink className="w-3.5 h-3.5 ml-1" />
+                      <div className="flex items-center gap-2.5">
+                        <Smartphone className="w-4 h-4 text-[#16031E] shrink-0" />
+                        <div className="text-left">
+                          <span className="block font-black text-[#16031E] leading-tight text-xs sm:text-sm">
+                            Pay via Installed UPI App (₹{upiAmount})
+                          </span>
+                          <span className="block text-[10px] text-[#16031E]/80 font-medium">
+                            Opens GPay, PhonePe, Paytm, CRED &amp; more on your phone
+                          </span>
+                        </div>
+                      </div>
+                      <ExternalLink className="w-4 h-4 text-[#16031E] group-hover:translate-x-0.5 transition-transform shrink-0" />
                     </a>
-
-                    {/* Dedicated Branded App Buttons Grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                      {/* Google Pay */}
-                      <a
-                        href={getUpiUrlForApp("gpay")}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleOpenUpiApp("gpay", "Google Pay");
-                        }}
-                        className="p-3 rounded-2xl bg-[#1B2234] hover:bg-[#232C43] border border-[#4285F4]/40 hover:border-[#4285F4] text-white flex flex-col items-center justify-center gap-1.5 transition-all text-center group active:scale-95 shadow-md cursor-pointer"
-                      >
-                        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm font-bold">
-                          <span className="text-[#4285F4]">G</span>
-                          <span className="text-[#EA4335]">P</span>
-                          <span className="text-[#FBBC05]">a</span>
-                          <span className="text-[#34A853]">y</span>
-                        </div>
-                        <span className="font-bold text-xs text-white group-hover:text-[#4285F4] transition-colors">
-                          Google Pay
-                        </span>
-                        <span className="text-[9px] text-[#4285F4]/80 font-medium">Auto-open</span>
-                      </a>
-
-                      {/* PhonePe */}
-                      <a
-                        href={getUpiUrlForApp("phonepe")}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleOpenUpiApp("phonepe", "PhonePe");
-                        }}
-                        className="p-3 rounded-2xl bg-[#251036] hover:bg-[#34164D] border border-[#A855F7]/40 hover:border-[#A855F7] text-white flex flex-col items-center justify-center gap-1.5 transition-all text-center group active:scale-95 shadow-md cursor-pointer"
-                      >
-                        <div className="w-8 h-8 rounded-full bg-[#5F259F] text-white flex items-center justify-center text-xs font-black shadow-inner">
-                          Pe
-                        </div>
-                        <span className="font-bold text-xs text-white group-hover:text-[#C084FC] transition-colors">
-                          PhonePe
-                        </span>
-                        <span className="text-[9px] text-[#C084FC]/80 font-medium">Auto-open</span>
-                      </a>
-
-                      {/* Paytm */}
-                      <a
-                        href={getUpiUrlForApp("paytm")}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleOpenUpiApp("paytm", "Paytm");
-                        }}
-                        className="p-3 rounded-2xl bg-[#08223B] hover:bg-[#0D2F52] border border-[#00BAF2]/40 hover:border-[#00BAF2] text-white flex flex-col items-center justify-center gap-1.5 transition-all text-center group active:scale-95 shadow-md cursor-pointer"
-                      >
-                        <div className="w-8 h-8 rounded-full bg-[#002E6E] text-[#00BAF2] border border-[#00BAF2]/40 flex items-center justify-center text-[10px] font-black shadow-inner">
-                          Paytm
-                        </div>
-                        <span className="font-bold text-xs text-white group-hover:text-[#38BDF8] transition-colors">
-                          Paytm
-                        </span>
-                        <span className="text-[9px] text-[#38BDF8]/80 font-medium">Auto-open</span>
-                      </a>
-
-                      {/* BHIM / Other */}
-                      <a
-                        href={getUpiUrlForApp("bhim")}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleOpenUpiApp("bhim", "BHIM UPI");
-                        }}
-                        className="p-3 rounded-2xl bg-[#17261B] hover:bg-[#203626] border border-emerald-500/40 hover:border-emerald-500 text-white flex flex-col items-center justify-center gap-1.5 transition-all text-center group active:scale-95 shadow-md cursor-pointer"
-                      >
-                        <div className="w-8 h-8 rounded-full bg-emerald-900 text-emerald-300 border border-emerald-500/40 flex items-center justify-center text-[10px] font-black shadow-inner">
-                          BHIM
-                        </div>
-                        <span className="font-bold text-xs text-white group-hover:text-emerald-300 transition-colors">
-                          BHIM UPI
-                        </span>
-                        <span className="text-[9px] text-emerald-400/80 font-medium">Auto-open</span>
-                      </a>
-                    </div>
 
                     {/* Active App Opening Notice */}
                     {openingApp && (
