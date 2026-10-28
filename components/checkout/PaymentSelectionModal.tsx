@@ -60,6 +60,7 @@ export function PaymentSelectionModal({
   const router = useRouter();
   const [selectedMethod, setSelectedMethod] = useState<"cod" | "upi" | "upi_auto">("upi_auto");
   const [upiFlow, setUpiFlow] = useState<"app" | "qr">("app");
+  const [selectedVpaType, setSelectedVpaType] = useState<"phone" | "bank">("phone");
   const [copiedUpi, setCopiedUpi] = useState(false);
   const [copiedPhone, setCopiedPhone] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string>("");
@@ -118,6 +119,7 @@ export function PaymentSelectionModal({
       setWaOtpError("");
       setWaCountdown(0);
       setInstantPaymentMode("qr");
+      setSelectedVpaType("phone");
       setShowCancelConfirm(false);
       // STRICT REQUIREMENT: User must verify WhatsApp OTP fresh EVERY TIME they want to pay via auto UPI
       setIsWhatsappVerified(false);
@@ -190,25 +192,23 @@ export function PaymentSelectionModal({
     .replace(/[^0-9]/g, "");
   const storePhone = rawStorePhone.length >= 10 ? rawStorePhone.slice(-10) : "8290683668";
 
-  // Robust UPI ID resolution with phone number fallback for UPI safety compliance
-  let rawUpiId = (settings.upi_id || "").trim();
-  if (!rawUpiId || rawUpiId === "8290683668@upi") {
-    rawUpiId = (process.env.NEXT_PUBLIC_STORE_UPI_ID || "").trim();
+  // 1. Phone-based UPI ID: default NPCI central switch handle @upi ensures universal BHIM/Paytm compatibility
+  const phoneUpiId = `${storePhone}@upi`;
+
+  // 2. Bank UPI ID: Kotak bank or custom store UPI ID
+  let rawBankUpi = (settings.upi_id || process.env.NEXT_PUBLIC_STORE_UPI_ID || "vinay20@kotakbank").trim();
+  let bankUpiId = decodeURIComponent(rawBankUpi).replace(/%40/g, "@").trim();
+  if (/^\d{10}$/.test(bankUpiId)) {
+    bankUpiId = `${bankUpiId}@upi`;
   }
-  if (!rawUpiId || rawUpiId === "8290683668@upi") {
-    rawUpiId = storePhone ? `${storePhone}@upi` : "vinay20@kotakbank";
+  if (!bankUpiId.includes("@") || bankUpiId === phoneUpiId) {
+    bankUpiId = "vinay20@kotakbank";
   }
 
-  // Ensure '@' is unescaped and whitespace trimmed
-  let upiId = decodeURIComponent(rawUpiId).replace(/%40/g, "@").trim();
-
-  // If a 10-digit phone number was entered without handle, append @upi for UPI safety rules compliance
-  if (/^\d{10}$/.test(upiId)) {
-    upiId = `${upiId}@upi`;
-  }
-  if (!upiId.includes("@")) {
-    upiId = storePhone ? `${storePhone}@upi` : "vinay20@kotakbank";
-  }
+  // Active UPI ID for intent URL & QR code:
+  // Defaults to phoneUpiId (e.g. 8290683668@upi) so BHIM and Paytm never throw 'Bad Request'.
+  // User can also tap the Bank UPI option to switch if desired.
+  const upiId = selectedVpaType === "phone" ? phoneUpiId : bankUpiId;
 
   const payeeName = (settings.upi_payee_name || "Shree Shyam Sweets").trim();
   // Exact 2 decimal places per NPCI specification (e.g. "150.00")
@@ -1073,32 +1073,80 @@ export function PaymentSelectionModal({
                                 <ExternalLink className="w-3.5 h-3.5 text-[#16031E] group-hover:translate-x-0.5 transition-transform shrink-0" />
                               </a>
                               <span className="block text-[10px] text-white/50 text-center">
-                                Tip: If your app shows a security check, simply scan the QR code above.
+                                Tip: Phone UPI works directly in BHIM &amp; Paytm without security check.
                               </span>
 
-                              {/* UPI Safety ID / Phone Badge */}
-                              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-[11px]">
-                                <div className="flex flex-col truncate">
-                                  <div className="flex items-center gap-1.5 truncate">
-                                    <span className="text-white/50 text-[10px]">Recipient UPI:</span>
-                                    <span className="font-mono text-[#F5D061] font-bold text-xs truncate">{upiId}</span>
-                                  </div>
-                                  {storePhone && !upiId.startsWith(storePhone) && (
-                                    <div className="flex items-center gap-1.5 text-[10px] text-white/50">
-                                      <span>Mobile:</span>
-                                      <span className="font-mono text-emerald-300 font-semibold">+91 {storePhone}</span>
-                                    </div>
-                                  )}
+                              {/* Dual VPA Cards: Phone UPI (BHIM/Paytm safe) & Bank UPI */}
+                              <div className="space-y-1.5">
+                                <div className="text-[10px] text-white/60 font-medium flex items-center justify-between">
+                                  <span>Payee Destination:</span>
+                                  <span className="text-[9px] text-emerald-400">BHIM / Paytm: Use Phone UPI</span>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopy(upiId, "upi")}
-                                  className="px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 text-[#F5D061] text-[10px] font-bold flex items-center gap-1 shrink-0 ml-1 transition-colors cursor-pointer"
-                                  title="Copy UPI ID"
-                                >
-                                  {copiedUpi ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                                  <span>{copiedUpi ? "Copied" : "Copy"}</span>
-                                </button>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                  {/* 1. Phone UPI Card */}
+                                  <div
+                                    onClick={() => setSelectedVpaType("phone")}
+                                    className={`p-2 rounded-xl border text-xs cursor-pointer transition-all flex items-center justify-between ${
+                                      selectedVpaType === "phone"
+                                        ? "bg-emerald-500/15 border-emerald-500/50 shadow-sm"
+                                        : "bg-white/5 border-white/10 hover:bg-white/10"
+                                    }`}
+                                  >
+                                    <div className="truncate mr-1">
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[9px] font-bold uppercase text-emerald-400">Phone UPI</span>
+                                        {selectedVpaType === "phone" && (
+                                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                        )}
+                                      </div>
+                                      <span className="font-mono text-white font-bold text-xs truncate block">{phoneUpiId}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCopy(phoneUpiId, "phone");
+                                      }}
+                                      className="px-2 py-1 rounded-md bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[10px] font-bold flex items-center gap-1 shrink-0 ml-1 transition-colors"
+                                      title="Copy Phone UPI ID"
+                                    >
+                                      {copiedPhone ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                                      <span>{copiedPhone ? "Copied" : "Copy"}</span>
+                                    </button>
+                                  </div>
+
+                                  {/* 2. Bank UPI Card */}
+                                  <div
+                                    onClick={() => setSelectedVpaType("bank")}
+                                    className={`p-2 rounded-xl border text-xs cursor-pointer transition-all flex items-center justify-between ${
+                                      selectedVpaType === "bank"
+                                        ? "bg-amber-500/15 border-amber-500/50 shadow-sm"
+                                        : "bg-white/5 border-white/10 hover:bg-white/10"
+                                    }`}
+                                  >
+                                    <div className="truncate mr-1">
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[9px] font-bold uppercase text-[#F5D061]">Bank UPI ID</span>
+                                        {selectedVpaType === "bank" && (
+                                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                                        )}
+                                      </div>
+                                      <span className="font-mono text-amber-200/90 font-bold text-xs truncate block">{bankUpiId}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCopy(bankUpiId, "upi");
+                                      }}
+                                      className="px-2 py-1 rounded-md bg-white/10 hover:bg-white/20 text-[#F5D061] text-[10px] font-bold flex items-center gap-1 shrink-0 ml-1 transition-colors"
+                                      title="Copy Bank UPI ID"
+                                    >
+                                      {copiedUpi ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                                      <span>{copiedUpi ? "Copied" : "Copy"}</span>
+                                    </button>
+                                  </div>
+                                </div>
                               </div>
 
                               {/* Active App Opening Notice */}
@@ -1338,21 +1386,70 @@ export function PaymentSelectionModal({
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between pt-2 border-t border-white/10">
-                      <div>
-                        <span className="text-[10px] text-white/50 uppercase font-semibold block">
-                          Store UPI ID
-                        </span>
-                        <span className="font-mono text-[#F5D061] text-xs font-bold">{upiId}</span>
+                    <div className="space-y-2 pt-2 border-t border-white/10">
+                      <div className="text-[10px] text-white/60 font-medium flex items-center justify-between">
+                        <span>Select Payee Destination:</span>
+                        <span className="text-[9px] text-emerald-400">BHIM / Paytm: Use Phone UPI</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleCopy(upiId, "upi")}
-                        className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-white text-[11px] font-semibold flex items-center gap-1 border border-white/10 transition-colors"
-                      >
-                        {copiedUpi ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                        <span>{copiedUpi ? "Copied" : "Copy"}</span>
-                      </button>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {/* 1. Phone UPI Card */}
+                        <div
+                          onClick={() => setSelectedVpaType("phone")}
+                          className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-all flex items-center justify-between ${
+                            selectedVpaType === "phone"
+                              ? "bg-emerald-500/15 border-emerald-500/50 shadow-sm"
+                              : "bg-white/5 border-white/10 hover:bg-white/10"
+                          }`}
+                        >
+                          <div className="truncate mr-1">
+                            <span className="text-[9px] text-emerald-400 uppercase font-bold block">
+                              Phone UPI (Recommended)
+                            </span>
+                            <span className="font-mono text-white text-xs font-bold truncate block">{phoneUpiId}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCopy(phoneUpiId, "phone");
+                            }}
+                            className="px-2 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-[10px] font-semibold flex items-center gap-1 border border-emerald-500/20 transition-colors shrink-0"
+                            title="Copy Phone UPI ID"
+                          >
+                            {copiedPhone ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedPhone ? "Copied" : "Copy"}</span>
+                          </button>
+                        </div>
+
+                        {/* 2. Bank UPI Card */}
+                        <div
+                          onClick={() => setSelectedVpaType("bank")}
+                          className={`p-2.5 rounded-xl border text-xs cursor-pointer transition-all flex items-center justify-between ${
+                            selectedVpaType === "bank"
+                              ? "bg-amber-500/15 border-amber-500/50 shadow-sm"
+                              : "bg-white/5 border-white/10 hover:bg-white/10"
+                          }`}
+                        >
+                          <div className="truncate mr-1">
+                            <span className="text-[9px] text-[#F5D061] uppercase font-bold block">
+                              Bank UPI ID
+                            </span>
+                            <span className="font-mono text-amber-200/90 text-xs font-bold truncate block">{bankUpiId}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCopy(bankUpiId, "upi");
+                            }}
+                            className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[#F5D061] text-[10px] font-semibold flex items-center gap-1 border border-white/10 transition-colors shrink-0"
+                            title="Copy Bank UPI ID"
+                          >
+                            {copiedUpi ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedUpi ? "Copied" : "Copy"}</span>
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -1446,15 +1543,54 @@ export function PaymentSelectionModal({
                     </p>
                   </div>
 
-                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs">
-                    <span className="font-mono text-[#F5D061]">{upiId}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleCopy(upiId, "upi")}
-                      className="text-white/70 hover:text-white"
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    {/* 1. Phone UPI Pill */}
+                    <div
+                      onClick={() => setSelectedVpaType("phone")}
+                      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs cursor-pointer transition-all ${
+                        selectedVpaType === "phone"
+                          ? "bg-emerald-500/15 border-emerald-500/50 shadow-sm"
+                          : "bg-white/5 border-white/10 hover:bg-white/10"
+                      }`}
                     >
-                      {copiedUpi ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
+                      <span className="text-emerald-400 text-[10px] uppercase font-bold">Phone UPI:</span>
+                      <span className="font-mono text-white font-semibold">{phoneUpiId}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCopy(phoneUpiId, "phone");
+                        }}
+                        className="text-white/70 hover:text-white"
+                        title="Copy Phone UPI ID"
+                      >
+                        {copiedPhone ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+
+                    {/* 2. Bank UPI Pill */}
+                    <div
+                      onClick={() => setSelectedVpaType("bank")}
+                      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs cursor-pointer transition-all ${
+                        selectedVpaType === "bank"
+                          ? "bg-amber-500/15 border-amber-500/50 shadow-sm"
+                          : "bg-white/5 border-white/10 hover:bg-white/10"
+                      }`}
+                    >
+                      <span className="text-[#F5D061] text-[10px] uppercase font-bold">Bank UPI:</span>
+                      <span className="font-mono text-amber-200/90 font-semibold">{bankUpiId}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCopy(bankUpiId, "upi");
+                        }}
+                        className="text-white/70 hover:text-white"
+                        title="Copy Bank UPI ID"
+                      >
+                        {copiedUpi ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
