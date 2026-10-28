@@ -74,6 +74,22 @@ export async function POST(req: Request) {
           finalCheckoutUrl = `${youpiBaseUrl}/checkout/${pId}`;
         }
 
+        // Fetch live state from YouPI-PG to obtain configured payeeVpa & payeeName
+        let payeeVpa = "";
+        let payeeName = "";
+        try {
+          const stateRes = await fetch(`${youpiBaseUrl}/api/v1/checkout/${pId}/state`, {
+            signal: AbortSignal.timeout(5000),
+          });
+          if (stateRes.ok) {
+            const stateData = await stateRes.json();
+            payeeVpa = stateData.payeeVpa || stateData.vpa || "";
+            payeeName = stateData.payeeName || stateData.merchantName || "";
+          }
+        } catch (stateErr) {
+          console.warn("[YouPI] State fetch warning:", stateErr);
+        }
+
         return NextResponse.json({
           success: true,
           mode: "live",
@@ -82,6 +98,8 @@ export async function POST(req: Request) {
           checkoutUrl: finalCheckoutUrl,
           amount: finalAmount,
           gatewayUrl: youpiBaseUrl,
+          payeeVpa,
+          payeeName,
         });
       }
     } catch (netErr) {
@@ -107,6 +125,8 @@ export async function POST(req: Request) {
       orderId: generatedOrderId,
       checkoutUrl: null,
       amount: Number(amount),
+      payeeVpa: process.env.NEXT_PUBLIC_STORE_UPI_ID || "",
+      payeeName: process.env.NEXT_PUBLIC_STORE_UPI_NAME || "",
     });
   } catch (error: any) {
     return NextResponse.json(
