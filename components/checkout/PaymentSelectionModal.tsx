@@ -211,8 +211,8 @@ export function PaymentSelectionModal({
   }
 
   const payeeName = (settings.upi_payee_name || "Shree Shyam Sweets").trim();
-  // Nearest integer only (>0)
-  const formattedAmount = String(upiAmount);
+  // Exact 2 decimal places per NPCI specification (e.g. "150.00")
+  const formattedAmount = upiAmount.toFixed(2);
   // NPCI-compliant alphanumeric note without special characters/spaces to guarantee universal compatibility
   const cleanNote = "MithaaseOrder";
 
@@ -1072,6 +1072,9 @@ export function PaymentSelectionModal({
                                 </div>
                                 <ExternalLink className="w-3.5 h-3.5 text-[#16031E] group-hover:translate-x-0.5 transition-transform shrink-0" />
                               </a>
+                              <span className="block text-[10px] text-white/50 text-center">
+                                Tip: If your app shows a security check, simply scan the QR code above.
+                              </span>
 
                               {/* UPI Safety ID / Phone Badge */}
                               <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-[11px]">
@@ -1378,6 +1381,9 @@ export function PaymentSelectionModal({
                       </div>
                       <ExternalLink className="w-4 h-4 text-[#16031E] group-hover:translate-x-0.5 transition-transform shrink-0" />
                     </a>
+                    <span className="block text-[10px] text-white/50 text-center">
+                      Tip: If BHIM or Paytm shows a security check, use Option 2 (QR Code) above.
+                    </span>
 
                     {/* Active App Opening Notice */}
                     {openingApp && (
