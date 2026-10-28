@@ -185,8 +185,8 @@ export const initialSettings: StoreSettings = {
   shop_address: "Shop No. 12, Main Chowk, Kothal Kalan, Mahendragarh, Haryana 123029",
   announcement_message: "Celebrate Diwali with Shree Shyam Sweets — Authentic Pure Ghee Mithai in Kothal Kalan, Mahendragarh!",
   closure_message: "We have paused new orders for tonight to ensure timely delivery of all booked festival orders. Store will reopen tomorrow at 8:00 AM!",
-  upi_id: "shreeshyam@upi",
-  upi_payee_name: "Shree Shyam Sweets",
+  upi_id: "vinay20@kotakbank",
+  upi_payee_name: "VINAY",
 };
 
 export const initialOrders: Order[] = [

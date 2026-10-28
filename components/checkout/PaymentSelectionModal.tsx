@@ -190,37 +190,35 @@ export function PaymentSelectionModal({
     .replace(/[^0-9]/g, "");
   const storePhone = rawStorePhone.length >= 10 ? rawStorePhone.slice(-10) : "8290683668";
 
-  // Robust UPI ID resolution with phone number fallback for UPI safety compliance
+  // Robust UPI ID resolution: prioritize verified store UPI ID, env fallback, or default Kotak VPA
   let rawUpiId = (settings.upi_id || "").trim();
-  if (!rawUpiId || rawUpiId === "8290683668@upi") {
+  if (!rawUpiId || rawUpiId === "shreeshyam@upi" || rawUpiId === "8290683668@upi") {
     rawUpiId = (process.env.NEXT_PUBLIC_STORE_UPI_ID || "").trim();
   }
-  if (!rawUpiId || rawUpiId === "8290683668@upi") {
-    rawUpiId = storePhone ? `${storePhone}@upi` : "vinay20@kotakbank";
+  if (!rawUpiId || rawUpiId === "shreeshyam@upi" || rawUpiId === "8290683668@upi") {
+    rawUpiId = "vinay20@kotakbank";
   }
 
   // Ensure '@' is unescaped and whitespace trimmed
   let upiId = decodeURIComponent(rawUpiId).replace(/%40/g, "@").trim();
 
-  // If a 10-digit phone number was entered without handle, append @upi for UPI safety rules compliance
-  if (/^\d{10}$/.test(upiId)) {
-    upiId = `${upiId}@upi`;
-  }
+  // If handle is missing or malformed, fallback to verified Kotak VPA
   if (!upiId.includes("@")) {
-    upiId = storePhone ? `${storePhone}@upi` : "vinay20@kotakbank";
+    upiId = "vinay20@kotakbank";
   }
 
-  const payeeName = (settings.upi_payee_name || "Shree Shyam Sweets").trim();
-  // Nearest integer only (>0)
-  const formattedAmount = String(upiAmount);
+  const payeeName = (settings.upi_payee_name || process.env.NEXT_PUBLIC_STORE_UPI_NAME || "VINAY").trim();
+  // Exact 2 decimal places per NPCI specification (e.g. "150.00")
+  const formattedAmount = upiAmount.toFixed(2);
   // NPCI-compliant alphanumeric note without special characters/spaces to guarantee universal compatibility
   const cleanNote = "MithaaseOrder";
+  // Clean alphanumeric reference ID (max 35 chars, no hyphens) mandatory for UPI apps like PhonePe
+  const transactionRef = `MITH${Date.now().toString().slice(-8)}${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-  // NPCI UPI URI specification: P2P VPAs reject 'tr' or 36-char hyphenated UUIDs with 'Bad Request'.
-  // Using pure standard pa, pn, am, cu, tn parameters ensures 100% universal compatibility across all UPI apps.
+  // NPCI UPI URI specification: keep pa unencoded with raw '@' for universal parser compatibility, while encoding text fields
   const upiParams = `pa=${upiId}&pn=${encodeURIComponent(
     payeeName
-  )}&am=${formattedAmount}&cu=INR&tn=${cleanNote}`;
+  )}&am=${formattedAmount}&cu=INR&tn=${cleanNote}&tr=${transactionRef}`;
 
   const upiUri = `upi://pay?${upiParams}`;
 
@@ -233,7 +231,7 @@ export function PaymentSelectionModal({
     switch (app) {
       case "gpay":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;end`;
+          return `intent://pay?${params}#Intent;scheme=upi;package=com.google.android.apps.nbu.paisa.user;action=android.intent.action.VIEW;end;`;
         }
         if (isIos) {
           return `gpay://upi/pay?${params}`;
@@ -241,17 +239,17 @@ export function PaymentSelectionModal({
         return `tez://upi/pay?${params}`;
       case "phonepe":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=com.phonepe.app;end`;
+          return `intent://pay?${params}#Intent;scheme=upi;package=com.phonepe.app;action=android.intent.action.VIEW;end;`;
         }
         return `phonepe://pay?${params}`;
       case "paytm":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=net.one97.paytm;end`;
+          return `intent://pay?${params}#Intent;scheme=upi;package=net.one97.paytm;action=android.intent.action.VIEW;end;`;
         }
         return `paytmmp://pay?${params}`;
       case "bhim":
         if (isAndroid) {
-          return `intent://pay?${params}#Intent;scheme=upi;package=in.org.npci.upiapp;end`;
+          return `intent://pay?${params}#Intent;scheme=upi;package=in.org.npci.upiapp;action=android.intent.action.VIEW;end;`;
         }
         return `upi://pay?${params}`;
       default:
@@ -271,6 +269,29 @@ export function PaymentSelectionModal({
     setOpeningApp(appName);
 
     if (typeof window !== "undefined") {
+      let isAppOpened = false;
+
+      const cleanupListeners = () => {
+        window.removeEventListener("blur", onAppOpened);
+        document.removeEventListener("visibilitychange", onVisibilityChange);
+        window.removeEventListener("pagehide", onAppOpened);
+      };
+
+      const onAppOpened = () => {
+        isAppOpened = true;
+        cleanupListeners();
+      };
+
+      const onVisibilityChange = () => {
+        if (document.hidden || document.visibilityState === "hidden") {
+          onAppOpened();
+        }
+      };
+
+      window.addEventListener("blur", onAppOpened, { once: true });
+      document.addEventListener("visibilitychange", onVisibilityChange);
+      window.addEventListener("pagehide", onAppOpened, { once: true });
+
       // 1. Direct intent/scheme navigation
       try {
         window.location.assign(targetUrl);
@@ -278,22 +299,22 @@ export function PaymentSelectionModal({
         window.location.href = targetUrl;
       }
 
-      // 2. Failsafe timeout: if specific app intent doesn't launch (e.g. app not installed or blocked),
-      // smoothly fallback to universal upi:// scheme after a safe delay (3500ms) without cutting off target app launch
-      const fallbackTimer = setTimeout(() => {
-        try {
-          window.location.href = upiUri;
-        } catch (e) {
-          console.warn("Fallback navigation error:", e);
+      // 2. Failsafe timeout: ONLY triggers if user is STILL on the webpage (i.e. app failed to open / not installed)
+      // Never interrupts an active payment screen if the user switched to the app
+      setTimeout(() => {
+        cleanupListeners();
+        if (isAppOpened || document.hidden || document.visibilityState === "hidden") {
+          return;
+        }
+
+        if (app !== "generic") {
+          try {
+            window.location.href = upiUri;
+          } catch (e) {
+            console.warn("Fallback navigation error:", e);
+          }
         }
       }, 3500);
-
-      // Cancel fallback if window loses focus (meaning the target UPI app opened successfully)
-      const onBlur = () => {
-        clearTimeout(fallbackTimer);
-        window.removeEventListener("blur", onBlur);
-      };
-      window.addEventListener("blur", onBlur, { once: true });
     }
   };
 
