@@ -44,6 +44,15 @@ function getAppBaseUrl(): string {
   return "https://mithaase.vercel.app";
 }
 
+function cleanDisplayAddress(address?: string | null, locality?: string | null): string {
+  const cleanAddr = (address || "").replace(/Pending checkout address/gi, "").trim();
+  const cleanLoc = (locality || "").replace(/Pending Locality/gi, "").trim();
+  if (cleanAddr && cleanLoc) return `${cleanAddr}, ${cleanLoc}`;
+  if (cleanAddr) return cleanAddr;
+  if (cleanLoc) return cleanLoc;
+  return "Doorstep Delivery";
+}
+
 /**
  * Authoritative Unified Email Dispatcher
  * Dispatches via Resend API if configured, falls back to SMTP, and logs in development.
@@ -340,7 +349,7 @@ export async function sendOrderConfirmedEmail(
               </tr>
               <tr>
                 <td style="color: #A89587; font-size: 12px; padding: 4px 0;">Address:</td>
-                <td style="color: #FFF8EE; font-size: 12px; text-align: right; padding: 4px 0;">${order.delivery_address}, ${order.locality}</td>
+                <td style="color: #FFF8EE; font-size: 12px; text-align: right; padding: 4px 0;">${cleanDisplayAddress(order.delivery_address, order.locality)}</td>
               </tr>
             </table>
           </div>
@@ -523,7 +532,7 @@ export async function sendOrderDeliveredBillEmail(
                 <span style="font-size: 10px; text-transform: uppercase; font-weight: bold; color: #8F7B70; display: block;">Delivery Details:</span>
                 <strong style="font-size: 12px; color: #10B981;">Delivered to Doorstep ✓</strong><br>
                 <span style="font-size: 11px; color: #4A1525;">${deliveredDate}</span><br>
-                <span style="font-size: 11px; color: #6B5E55;">${order.delivery_address}, ${order.locality}</span>
+                <span style="font-size: 11px; color: #6B5E55;">${cleanDisplayAddress(order.delivery_address, order.locality)}</span>
               </td>
             </tr>
           </table>
@@ -725,7 +734,7 @@ export async function sendOrderCancelledEmail(
             </div>
             <div class="meta-row">
               <span class="meta-label">Delivery Address:</span>
-              <span class="meta-value">${order.delivery_address}, ${order.locality}</span>
+              <span class="meta-value">${cleanDisplayAddress(order.delivery_address, order.locality)}</span>
             </div>
           </div>
 

@@ -81,6 +81,7 @@ interface PaymentSelectionModalProps {
   customerPhone: string;
   customerEmail?: string;
   locality: string;
+  deliveryAddress?: string;
   settings: StoreSettings;
   isSubmitting: boolean;
   onConfirmOrder: (data: {
@@ -105,6 +106,7 @@ export function PaymentSelectionModal({
   customerPhone,
   customerEmail,
   locality,
+  deliveryAddress,
   settings,
   isSubmitting,
   onConfirmOrder,
@@ -530,6 +532,8 @@ export function PaymentSelectionModal({
           customerName,
           customerPhone: phoneToUse,
           customerEmail,
+          deliveryAddress: (deliveryAddress || "").trim(),
+          locality: (locality || "").trim(),
           orderId: syncOrderNumber,
           customerVerified: Boolean(overridePhone) || isWhatsappVerified || force,
         }),
@@ -659,6 +663,8 @@ export function PaymentSelectionModal({
           couponCode: couponCode || "",
           upiId: cleanUpiId,
           customerName,
+          deliveryAddress: (deliveryAddress || "").trim(),
+          locality: (locality || "").trim(),
           origin: currentOrigin,
         }),
       });
@@ -1770,6 +1776,61 @@ export function PaymentSelectionModal({
                   <QrCode className="w-3.5 h-3.5" />
                   <span>Option 2: Scan Shop QR Code</span>
                 </button>
+              </div>
+
+              {/* Convenient WhatsApp Delivery Card for Manual UPI Pay */}
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-[#0B2516] via-[#123620] to-[#0B2516] border border-emerald-500/50 space-y-2.5 shadow-md">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span className="font-bold text-white text-xs">
+                      Send to WhatsApp (+91 {activePhone || customerPhone || "Mobile"})
+                    </span>
+                  </div>
+                  <span className="text-[9px] font-mono text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded-md">
+                    QR &amp; Link
+                  </span>
+                </div>
+
+                <p className="text-[10px] sm:text-[11px] text-emerald-200/80 leading-snug">
+                  Get shop UPI QR code image, amount (₹{formattedAmount}) and 1-tap UPI link directly in your WhatsApp.
+                </p>
+
+                <div className="flex flex-col sm:flex-row gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={handleSendToWhatsApp}
+                    disabled={isSendingWaInstructions}
+                    className="flex-1 py-2.5 px-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#16031E] font-black text-xs flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all cursor-pointer"
+                  >
+                    {isSendingWaInstructions ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#16031E]" />
+                        <span>Dispatching...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-3.5 h-3.5 fill-current" />
+                        <span>{waInstructionsSent ? "Resend to WhatsApp" : "📲 Send QR to WhatsApp"}</span>
+                      </>
+                    )}
+                  </button>
+
+                  <a
+                    href={waDirectLink || waFallbackLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-2.5 px-3.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all text-center"
+                  >
+                    <span>Open Chat ↗</span>
+                  </a>
+                </div>
+
+                {waSentMessage && (
+                  <p className="text-[10px] text-emerald-300 font-mono text-center pt-0.5">
+                    {waSentMessage}
+                  </p>
+                )}
               </div>
 
               {/* OPTION 1: CHOOSE APP (Prefilled UPI Link) */}

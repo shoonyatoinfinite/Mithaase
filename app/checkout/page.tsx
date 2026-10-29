@@ -1261,6 +1261,7 @@ export default function CheckoutPage() {
         customerPhone={customerPhone || user?.savedProfile?.customer_phone || user?.phone || ""}
         customerEmail={user?.email || loginEmail || signupEmail}
         locality={locality}
+        deliveryAddress={deliveryAddress}
         settings={settings}
         isSubmitting={isSubmitting}
         onConfirmOrder={handleConfirmOrder}

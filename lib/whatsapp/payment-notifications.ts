@@ -247,6 +247,15 @@ async function resolveAdminHelpline(): Promise<string> {
   }
 }
 
+function cleanLocationString(address?: string | null, locality?: string | null): string {
+  const cleanAddr = (address || "").replace(/Pending checkout address/gi, "").trim();
+  const cleanLoc = (locality || "").replace(/Pending Locality/gi, "").trim();
+  if (cleanAddr && cleanLoc) return `${cleanAddr}, ${cleanLoc}`;
+  if (cleanAddr) return cleanAddr;
+  if (cleanLoc) return cleanLoc;
+  return "Doorstep Delivery";
+}
+
 /**
  * Sends order confirmation and payment verified WhatsApp notification
  */
@@ -279,7 +288,7 @@ export async function notifyOrderConfirmed(params: {
     `💰 *Amount:* ₹${formattedAmount}\n` +
     `💳 *Payment:* ${paymentBadge}\n\n` +
     `🛒 *Items Ordered:*\n${params.itemsSummary}\n\n` +
-    `📍 *Delivery Location:*\n${params.deliveryAddress}, ${params.locality}\n\n` +
+    `📍 *Delivery Location:*\n${cleanLocationString(params.deliveryAddress, params.locality)}\n\n` +
     `Track your preparation and rider delivery live:\n` +
     `👉 ${trackingUrl}\n\n` +
     `— *Shree Shyam Sweets (Mithaasé)*\n` +
@@ -313,7 +322,7 @@ export async function notifyOrderDelivered(params: {
     `Hello *${params.customerName}*, your fresh sweets order *#${params.orderNumber}* has been successfully delivered to your doorstep!\n\n` +
     `📦 *Receipt No:* ${receiptNo}\n` +
     `💰 *Total Paid:* ₹${formattedAmount}\n` +
-    `📍 *Delivered To:* ${params.deliveryAddress}, ${params.locality}${emailNotice}\n\n` +
+    `📍 *Delivered To:* ${cleanLocationString(params.deliveryAddress, params.locality)}${emailNotice}\n\n` +
     `We hope you enjoy every bite of your fresh sweets! Thank you for choosing Shree Shyam Sweets for your festive celebrations. 🍬✨\n\n` +
     `— *Shree Shyam Sweets*\n` +
     `📞 Helpline: ${helpline}`;

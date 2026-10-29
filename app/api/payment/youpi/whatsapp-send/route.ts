@@ -17,6 +17,8 @@ export async function POST(req: Request) {
       couponCode,
       upiId,
       customerName,
+      deliveryAddress,
+      locality,
       origin,
     } = body;
 
@@ -87,10 +89,21 @@ export async function POST(req: Request) {
 
     const waLink = `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(prefilledText)}`;
 
-    // Ensure active payment session is bound & activated on YouPI PG
+    // Ensure active payment session is bound & activated on YouPI PG and delivery address is saved
     try {
       const { sql: dbSql } = await import("@/lib/neon/db");
       if (dbSql) {
+        if (deliveryAddress && locality) {
+          await dbSql.query(
+            `UPDATE orders SET
+               delivery_address = $1,
+               locality = $2,
+               updated_at = NOW()
+             WHERE (order_ref = $3 OR order_number = $3)
+               AND (delivery_address LIKE '%Pending%' OR delivery_address IS NULL);`,
+            [deliveryAddress.trim(), locality.trim(), finalOrderRef]
+          ).catch(() => {});
+        }
         const pRows = await dbSql.query(
           `SELECT id, youpi_payment_id FROM payments 
            WHERE youpi_order_ref = $1 OR attempt_ref LIKE $2

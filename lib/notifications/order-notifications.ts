@@ -90,6 +90,46 @@ async function resolveOrderEmail(order: Order): Promise<string | null> {
 }
 
 /**
+ * Resolves a real delivery address and locality for the customer, checking the order first, then fallback to database customer_accounts.
+ */
+async function resolveOrderAddress(order: Order): Promise<{ address: string; locality: string }> {
+  let addr = (order.delivery_address || "").replace(/Pending checkout address/gi, "").trim();
+  let loc = (order.locality || "").replace(/Pending Locality/gi, "").trim();
+
+  if ((!addr || !loc) && sql && order.customer_phone) {
+    try {
+      const cleanPhone = order.customer_phone.replace(/[^0-9]/g, "").slice(-10);
+      const rows = await sql.query(
+        `SELECT delivery_address, locality FROM customer_accounts WHERE (phone = $1 OR phone = $2) AND delivery_address IS NOT NULL AND delivery_address != '' LIMIT 1;`,
+        [cleanPhone, `+91${cleanPhone}`]
+      );
+      if (rows && rows.length > 0) {
+        if (!addr && rows[0].delivery_address) {
+          addr = rows[0].delivery_address.replace(/Pending checkout address/gi, "").trim();
+        }
+        if (!loc && rows[0].locality) {
+          loc = rows[0].locality.replace(/Pending Locality/gi, "").trim();
+        }
+        if (addr || loc) {
+          order.delivery_address = addr || "Doorstep Delivery";
+          order.locality = loc || "Local Area";
+          await sql.query(
+            `UPDATE orders SET delivery_address = $1, locality = $2 WHERE id = $3;`,
+            [order.delivery_address, order.locality, order.id]
+          ).catch(() => {});
+        }
+      }
+    } catch {}
+  }
+
+  const finalAddr = addr || "Doorstep Delivery";
+  const finalLoc = loc || "Local Area";
+  order.delivery_address = finalAddr;
+  order.locality = finalLoc;
+  return { address: finalAddr, locality: finalLoc };
+}
+
+/**
  * Sends order confirmation & payment verification notifications via Email and WhatsApp
  */
 export async function sendOrderConfirmedNotification(
@@ -109,7 +149,8 @@ export async function sendOrderConfirmedNotification(
 
     const settings = await getStoreSettings();
 
-    // 1. Resolve and Send Order Confirmation Email
+    // 1. Resolve real address and email for accurate notifications
+    await resolveOrderAddress(order);
     const targetEmail = await resolveOrderEmail(order);
     if (targetEmail) {
       order.customer_email = targetEmail;
@@ -172,7 +213,8 @@ export async function sendOrderDeliveredNotification(
 
     const settings = await getStoreSettings();
 
-    // 1. Resolve and Send Official Delivery Bill & Tax Invoice Email
+    // 1. Resolve real address and email for accurate delivery bill
+    await resolveOrderAddress(order);
     const targetEmail = await resolveOrderEmail(order);
     if (targetEmail) {
       order.customer_email = targetEmail;

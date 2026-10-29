@@ -36,6 +36,8 @@ export async function POST(req: Request) {
       customerName,
       customerPhone,
       customerEmail,
+      deliveryAddress,
+      locality,
       orderId,
       method = "intent",
       customerVerified = false,
@@ -52,6 +54,30 @@ export async function POST(req: Request) {
 
     const cleanPhone = (customerPhone || "").replace(/[^0-9]/g, "");
     const requestedOrderId = orderId || `ord-${Date.now()}`;
+
+    // Resolve real delivery address and locality
+    let resolvedDeliveryAddress = (deliveryAddress || "").trim();
+    let resolvedLocality = (locality || "").trim();
+
+    if ((!resolvedDeliveryAddress || !resolvedLocality) && sql && cleanPhone) {
+      try {
+        const custAccRows = await sql.query(
+          `SELECT delivery_address, locality FROM customer_accounts WHERE phone = $1 OR phone = $2 LIMIT 1;`,
+          [cleanPhone, `+91${cleanPhone}`]
+        ).catch(() => []);
+        if (custAccRows && custAccRows.length > 0) {
+          if (!resolvedDeliveryAddress && custAccRows[0].delivery_address) {
+            resolvedDeliveryAddress = custAccRows[0].delivery_address.trim();
+          }
+          if (!resolvedLocality && custAccRows[0].locality) {
+            resolvedLocality = custAccRows[0].locality.trim();
+          }
+        }
+      } catch {}
+    }
+
+    const finalDeliveryAddress = resolvedDeliveryAddress || "Doorstep Delivery";
+    const finalLocality = resolvedLocality || "Local Area";
     const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "https://youpi-pg-yer7.onrender.com";
     const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
     const merchantId = process.env.YOUPI_MERCHANT_ID || "00000000-0000-0000-0000-000000000001";
@@ -96,9 +122,11 @@ export async function POST(req: Request) {
                delivery_charge = $4,
                total_amount = $5,
                coupon_code = COALESCE($6, orders.coupon_code),
+               delivery_address = CASE WHEN orders.delivery_address LIKE '%Pending%' OR orders.delivery_address IS NULL THEN $7 ELSE orders.delivery_address END,
+               locality = CASE WHEN orders.locality LIKE '%Pending%' OR orders.locality IS NULL THEN $8 ELSE orders.locality END,
                updated_at = NOW()
-             WHERE id = $7;`,
-            [finalOrderRef, finalSubtotal, finalDiscount, finalDeliveryCharge, finalAmount, finalCouponCode, ord.id]
+             WHERE id = $9;`,
+            [finalOrderRef, finalSubtotal, finalDiscount, finalDeliveryCharge, finalAmount, finalCouponCode, finalDeliveryAddress, finalLocality, ord.id]
           ).catch(() => {});
         } else {
           // Pre-create pending order row so foreign key constraint in payments table is satisfied
@@ -115,15 +143,17 @@ export async function POST(req: Request) {
                total_amount, coupon_code, payment_method,
                payment_status, order_status, source, created_at, updated_at
              ) VALUES (
-               $1, $2, $3, $4, $5, $6, 'Pending checkout address', 'Pending Locality',
-               $7, $8, $9, $10, $11, 'upi', 'unpaid', 'pending_confirmation', 'online', NOW(), NOW()
+               $1, $2, $3, $4, $5, $6, $7, $8,
+               $9, $10, $11, $12, $13, 'upi', 'unpaid', 'pending_confirmation', 'online', NOW(), NOW()
              )
              ON CONFLICT (id) DO UPDATE SET
                subtotal = EXCLUDED.subtotal,
                discount_amount = EXCLUDED.discount_amount,
                delivery_charge = EXCLUDED.delivery_charge,
                total_amount = EXCLUDED.total_amount,
-               coupon_code = COALESCE(EXCLUDED.coupon_code, orders.coupon_code);`,
+               coupon_code = COALESCE(EXCLUDED.coupon_code, orders.coupon_code),
+               delivery_address = CASE WHEN orders.delivery_address LIKE '%Pending%' OR orders.delivery_address IS NULL THEN EXCLUDED.delivery_address ELSE orders.delivery_address END,
+               locality = CASE WHEN orders.locality LIKE '%Pending%' OR orders.locality IS NULL THEN EXCLUDED.locality ELSE orders.locality END;`,
             [
               targetOrderId,
               orderNumber,
@@ -131,6 +161,8 @@ export async function POST(req: Request) {
               customerName || "Customer",
               customerEmail || null,
               cleanPhone || "0000000000",
+              finalDeliveryAddress,
+              finalLocality,
               finalSubtotal,
               finalDiscount,
               finalDeliveryCharge,
@@ -145,8 +177,8 @@ export async function POST(req: Request) {
                  delivery_address, locality, subtotal, total_amount, payment_method,
                  payment_status, order_status, source, created_at, updated_at
                ) VALUES (
-                 $1, $2, $3, $4, $5, 'Pending checkout address', 'Pending Locality',
-                 $6, $6, 'upi', 'unpaid', 'pending_confirmation', 'online', NOW(), NOW()
+                 $1, $2, $3, $4, $5, $6, $7,
+                 $8, $8, 'upi', 'unpaid', 'pending_confirmation', 'online', NOW(), NOW()
                )
                ON CONFLICT (id) DO NOTHING;`,
               [
@@ -155,6 +187,8 @@ export async function POST(req: Request) {
                 customerName || "Customer",
                 customerEmail || null,
                 cleanPhone || "0000000000",
+                finalDeliveryAddress,
+                finalLocality,
                 finalAmount,
               ]
             ).catch(() => {});
