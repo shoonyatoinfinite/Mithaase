@@ -1751,7 +1751,7 @@ export async function updateOrderStatus(
 
   serverCache.invalidateTag("orders");
 
-  // Automated Customer Notifications: Email (Receipt / Confirmation) & WhatsApp
+  // Automated Customer Notifications: Email (Receipt / Confirmation / Cancellation) & WhatsApp
   try {
     if (newStatus === "confirmed" && prevStatus !== "confirmed") {
       const { sendOrderConfirmedNotification } = await import("@/lib/notifications/order-notifications");
@@ -1759,6 +1759,9 @@ export async function updateOrderStatus(
     } else if (newStatus === "delivered" && prevStatus !== "delivered") {
       const { sendOrderDeliveredNotification } = await import("@/lib/notifications/order-notifications");
       sendOrderDeliveredNotification(order.id).catch(() => {});
+    } else if (newStatus === "cancelled" && prevStatus !== "cancelled") {
+      const { sendOrderCancelledNotification } = await import("@/lib/notifications/order-notifications");
+      sendOrderCancelledNotification(order.id, note || order.cancellation_reason).catch(() => {});
     }
   } catch (notifErr) {
     console.warn("[STORE] Notification dispatch warning:", notifErr);

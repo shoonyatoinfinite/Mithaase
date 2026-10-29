@@ -110,6 +110,12 @@ async function processExpiration(req: Request) {
 
         processedCount++;
       });
+
+      // Dispatch cancellation email alert to customer
+      try {
+        const { sendOrderCancelledNotification } = await import("@/lib/notifications/order-notifications");
+        sendOrderCancelledNotification(exp.id, "Payment time limit exceeded (15 minutes)").catch(() => {});
+      } catch {}
     }
 
     if (processedCount > 0) {

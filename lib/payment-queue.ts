@@ -378,6 +378,10 @@ export async function cancelQueueSlot(orderId: string, reason = "User cancelled 
   if (wasActive) {
     // Promote next in line
     promoteNextQueuedOrder().catch(() => {});
+    try {
+      const { sendOrderCancelledNotification } = await import("@/lib/notifications/order-notifications");
+      sendOrderCancelledNotification(orderId, reason).catch(() => {});
+    } catch {}
   }
 
   return true;

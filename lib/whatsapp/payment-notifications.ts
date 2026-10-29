@@ -292,4 +292,34 @@ export async function notifyOrderDelivered(params: {
   return sendWhatsAppMessage(params.phone, message);
 }
 
+/**
+ * Sends order cancellation notification to customer via WhatsApp
+ */
+export async function notifyOrderCancelled(params: {
+  phone: string;
+  customerName: string;
+  orderNumber: string;
+  orderRef?: string;
+  amount: number;
+  paymentMethod?: string;
+  cancellationReason?: string;
+  refundNote?: string;
+}): Promise<boolean> {
+  const formattedAmount = Number(params.amount).toFixed(2);
+  const reasonText = params.cancellationReason ? `\n📝 *Reason:* ${params.cancellationReason}` : "";
+  const refundText = params.refundNote ? `\n💳 *Refund Details:* ${params.refundNote}` : "";
+
+  const message =
+    `⚠️ *Mithaasé — Order Cancellation Notice*\n\n` +
+    `Hello *${params.customerName}*, your order *#${params.orderNumber}* has been cancelled.${reasonText}\n\n` +
+    `💰 *Order Total:* ₹${formattedAmount}\n` +
+    `🏷️ *Payment Method:* ${(params.paymentMethod || "UPI").toUpperCase()}${refundText}\n\n` +
+    `If you have questions or believe this was done in error, please reach out to our team:\n` +
+    `📞 Helpline: +91 9416262453\n\n` +
+    `— *Shree Shyam Sweets (Mithaasé)*`;
+
+  return sendWhatsAppMessage(params.phone, message);
+}
+
+
 

@@ -598,3 +598,216 @@ export async function sendOrderDeliveredBillEmail(
     html,
   });
 }
+
+// -----------------------------------------------------------------------------
+// Order Cancellation Email
+// -----------------------------------------------------------------------------
+
+export async function sendOrderCancelledEmail(
+  order: Order,
+  settings?: StoreSettings,
+  cancellationReason?: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!order.customer_email || !order.customer_email.includes("@")) {
+    return { success: false, error: "No customer email found on order" };
+  }
+
+  const appUrl = getAppBaseUrl();
+  const storeName = settings?.store_name || "Shree Shyam Sweets";
+  const helpline = settings?.business_phone || "+91 9416262453";
+  const shopAddress = settings?.shop_address || "Shop No. 12, Main Chowk, Kothal Kalan, Mahendragarh, Haryana 123029";
+  const reason = cancellationReason || order.cancellation_reason || "Cancelled as per customer or store request";
+
+  const orderDate = new Date(order.created_at).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const isPaid = order.payment_status === "paid" || (order.payment_method === "upi" && Boolean(order.upi_reference));
+  const refundNote = isPaid
+    ? `A full refund of ₹${Number(order.total_amount).toFixed(2)} has been queued/initiated to your original payment account. For UPI payments, refunds typically reflect within 24–48 business hours.`
+    : `Since this was a Cash on Delivery / Unpaid order, no payment deduction was made.`;
+
+  const itemsHtml = (order.items || [])
+    .map(
+      (item) => `
+      <tr>
+        <td style="padding: 10px 12px; border-bottom: 1px solid rgba(225, 29, 72, 0.2); color: #FFF8EE; font-size: 13px;">
+          <strong style="color: #FCA5A5;">${item.product_name_snapshot}</strong>
+          ${item.variant_name_snapshot ? `<br><span style="font-size: 11px; color: #D3BEB0;">${item.variant_name_snapshot}</span>` : ""}
+        </td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid rgba(225, 29, 72, 0.2); color: #FFF8EE; font-size: 13px; text-align: center;">
+          ${item.quantity}
+        </td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid rgba(225, 29, 72, 0.2); color: #FFF8EE; font-size: 13px; text-align: right;">
+          ₹${Number(item.unit_price).toFixed(2)}
+        </td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid rgba(225, 29, 72, 0.2); color: #FCA5A5; font-weight: bold; font-size: 13px; text-align: right;">
+          ₹${Number(item.line_total).toFixed(2)}
+        </td>
+      </tr>
+    `
+    )
+    .join("");
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Order Cancelled — ${storeName}</title>
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0E0114; margin: 0; padding: 20px; color: #FFF8EE; }
+        .wrapper { max-width: 600px; margin: 0 auto; background: #1C0324; border: 2px solid #E11D48; border-radius: 24px; overflow: hidden; box-shadow: 0 15px 50px rgba(0,0,0,0.8); }
+        .header { background: linear-gradient(135deg, #4C0519 0%, #1D0823 100%); padding: 28px 24px; text-align: center; border-bottom: 2px solid #E11D48; }
+        .brand { font-family: Georgia, serif; font-size: 26px; font-weight: 900; color: #FFF8EE; letter-spacing: 1px; margin: 0; }
+        .tagline { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #FDA4AF; font-weight: 700; margin-top: 4px; }
+        .content { padding: 28px 24px; }
+        .status-badge { display: inline-block; background: rgba(225, 29, 72, 0.2); border: 1px solid #E11D48; color: #FDA4AF; font-size: 12px; font-weight: 800; text-transform: uppercase; padding: 6px 16px; border-radius: 50px; margin-bottom: 16px; }
+        .reason-box { background: rgba(225, 29, 72, 0.1); border: 1px solid rgba(225, 29, 72, 0.4); border-radius: 16px; padding: 18px; margin: 20px 0; }
+        .meta-box { background: #14011B; border: 1px solid rgba(212, 175, 55, 0.3); border-radius: 16px; padding: 18px; margin: 20px 0; }
+        .meta-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; }
+        .meta-label { color: #A89587; }
+        .meta-value { color: #FFF8EE; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        th { text-align: left; padding: 10px 12px; background: rgba(255, 255, 255, 0.05); color: #FDA4AF; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+        .total-box { background: #250530; border-radius: 14px; padding: 16px; margin: 20px 0; border: 1px solid rgba(225, 29, 72, 0.4); }
+        .btn-browse { display: block; text-align: center; background: linear-gradient(135deg, #F5D061 0%, #D4AF37 100%); color: #16031E; text-decoration: none; font-weight: 900; font-size: 14px; padding: 14px 24px; border-radius: 50px; margin: 24px 0 12px 0; box-shadow: 0 4px 15px rgba(212, 175, 55, 0.4); }
+        .footer { font-size: 11px; color: #8F7B70; text-align: center; border-top: 1px solid rgba(255,255,255,0.1); padding: 20px 24px; background: #120118; }
+      </style>
+    </head>
+    <body>
+      <div class="wrapper">
+        <div class="header">
+          <div class="brand">Mithaasé</div>
+          <div class="tagline">${storeName} • Pure Desi Ghee</div>
+        </div>
+
+        <div class="content">
+          <div style="text-align: center;">
+            <div class="status-badge">Order Cancelled</div>
+            <h1 style="color: #FFF8EE; font-size: 22px; margin: 0 0 8px 0; font-family: Georgia, serif;">
+              Order #${order.order_number} Cancelled
+            </h1>
+            <p style="color: #D3BEB0; font-size: 13px; line-height: 1.5; margin: 0;">
+              Hello ${order.customer_name}, your order has been cancelled.
+            </p>
+          </div>
+
+          <div class="reason-box">
+            <span style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #FCA5A5; font-weight: bold; display: block; margin-bottom: 4px;">
+              Reason for Cancellation:
+            </span>
+            <div style="font-size: 13px; color: #FFF8EE; font-weight: 600; line-height: 1.4;">
+              ${reason}
+            </div>
+            <div style="font-size: 12px; color: #FDA4AF; margin-top: 10px; line-height: 1.4;">
+              ${refundNote}
+            </div>
+          </div>
+
+          <div class="meta-box">
+            <div class="meta-row">
+              <span class="meta-label">Order Number:</span>
+              <span class="meta-value">#${order.order_number}</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Placed On:</span>
+              <span class="meta-value">${orderDate}</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Payment Method:</span>
+              <span class="meta-value">${order.payment_method.toUpperCase()}${order.upi_reference ? ` (${order.upi_reference})` : ""}</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Delivery Address:</span>
+              <span class="meta-value">${order.delivery_address}, ${order.locality}</span>
+            </div>
+          </div>
+
+          ${
+            order.items && order.items.length > 0
+              ? `<table>
+                  <thead>
+                    <tr>
+                      <th>Cancelled Item</th>
+                      <th style="text-align: center;">Qty</th>
+                      <th style="text-align: right;">Price</th>
+                      <th style="text-align: right;">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${itemsHtml}
+                  </tbody>
+                </table>`
+              : ""
+          }
+
+          <div class="total-box">
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: #D3BEB0;">
+              <span>Subtotal:</span>
+              <span>₹${Number(order.subtotal).toFixed(2)}</span>
+            </div>
+            ${
+              order.discount_amount > 0
+                ? `<div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: #10B981;">
+                    <span>Discount:</span>
+                    <span>-₹${Number(order.discount_amount).toFixed(2)}</span>
+                  </div>`
+                : ""
+            }
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: #D3BEB0;">
+              <span>Delivery Fee:</span>
+              <span>₹${Number(order.delivery_charge).toFixed(2)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 15px; font-weight: 900; color: #FCA5A5; border-top: 1px solid rgba(225,29,72,0.3); padding-top: 8px;">
+              <span>Total Cancelled Amount:</span>
+              <span>₹${Number(order.total_amount).toFixed(2)}</span>
+            </div>
+          </div>
+
+          <a href="${appUrl}" class="btn-browse">Browse Store &amp; Reorder Sweets</a>
+
+          <div style="text-align: center; margin-top: 16px;">
+            <p style="font-size: 12px; color: #D3BEB0; margin: 0;">
+              Have questions or need assistance? Call our direct helpline at <strong style="color: #F5D061;">${helpline}</strong>.
+            </p>
+          </div>
+        </div>
+
+        <div class="footer">
+          <p style="margin: 0 0 6px 0; font-weight: bold; color: #D3BEB0;">
+            ${storeName} • Authentic Indian Sweets
+          </p>
+          <p style="margin: 0; font-size: 10px;">
+            ${shopAddress} | Helpline: ${helpline}
+          </p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  // Also dispatch a copy to admin if configured
+  const adminEmail = process.env.ADMIN_EMAIL || settings?.admin_email;
+  if (adminEmail && adminEmail.includes("@") && adminEmail.toLowerCase() !== order.customer_email.toLowerCase()) {
+    sendEmail({
+      to: adminEmail,
+      subject: `[Admin Alert] Order #${order.order_number} Cancelled (₹${Number(order.total_amount).toFixed(2)})`,
+      text: `Order #${order.order_number} for customer ${order.customer_name} (+91 ${order.customer_phone}) has been cancelled. Reason: ${reason}. Total amount: ₹${Number(order.total_amount).toFixed(2)}.`,
+      html,
+    }).catch(() => {});
+  }
+
+  return sendEmail({
+    to: order.customer_email,
+    subject: `⚠️ Order #${order.order_number} Cancelled — ${storeName}`,
+    text: `Hello ${order.customer_name}, your order #${order.order_number} has been cancelled. Reason: ${reason}. ${refundNote} For questions, please call our helpline at ${helpline}.`,
+    html,
+  });
+}
+

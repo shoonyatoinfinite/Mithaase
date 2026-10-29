@@ -5,14 +5,15 @@
  */
 
 import { getOrderById, getStoreSettings } from "@/lib/data/store";
-import { sendOrderConfirmedEmail, sendOrderDeliveredBillEmail } from "@/lib/email/mailer";
-import { notifyOrderConfirmed, notifyOrderDelivered } from "@/lib/whatsapp/payment-notifications";
+import { sendOrderConfirmedEmail, sendOrderDeliveredBillEmail, sendOrderCancelledEmail } from "@/lib/email/mailer";
+import { notifyOrderConfirmed, notifyOrderDelivered, notifyOrderCancelled } from "@/lib/whatsapp/payment-notifications";
 import { sql } from "@/lib/neon/db";
 import type { Order } from "@/types";
 
 // In-memory set to prevent duplicate notification bursts during the same server lifetime
 const sentConfirmationOrders = new Set<string>();
 const sentDeliveredOrders = new Set<string>();
+const sentCancellationOrders = new Set<string>();
 
 /**
  * Resolves a valid email for the customer, checking the order first, then fallback to database profile.
@@ -159,4 +160,68 @@ export async function sendOrderDeliveredNotification(
     console.error("[OrderNotification] sendOrderDeliveredNotification error:", msg);
   }
 }
+
+/**
+ * Sends order cancellation notification to customer and admin via Email and WhatsApp
+ */
+export async function sendOrderCancelledNotification(
+  orderOrId: string | Order,
+  reason?: string
+): Promise<void> {
+  try {
+    const order = typeof orderOrId === "string" ? await getOrderById(orderOrId) : orderOrId;
+    if (!order) {
+      console.warn("[OrderNotification] Order not found for cancellation notification:", orderOrId);
+      return;
+    }
+
+    const orderKey = `cancel-${order.id}-${order.order_number}`;
+    if (sentCancellationOrders.has(orderKey)) {
+      console.log(`[OrderNotification] Cancellation already dispatched for #${order.order_number}`);
+      return;
+    }
+    sentCancellationOrders.add(orderKey);
+
+    const settings = await getStoreSettings();
+    const finalReason = reason || order.cancellation_reason || "Cancelled as per customer or store request";
+
+    // 1. Resolve and Send Order Cancellation Email
+    const targetEmail = await resolveOrderEmail(order);
+    if (targetEmail) {
+      order.customer_email = targetEmail;
+      sendOrderCancelledEmail(order, settings, finalReason).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[OrderNotification] Cancellation email failed for #${order.order_number}:`, msg);
+      });
+    } else {
+      console.warn(`[OrderNotification] No valid email address found for order #${order.order_number} to send cancellation.`);
+    }
+
+    // 2. Send Order Cancellation WhatsApp Notice (if customer phone is available)
+    if (order.customer_phone) {
+      const isPaid = order.payment_status === "paid" || (order.payment_method === "upi" && Boolean(order.upi_reference));
+      const refundNote = isPaid
+        ? `Refund of ₹${Number(order.total_amount).toFixed(2)} has been queued to your original UPI payment method.`
+        : undefined;
+
+      notifyOrderCancelled({
+        phone: order.customer_phone,
+        customerName: order.customer_name || "Valued Customer",
+        orderNumber: order.order_number,
+        orderRef: order.order_ref,
+        amount: Number(order.total_amount) || 0,
+        paymentMethod: order.payment_method || "UPI",
+        cancellationReason: finalReason,
+        refundNote,
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[OrderNotification] WhatsApp cancellation failed for #${order.order_number}:`, msg);
+      });
+    }
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("[OrderNotification] sendOrderCancelledNotification error:", msg);
+  }
+}
+
 

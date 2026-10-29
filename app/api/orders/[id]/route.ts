@@ -212,6 +212,12 @@ export async function PATCH(
         return NextResponse.json({ success: true, message: "Delivery bill sent successfully" });
       }
 
+      if (body.action === "send_cancellation") {
+        const { sendOrderCancelledNotification } = await import("@/lib/notifications/order-notifications");
+        await sendOrderCancelledNotification(order.id, body.note || order.cancellation_reason);
+        return NextResponse.json({ success: true, message: "Cancellation alert sent successfully" });
+      }
+
       if (body.payment_status) {
         await updatePaymentStatus(id, body.payment_status as PaymentStatus, body.upi_reference);
       }
