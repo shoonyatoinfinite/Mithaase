@@ -87,6 +87,29 @@ export async function POST(req: Request) {
 
     const waLink = `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(prefilledText)}`;
 
+    // Ensure active payment session is bound & activated on YouPI PG
+    try {
+      const { sql: dbSql } = await import("@/lib/neon/db");
+      if (dbSql) {
+        const pRows = await dbSql.query(
+          `SELECT id, youpi_payment_id FROM payments 
+           WHERE youpi_order_ref = $1 OR attempt_ref LIKE $2
+           ORDER BY attempt_no DESC LIMIT 1;`,
+          [finalOrderRef, `${finalOrderRef}%`]
+        ).catch(() => []);
+        if (pRows && pRows[0]?.youpi_payment_id) {
+          const { activateYoupiSession } = await import("@/lib/payments/youpi-session");
+          await activateYoupiSession({
+            paymentId: pRows[0].youpi_payment_id,
+            customerPhone: cleanPhone,
+            customerName: customerName || "Customer",
+          }).catch((actErr) => {
+            console.warn("[WhatsApp Send] Session activation notice:", actErr);
+          });
+        }
+      }
+    } catch {}
+
     // Dispatch active payment session details to YouPI / Store Admin WhatsApp
     try {
       const { sql } = await import("@/lib/neon/db");

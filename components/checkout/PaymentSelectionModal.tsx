@@ -527,7 +527,7 @@ export function PaymentSelectionModal({
           customerPhone: phoneToUse,
           customerEmail,
           orderId: syncOrderNumber,
-          customerVerified: isWhatsappVerified || Boolean(overridePhone),
+          customerVerified: Boolean(overridePhone) || isWhatsappVerified || force,
         }),
       });
       const data = await res.json();

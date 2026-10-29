@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { sql } from "@/lib/neon/db";
 import { createAttempt, attachYoupi, markAttemptFailed } from "@/lib/payments";
 import { generateOrderRef } from "@/lib/utils/order-ref";
+import { activateYoupiSession } from "@/lib/payments/youpi-session";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +54,7 @@ export async function POST(req: Request) {
     const requestedOrderId = orderId || `ord-${Date.now()}`;
     const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "https://youpi-pg-yer7.onrender.com";
     const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
-    const merchantKey = process.env.YOUPI_MERCHANT_KEY || "00000000-0000-0000-0000-000000000001";
+    const merchantKey = process.env.YOUPI_MERCHANT_KEY || process.env.YOUPI_WEBHOOK_SECRET || "00000000-0000-0000-0000-000000000001";
     const adminToken = process.env.YOUPI_ADMIN_TOKEN || process.env.ADMIN_API_TOKEN || "";
 
     // 1. Ensure order exists in orders table and has an order_ref with correct subtotal & discount
@@ -189,8 +190,23 @@ export async function POST(req: Request) {
       };
     }
 
-    // 3. If attempt is reused and has already-attached YouPI data, return immediately (zero row spam)
+    // 3. If attempt is reused and has already-attached YouPI data, ensure it is activated and return
     if (attempt.reused && attempt.youpi_payment_id && attempt.payee_vpa) {
+      if (customerVerified && cleanPhone) {
+        try {
+          await activateYoupiSession({
+            youpiBaseUrl,
+            paymentId: attempt.youpi_payment_id,
+            customerPhone: cleanPhone,
+            customerName,
+            customerEmail,
+            merchantKey,
+            adminToken,
+          });
+        } catch (actErr) {
+          console.warn("[YouPI Create] Reused session activation notice:", actErr);
+        }
+      }
       return NextResponse.json({
         success: true,
         mode: "live",
@@ -236,7 +252,6 @@ export async function POST(req: Request) {
           orderId: attempt.attempt_ref, // Links YouPI payment directly to our attempt_ref
           amount: finalAmount,
           currency: "INR",
-          autoActivate: true,
           customerVerified: Boolean(customerVerified),
           customer: {
             name: customerName || "Guest Customer",
@@ -272,33 +287,47 @@ export async function POST(req: Request) {
           finalCheckoutUrl = `${youpiBaseUrl}/checkout/${pId}`;
         }
 
-        // Ensure active payment session is activated so YouPI admin & observer auto-verification detects it
-        try {
-          await fetch(`${youpiBaseUrl}/api/v1/payments/${pId}/activate`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Merchant-Key": merchantKey,
-              ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
-            },
-            signal: AbortSignal.timeout(4000),
-          }).catch(() => {});
-        } catch {}
-
-        // Fetch live state from YouPI-PG to obtain configured payeeVpa & payeeName
+        // Authoritatively activate payment session on YouPI PG so admin counter & auto-verification detect it immediately
         let payeeVpa = "";
         let payeeName = "";
-        try {
-          const stateRes = await fetch(`${youpiBaseUrl}/api/v1/checkout/${pId}/state`, {
-            signal: AbortSignal.timeout(5000),
-          });
-          if (stateRes.ok) {
-            const stateData = await stateRes.json();
-            payeeVpa = stateData.payeeVpa || stateData.vpa || "";
-            payeeName = stateData.payeeName || stateData.merchantName || "";
+        let upiUri = "";
+
+        if (customerVerified || cleanPhone) {
+          try {
+            const actResult = await activateYoupiSession({
+              youpiBaseUrl,
+              paymentId: pId,
+              customerPhone: cleanPhone,
+              customerName,
+              customerEmail,
+              merchantKey,
+              adminToken,
+            });
+            if (actResult.success) {
+              if (actResult.payeeVpa) payeeVpa = actResult.payeeVpa;
+              if (actResult.payeeName) payeeName = actResult.payeeName;
+              if (actResult.upiUri) upiUri = actResult.upiUri;
+            }
+          } catch (actErr) {
+            console.warn("[YouPI Create] Session activation notice:", actErr);
           }
-        } catch (stateErr) {
-          console.warn("[YouPI] State fetch warning:", stateErr);
+        }
+
+        // Fetch live state from YouPI-PG if payeeVpa not yet resolved
+        if (!payeeVpa) {
+          try {
+            const stateRes = await fetch(`${youpiBaseUrl}/api/v1/checkout/${pId}/state`, {
+              signal: AbortSignal.timeout(5000),
+            });
+            if (stateRes.ok) {
+              const stateData = await stateRes.json();
+              payeeVpa = stateData.payeeVpa || stateData.vpa || "";
+              payeeName = stateData.payeeName || stateData.merchantName || "";
+              if (!upiUri && stateData.upiUri) upiUri = stateData.upiUri;
+            }
+          } catch (stateErr) {
+            console.warn("[YouPI] State fetch warning:", stateErr);
+          }
         }
 
         if (!payeeVpa) {
