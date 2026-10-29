@@ -54,8 +54,20 @@ export async function POST(req: Request) {
     const requestedOrderId = orderId || `ord-${Date.now()}`;
     const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "https://youpi-pg-yer7.onrender.com";
     const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
-    const merchantKey = process.env.YOUPI_MERCHANT_KEY || process.env.YOUPI_WEBHOOK_SECRET || "00000000-0000-0000-0000-000000000001";
-    const adminToken = process.env.YOUPI_ADMIN_TOKEN || process.env.ADMIN_API_TOKEN || "";
+    const merchantId = process.env.YOUPI_MERCHANT_ID || "00000000-0000-0000-0000-000000000001";
+    const merchantKey = process.env.YOUPI_MERCHANT_KEY || "";
+    let adminToken = process.env.YOUPI_ADMIN_TOKEN || process.env.ADMIN_API_TOKEN || "";
+
+    if (!adminToken && process.env.NODE_ENV !== "production") {
+      try {
+        const fs = await import("fs");
+        const path = await import("path");
+        const localSecretPath = path.resolve(process.cwd(), "../YouPI-PG/data/.secrets/admin_api_token");
+        if (fs.existsSync(localSecretPath)) {
+          adminToken = fs.readFileSync(localSecretPath, "utf8").trim();
+        }
+      } catch {}
+    }
 
     // 1. Ensure order exists in orders table and has an order_ref with correct subtotal & discount
     let targetOrderId = requestedOrderId;
@@ -190,37 +202,60 @@ export async function POST(req: Request) {
       };
     }
 
-    // 3. If attempt is reused and has already-attached YouPI data, ensure it is activated and return
-    if (attempt.reused && attempt.youpi_payment_id && attempt.payee_vpa) {
+    // 3. If attempt is reused and has already-attached real YouPI data, ensure it is activated and return
+    // Guard against dummy fallback IDs (yp_fb_ or yp_sbx_)
+    const isRealGatewayPayment =
+      attempt.youpi_payment_id &&
+      !attempt.youpi_payment_id.startsWith("yp_fb_") &&
+      !attempt.youpi_payment_id.startsWith("yp_sbx_");
+
+    if (attempt.reused && isRealGatewayPayment && attempt.payee_vpa) {
       if (customerVerified && cleanPhone) {
         try {
-          await activateYoupiSession({
+          const actResult = await activateYoupiSession({
             youpiBaseUrl,
-            paymentId: attempt.youpi_payment_id,
+            paymentId: attempt.youpi_payment_id!,
             customerPhone: cleanPhone,
             customerName,
             customerEmail,
             merchantKey,
             adminToken,
           });
+          if (actResult.success) {
+            return NextResponse.json({
+              success: true,
+              mode: "live",
+              paymentId: attempt.youpi_payment_id,
+              orderId: targetOrderId,
+              orderRef: finalOrderRef,
+              attemptRef: attempt.attempt_ref,
+              checkoutUrl: `${youpiBaseUrl}/checkout/${attempt.youpi_payment_id}`,
+              amount: finalAmount,
+              gatewayUrl: youpiBaseUrl,
+              payeeVpa: actResult.payeeVpa || attempt.payee_vpa,
+              payeeName: actResult.payeeName || process.env.NEXT_PUBLIC_STORE_UPI_NAME || "Shree Shyam Sweets",
+              reused: true,
+            });
+          }
         } catch (actErr) {
           console.warn("[YouPI Create] Reused session activation notice:", actErr);
         }
+      } else {
+        return NextResponse.json({
+          success: true,
+          mode: "live",
+          paymentId: attempt.youpi_payment_id,
+          orderId: targetOrderId,
+          orderRef: finalOrderRef,
+          attemptRef: attempt.attempt_ref,
+          checkoutUrl: `${youpiBaseUrl}/checkout/${attempt.youpi_payment_id}`,
+          amount: finalAmount,
+          gatewayUrl: youpiBaseUrl,
+          payeeVpa: attempt.payee_vpa,
+          payeeName: process.env.NEXT_PUBLIC_STORE_UPI_NAME || "Shree Shyam Sweets",
+          reused: true,
+        });
       }
-      return NextResponse.json({
-        success: true,
-        mode: "live",
-        paymentId: attempt.youpi_payment_id,
-        orderId: targetOrderId,
-        orderRef: finalOrderRef,
-        attemptRef: attempt.attempt_ref,
-        checkoutUrl: `${youpiBaseUrl}/checkout/${attempt.youpi_payment_id}`,
-        amount: finalAmount,
-        gatewayUrl: youpiBaseUrl,
-        payeeVpa: attempt.payee_vpa,
-        payeeName: process.env.NEXT_PUBLIC_STORE_UPI_NAME || "Shree Shyam Sweets",
-        reused: true,
-      });
     }
 
     // 4. Call live YouPI-PG Gateway passing attempt_ref in orderId and metadata
@@ -237,10 +272,12 @@ export async function POST(req: Request) {
 
       const gatewayHeaders: Record<string, string> = {
         "Content-Type": "application/json",
-        "X-Merchant-Id": merchantKey,
-        "X-Merchant-Key": merchantKey,
+        "X-Merchant-Id": merchantId,
         "Idempotency-Key": `idem_${attempt.attempt_ref}`,
       };
+      if (merchantKey) {
+        gatewayHeaders["X-Merchant-Key"] = merchantKey;
+      }
       if (adminToken) {
         gatewayHeaders["Authorization"] = `Bearer ${adminToken}`;
       }

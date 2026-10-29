@@ -62,16 +62,41 @@ export async function activateYoupiSession(options: ActivateSessionOptions): Pro
     };
   }
 
-  // 1. Forward-compatible explicit activation endpoint
+  let effectiveAdminToken =
+    adminToken ||
+    process.env.YOUPI_ADMIN_TOKEN ||
+    process.env.ADMIN_API_TOKEN ||
+    "";
+
+  if (!effectiveAdminToken && process.env.NODE_ENV !== "production") {
+    try {
+      const fs = await import("fs");
+      const path = await import("path");
+      const localSecretPath = path.resolve(process.cwd(), "../YouPI-PG/data/.secrets/admin_api_token");
+      if (fs.existsSync(localSecretPath)) {
+        effectiveAdminToken = fs.readFileSync(localSecretPath, "utf8").trim();
+      }
+    } catch {}
+  }
+  const merchantId = process.env.YOUPI_MERCHANT_ID || "00000000-0000-0000-0000-000000000001";
+
+  // 1. Explicit activation endpoint via YouPI Gateway (/api/v1/payments/:id/activate)
   try {
+    const actHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+      "X-Merchant-Id": merchantId,
+    };
+    if (effectiveAdminToken) {
+      actHeaders["Authorization"] = `Bearer ${effectiveAdminToken}`;
+    }
+    if (merchantKey) {
+      actHeaders["X-Merchant-Key"] = merchantKey;
+    }
+
     const actRes = await fetch(`${baseUrl}/api/v1/payments/${paymentId}/activate`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(merchantKey ? { "X-Merchant-Key": merchantKey } : {}),
-        ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
-      },
-      signal: AbortSignal.timeout(4000),
+      headers: actHeaders,
+      signal: AbortSignal.timeout(5000),
     });
     if (actRes.ok) {
       console.log(`[YouPI Session] Explicit /activate succeeded for ${paymentId}`);
