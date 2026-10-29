@@ -90,8 +90,9 @@ export function ProductDetailClient({ product }: { product: Product }) {
   }, [remainingStock, quantity]);
 
   const handleAddToCart = () => {
-    if (!selectedVariant || isOutOfStock || isMaxInCart) return;
-    const qtyToAdd = Math.min(quantity, remainingStock > 0 ? remainingStock : 1);
+    if (!selectedVariant || isOutOfStock || isMaxInCart || remainingStock <= 0) return;
+    const qtyToAdd = Math.min(quantity, remainingStock);
+    if (qtyToAdd <= 0) return;
     addItem(
       {
         productId: currentProduct.id,

@@ -60,9 +60,11 @@ export function ProductCard({ product }: ProductCardProps) {
   }, [remainingStock, quantity]);
 
   const handleAddToCart = () => {
-    if (!selectedVariant || isOutOfStock || isMaxInCart) return;
+    if (!selectedVariant || isOutOfStock || isMaxInCart || remainingStock <= 0) return;
 
-    const qtyToAdd = Math.min(quantity, remainingStock > 0 ? remainingStock : 1);
+    const qtyToAdd = Math.min(quantity, remainingStock);
+    if (qtyToAdd <= 0) return;
+
     const res = addItem(
       {
         productId: product.id,

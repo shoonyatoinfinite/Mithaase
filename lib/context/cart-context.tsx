@@ -336,7 +336,13 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     }
 
     const maxCanAdd = availableStock - currentQtyInCart;
-    const qtyToAdd = Math.max(1, Math.min(quantity, maxCanAdd));
+    const qtyToAdd = Math.min(quantity, maxCanAdd);
+    if (qtyToAdd <= 0) {
+      return {
+        success: false,
+        error: `Cannot add more. You already have all ${availableStock} available units of ${item.productName} in your cart.`,
+      };
+    }
 
     setItems((prev) => {
       const existingIndex = prev.findIndex((i) => i.variantId === item.variantId);
@@ -382,18 +388,21 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     const targetItem = items.find((i) => i.variantId === variantId);
     if (!targetItem) return { success: false, error: "Item not found" };
 
+    const hasKnownStock = typeof targetItem.maxStock === "number" && !isNaN(targetItem.maxStock);
     const availableStock = Math.max(0, Number(targetItem.maxStock) || 0);
-    if (availableStock > 0 && quantity > availableStock) {
+    if (hasKnownStock && quantity > availableStock) {
       setItems((prev) =>
         prev.map((i) =>
           i.variantId === variantId
-            ? { ...i, quantity: availableStock }
+            ? { ...i, quantity: Math.max(1, availableStock) }
             : i
         )
       );
       return {
         success: false,
-        error: `Only ${availableStock} units available in stock for ${targetItem.productName}.`,
+        error: availableStock > 0
+          ? `Only ${availableStock} units available in stock for ${targetItem.productName}.`
+          : `${targetItem.productName} is currently out of stock.`,
       };
     }
 

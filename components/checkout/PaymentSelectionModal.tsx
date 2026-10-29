@@ -176,24 +176,36 @@ export function PaymentSelectionModal({
   // Session WhatsApp verification and payment session initialization
   useEffect(() => {
     if (isOpen) {
+      const clean = (activePhone || customerPhone || "").replace(/[^0-9]/g, "").slice(-10);
+      let alreadyVerified = false;
+      if (clean && clean.length === 10) {
+        try {
+          const cached = localStorage.getItem(`youpi_wa_verified_${clean}`);
+          if (cached && Date.now() - Number(cached) < 24 * 60 * 60 * 1000) {
+            alreadyVerified = true;
+          }
+        } catch {}
+      }
+      setIsWhatsappVerified(alreadyVerified);
       setWaOtpSent(false);
       setWhatsappOtpInput("");
       setWaOtpError("");
       setWaCountdown(0);
       setInstantPaymentMode("qr");
       setShowCancelConfirm(false);
-      setIsWhatsappVerified(false);
       setWaInstructionsSent(false);
       setWaSentMessage("");
-      initYoupiPayment();
+      if (alreadyVerified && clean) {
+        initYoupiPayment(clean, true);
+      }
     }
   }, [isOpen, customerPhone]);
 
   useEffect(() => {
-    if (isOpen && selectedMethod === "upi_auto" && !youpiSession && !youpiLoading) {
-      initYoupiPayment();
+    if (isOpen && selectedMethod === "upi_auto" && isWhatsappVerified && !youpiSession && !youpiLoading) {
+      initYoupiPayment(activePhone || customerPhone);
     }
-  }, [isOpen, selectedMethod, youpiSession, youpiLoading]);
+  }, [isOpen, selectedMethod, isWhatsappVerified, youpiSession, youpiLoading]);
 
   const handleSendWhatsappOtp = async () => {
     const clean = activePhone.replace(/[^0-9]/g, "").slice(-10);
@@ -254,6 +266,11 @@ export function PaymentSelectionModal({
         throw new Error(data.error || "Incorrect WhatsApp OTP.");
       }
       setIsWhatsappVerified(true);
+      try {
+        localStorage.setItem(`youpi_wa_verified_${clean}`, Date.now().toString());
+      } catch {}
+      // Generate live payment session & database queries immediately upon WhatsApp verification
+      await initYoupiPayment(clean, true);
     } catch (err: any) {
       setWaOtpError(err.message || "Invalid OTP code.");
     } finally {
@@ -477,11 +494,12 @@ export function PaymentSelectionModal({
   };
 
   // Initialize or fetch YouPI payment session
-  const initYoupiPayment = async () => {
-    if (youpiSession && youpiStatus === "PENDING") return;
+  const initYoupiPayment = async (overridePhone?: string, force: boolean = false) => {
+    if (!force && youpiSession && youpiStatus === "PENDING") return;
     setYoupiLoading(true);
     setValidationError("");
 
+    const phoneToUse = (overridePhone || activePhone || customerPhone || "").replace(/[^0-9]/g, "").slice(-10);
     const year = new Date().getFullYear();
     const syncOrderNumber = `SSS-${year}-${Date.now().toString().slice(-4)}`;
 
@@ -492,7 +510,7 @@ export function PaymentSelectionModal({
         body: JSON.stringify({
           amount: upiAmount,
           customerName,
-          customerPhone,
+          customerPhone: phoneToUse,
           customerEmail,
           orderId: syncOrderNumber,
         }),
@@ -1195,7 +1213,7 @@ export function PaymentSelectionModal({
                           </div>
                           <button
                             type="button"
-                            onClick={initYoupiPayment}
+                            onClick={() => initYoupiPayment(activePhone || customerPhone, true)}
                             className="px-3 py-1.5 rounded-xl bg-amber-500 text-[#16031E] font-bold text-xs cursor-pointer"
                           >
                             Refresh Session

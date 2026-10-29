@@ -180,10 +180,10 @@ export default function CartPage() {
                           setCartError(null);
                         }
                       }}
-                      disabled={item.maxStock > 0 && item.quantity >= item.maxStock}
+                      disabled={typeof item.maxStock === "number" && item.quantity >= item.maxStock}
                       className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed rounded hover:bg-white/10 transition-colors"
                       aria-label="Increase quantity"
-                      title={item.maxStock > 0 && item.quantity >= item.maxStock ? `Max stock (${item.maxStock}) reached` : "Increase quantity"}
+                      title={typeof item.maxStock === "number" && item.quantity >= item.maxStock ? `Max stock (${item.maxStock}) reached` : "Increase quantity"}
                     >
                       <Plus className="w-3.5 h-3.5" />
                     </button>

@@ -536,7 +536,14 @@ export default function CheckoutPage() {
       setIsPaymentModalOpen(false);
       clearCart();
 
-      if (paymentData.isAutoUpi || paymentData.orderRef) {
+      const isPaymentVerified =
+        Boolean(paymentData.upiReference?.toUpperCase().startsWith("YOUPI:")) ||
+        data.payment_status === "paid" ||
+        data.order_status === "confirmed";
+
+      if (isPaymentVerified) {
+        router.push(`/order-confirmation/${data.id}`);
+      } else if (paymentData.isAutoUpi || paymentData.orderRef) {
         // Enqueue or claim active slot in Neon queue engine
         try {
           await fetch("/api/payment/queue/claim", {
