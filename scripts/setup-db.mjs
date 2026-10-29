@@ -246,6 +246,7 @@ async function main() {
       discount_value NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
       min_order_amount NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
       max_discount_amount NUMERIC(10, 2),
+      free_delivery BOOLEAN DEFAULT FALSE,
       is_active BOOLEAN DEFAULT TRUE,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );

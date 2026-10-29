@@ -2622,8 +2622,30 @@ export async function createCoupon(data: {
         newCoupon.is_active,
       ]);
     } catch (err: any) {
-      console.error("[STORE] createCoupon db error:", err);
-      return { success: false, error: err?.message || "Failed to create coupon in database" };
+      if (err?.message && String(err.message).toLowerCase().includes("free_delivery")) {
+        console.warn("[STORE] Retrying coupon insert without free_delivery column fallback:", err?.message);
+        try {
+          await sql.query(`
+            INSERT INTO coupons (id, code, description, discount_type, discount_value, min_order_amount, max_discount_amount, is_active, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW());
+          `, [
+            id,
+            newCoupon.code,
+            newCoupon.description,
+            newCoupon.discount_type,
+            newCoupon.discount_value,
+            newCoupon.min_order_amount,
+            newCoupon.max_discount_amount || null,
+            newCoupon.is_active,
+          ]);
+        } catch (retryErr: any) {
+          console.error("[STORE] createCoupon db fallback error:", retryErr);
+          return { success: false, error: retryErr?.message || "Failed to create coupon in database" };
+        }
+      } else {
+        console.error("[STORE] createCoupon db error:", err);
+        return { success: false, error: err?.message || "Failed to create coupon in database" };
+      }
     }
   }
 
@@ -2646,28 +2668,56 @@ export async function updateCoupon(
             return { success: false, error: "Another coupon with this code already exists." };
           }
         }
-        await sql.query(`
-          UPDATE coupons SET
-            code = COALESCE($1, code),
-            description = COALESCE($2, description),
-            discount_type = COALESCE($3, discount_type),
-            discount_value = COALESCE($4, discount_value),
-            min_order_amount = COALESCE($5, min_order_amount),
-            max_discount_amount = $6,
-            free_delivery = COALESCE($7, free_delivery),
-            is_active = COALESCE($8, is_active)
-          WHERE id = $9;
-        `, [
-          updates.code ? updates.code.trim().toUpperCase() : null,
-          updates.description !== undefined ? updates.description.trim() : null,
-          updates.discount_type || null,
-          updates.discount_value !== undefined ? Number(updates.discount_value) : null,
-          updates.min_order_amount !== undefined ? Number(updates.min_order_amount) : null,
-          updates.max_discount_amount !== undefined ? Number(updates.max_discount_amount) : null,
-          updates.free_delivery !== undefined ? updates.free_delivery : null,
-          updates.is_active !== undefined ? updates.is_active : null,
-          id,
-        ]);
+        try {
+          await sql.query(`
+            UPDATE coupons SET
+              code = COALESCE($1, code),
+              description = COALESCE($2, description),
+              discount_type = COALESCE($3, discount_type),
+              discount_value = COALESCE($4, discount_value),
+              min_order_amount = COALESCE($5, min_order_amount),
+              max_discount_amount = $6,
+              free_delivery = COALESCE($7, free_delivery),
+              is_active = COALESCE($8, is_active)
+            WHERE id = $9;
+          `, [
+            updates.code ? updates.code.trim().toUpperCase() : null,
+            updates.description !== undefined ? updates.description.trim() : null,
+            updates.discount_type || null,
+            updates.discount_value !== undefined ? Number(updates.discount_value) : null,
+            updates.min_order_amount !== undefined ? Number(updates.min_order_amount) : null,
+            updates.max_discount_amount !== undefined ? Number(updates.max_discount_amount) : null,
+            updates.free_delivery !== undefined ? updates.free_delivery : null,
+            updates.is_active !== undefined ? updates.is_active : null,
+            id,
+          ]);
+        } catch (updateErr: any) {
+          if (updateErr?.message && String(updateErr.message).toLowerCase().includes("free_delivery")) {
+            console.warn("[STORE] Retrying coupon update without free_delivery column fallback:", updateErr?.message);
+            await sql.query(`
+              UPDATE coupons SET
+                code = COALESCE($1, code),
+                description = COALESCE($2, description),
+                discount_type = COALESCE($3, discount_type),
+                discount_value = COALESCE($4, discount_value),
+                min_order_amount = COALESCE($5, min_order_amount),
+                max_discount_amount = $6,
+                is_active = COALESCE($7, is_active)
+              WHERE id = $8;
+            `, [
+              updates.code ? updates.code.trim().toUpperCase() : null,
+              updates.description !== undefined ? updates.description.trim() : null,
+              updates.discount_type || null,
+              updates.discount_value !== undefined ? Number(updates.discount_value) : null,
+              updates.min_order_amount !== undefined ? Number(updates.min_order_amount) : null,
+              updates.max_discount_amount !== undefined ? Number(updates.max_discount_amount) : null,
+              updates.is_active !== undefined ? updates.is_active : null,
+              id,
+            ]);
+          } else {
+            throw updateErr;
+          }
+        }
 
         const updated = await sql.query(`SELECT * FROM coupons WHERE id = $1 LIMIT 1;`, [id]);
         if (updated && updated.length > 0) {
