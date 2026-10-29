@@ -189,8 +189,12 @@ export function PaymentSelectionModal({
       if (clean && clean.length === 10) {
         try {
           const cached = localStorage.getItem(`youpi_wa_verified_${clean}`);
-          if (cached && Date.now() - Number(cached) < 24 * 60 * 60 * 1000) {
+          // Ongoing active session validity window is 10 minutes (600 seconds)
+          if (cached && Date.now() - Number(cached) < 10 * 60 * 1000) {
             alreadyVerified = true;
+          } else if (cached) {
+            localStorage.removeItem(`youpi_wa_verified_${clean}`);
+            sessionStorage.removeItem(`youpi_wa_verified_${clean}`);
           }
         } catch {}
       }
@@ -204,7 +208,7 @@ export function PaymentSelectionModal({
       setWaInstructionsSent(false);
       setWaSentMessage("");
       if (alreadyVerified && clean) {
-        initYoupiPayment(clean, true);
+        initYoupiPayment(clean, false);
       }
     }
   }, [isOpen, customerPhone]);
@@ -565,6 +569,43 @@ export function PaymentSelectionModal({
     }
   };
 
+  // Cancel active payment session on YouPI gateway, clear verification cache, and reset state
+  const handleCancelPaymentSession = async (reason: string = "Payment cancelled by user") => {
+    const clean = (activePhone || customerPhone || "").replace(/[^0-9]/g, "").slice(-10);
+    // 1. Clear verification cache so fresh OTP is required when a fresh session is started
+    if (clean) {
+      try {
+        localStorage.removeItem(`youpi_wa_verified_${clean}`);
+        sessionStorage.removeItem(`youpi_wa_verified_${clean}`);
+      } catch {}
+    }
+
+    // 2. Call backend cancel API to notify YouPI gateway & Neon DB
+    const pId = youpiSession?.paymentId;
+    const oId = youpiSession?.orderId;
+    const oRef = cleanOrderRef;
+    if (pId || oId || oRef) {
+      fetch("/api/payment/youpi/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          paymentId: pId,
+          orderId: oId,
+          orderRef: oRef,
+          reason,
+        }),
+      }).catch((err) => console.warn("[YouPI Cancel] Error:", err));
+    }
+
+    // 3. Reset all verification and session state
+    setIsWhatsappVerified(false);
+    setWaOtpSent(false);
+    setWhatsappOtpInput("");
+    setWaOtpError("");
+    setYoupiSession(null);
+    setYoupiStatus("IDLE");
+  };
+
   const currentOrigin =
     typeof window !== "undefined" && window.location.origin
       ? window.location.origin
@@ -646,17 +687,8 @@ export function PaymentSelectionModal({
           clearInterval(timer);
           setYoupiStatus("EXPIRED");
 
-          // Cancel active YouPI payment session on backend if exists
-          if (youpiSession?.paymentId) {
-            fetch("/api/payment/youpi/status", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                paymentId: youpiSession.paymentId,
-                status: "EXPIRED",
-              }),
-            }).catch(() => { });
-          }
+          // Cancel active YouPI payment session and release slot on backend
+          handleCancelPaymentSession("Payment session expired");
 
           // Auto-cancel payment, close modal, and return customer to cart
           onClose();
@@ -857,6 +889,14 @@ export function PaymentSelectionModal({
       }
 
       if (selectedMethod === "upi_auto") {
+        if (youpiStatus === "EXPIRED") {
+          await handleCancelPaymentSession("Restarting expired session");
+          return;
+        }
+        if (!isWhatsappVerified) {
+          setValidationError("Please verify your WhatsApp number with the OTP code above before placing order.");
+          return;
+        }
         await onConfirmOrder({
           paymentMethod: "upi",
           isAutoUpi: true,
@@ -1287,8 +1327,8 @@ export function PaymentSelectionModal({
                           </div>
                           <button
                             type="button"
-                            onClick={() => initYoupiPayment(activePhone || customerPhone, true)}
-                            className="px-3 py-1.5 rounded-xl bg-amber-500 text-[#16031E] font-bold text-xs cursor-pointer"
+                            onClick={() => handleCancelPaymentSession("Payment session refreshed by customer")}
+                            className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#16031E] font-bold text-xs cursor-pointer transition-colors shadow-md"
                           >
                             Refresh Session
                           </button>
@@ -2068,6 +2108,11 @@ export function PaymentSelectionModal({
                     <AlertCircle className="w-4 h-4 text-amber-300" />
                     <span>Session Expired — Click to Restart</span>
                   </>
+                ) : !isWhatsappVerified ? (
+                  <>
+                    <MessageSquare className="w-4 h-4 text-[#16031E] fill-current" />
+                    <span>Verify WhatsApp OTP Above to Pay (₹{upiAmount})</span>
+                  </>
                 ) : (
                   <>
                     <Zap className="w-4 h-4 text-[#16031E] fill-current" />
@@ -2132,10 +2177,9 @@ export function PaymentSelectionModal({
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     setShowCancelConfirm(false);
-                    setYoupiSession(null);
-                    setYoupiStatus("IDLE");
+                    await handleCancelPaymentSession("Payment cancelled by customer");
                     onClose();
                   }}
                   className="flex-1 py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg transition-all active:scale-95 cursor-pointer"

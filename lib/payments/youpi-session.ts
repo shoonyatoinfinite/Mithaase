@@ -171,3 +171,4 @@ export async function activateYoupiSession(options: ActivateSessionOptions): Pro
     error: "Could not confirm session state after activation",
   };
 }
+
