@@ -60,8 +60,13 @@ export function DiwaliSpecials({ products }: DiwaliSpecialsProps) {
           ) || prod.variants[0];
 
     if (!v) return;
-    const effectiveStock = v.stock_quantity > 0 ? v.stock_quantity : 50;
-    addItem({
+    const realStock = Math.max(0, Number(v.stock_quantity) || 0);
+    if (realStock <= 0) return;
+
+    const inCartItem = items.find((it) => it.variantId === v.id);
+    if (inCartItem && inCartItem.quantity >= realStock) return;
+
+    const res = addItem({
       productId: prod.id,
       variantId: v.id,
       productName: prod.name,
@@ -69,10 +74,12 @@ export function DiwaliSpecials({ products }: DiwaliSpecialsProps) {
       unit: v.unit,
       price: v.price,
       imageUrl: prod.image_url,
-      maxStock: effectiveStock,
+      maxStock: realStock,
     });
-    setAddedVariantId(v.id);
-    setTimeout(() => setAddedVariantId(null), 1500);
+    if (res.success) {
+      setAddedVariantId(v.id);
+      setTimeout(() => setAddedVariantId(null), 1500);
+    }
   };
 
   return (

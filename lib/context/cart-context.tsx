@@ -89,10 +89,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
                 prod.name !== item.productName)
             ) {
               hasDiff = true;
+              const newMaxStock = Number(vr.stock_quantity);
               return {
                 ...item,
                 price: Number(vr.price),
-                maxStock: Number(vr.stock_quantity),
+                maxStock: newMaxStock,
+                quantity: Math.max(1, Math.min(newMaxStock > 0 ? newMaxStock : 1, item.quantity)),
                 variantName: vr.variant_name,
                 productName: prod.name,
               };
@@ -155,10 +157,12 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
                   vr.variant_name !== item.variantName)
               ) {
                 hasDiff = true;
+                const newMaxStock = Number(vr.stock_quantity);
                 return {
                   ...item,
                   price: Number(vr.price),
-                  maxStock: Number(vr.stock_quantity),
+                  maxStock: newMaxStock,
+                  quantity: Math.max(1, Math.min(newMaxStock > 0 ? newMaxStock : 1, item.quantity)),
                   variantName: vr.variant_name,
                   productName: prod.name,
                 };
@@ -315,19 +319,37 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       };
     }
 
+    const availableStock = Math.max(0, Number(item.maxStock) || 0);
+    if (availableStock <= 0) {
+      return {
+        success: false,
+        error: `${item.productName} (${item.variantName}) is currently out of stock.`,
+      };
+    }
+
+    const currentQtyInCart = existing ? existing.quantity : 0;
+    if (currentQtyInCart >= availableStock) {
+      return {
+        success: false,
+        error: `Cannot add more. You already have all ${availableStock} available units of ${item.productName} in your cart.`,
+      };
+    }
+
+    const maxCanAdd = availableStock - currentQtyInCart;
+    const qtyToAdd = Math.max(1, Math.min(quantity, maxCanAdd));
+
     setItems((prev) => {
       const existingIndex = prev.findIndex((i) => i.variantId === item.variantId);
-      const effectiveStock = Math.max(50, item.maxStock);
       if (existingIndex > -1) {
         const updated = [...prev];
         const newQty = Math.min(
-          effectiveStock,
-          (updated[existingIndex].quantity || 0) + quantity
+          availableStock,
+          (updated[existingIndex].quantity || 0) + qtyToAdd
         );
         updated[existingIndex] = {
           ...updated[existingIndex],
-          maxStock: effectiveStock,
-          quantity: Math.max(1, newQty),
+          maxStock: availableStock,
+          quantity: newQty,
         };
         return updated;
       }
@@ -335,8 +357,8 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         ...prev,
         {
           ...item,
-          maxStock: effectiveStock,
-          quantity: Math.max(1, Math.min(effectiveStock, quantity)),
+          maxStock: availableStock,
+          quantity: qtyToAdd,
         },
       ];
     });
@@ -360,6 +382,21 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     const targetItem = items.find((i) => i.variantId === variantId);
     if (!targetItem) return { success: false, error: "Item not found" };
 
+    const availableStock = Math.max(0, Number(targetItem.maxStock) || 0);
+    if (availableStock > 0 && quantity > availableStock) {
+      setItems((prev) =>
+        prev.map((i) =>
+          i.variantId === variantId
+            ? { ...i, quantity: availableStock }
+            : i
+        )
+      );
+      return {
+        success: false,
+        error: `Only ${availableStock} units available in stock for ${targetItem.productName}.`,
+      };
+    }
+
     const itemUnitWeight = parseWeightInKg(targetItem.variantName);
     const currentItemWeight = itemUnitWeight * targetItem.quantity;
     const newItemWeight = itemUnitWeight * quantity;
@@ -377,7 +414,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     setItems((prev) =>
       prev.map((i) =>
         i.variantId === variantId
-          ? { ...i, quantity: Math.min(i.maxStock, quantity) }
+          ? { ...i, quantity: Math.min(availableStock > 0 ? availableStock : i.maxStock, quantity) }
           : i
       )
     );

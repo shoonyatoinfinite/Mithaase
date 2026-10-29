@@ -30,6 +30,7 @@ export default function CartPage() {
   const { settings, isStoreClosed, isStoreShutoff } = useStoreSettings();
   const [isStoreClosedModalOpen, setIsStoreClosedModalOpen] = useState(false);
   const [isSessionExpiredNotice, setIsSessionExpiredNotice] = useState(false);
+  const [cartError, setCartError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window !== "undefined" && window.location.search.includes("sessionExpired=1")) {
@@ -109,6 +110,18 @@ export default function CartPage() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
             {/* Cart Items List */}
             <div className="lg:col-span-8 space-y-4">
+              {cartError && (
+                <div className="p-3.5 rounded-xl bg-amber-950/80 border border-amber-500/50 text-amber-200 text-xs sm:text-sm flex items-center justify-between gap-2 shadow-lg animate-in fade-in">
+                  <span>{cartError}</span>
+                  <button
+                    onClick={() => setCartError(null)}
+                    className="text-white/60 hover:text-white text-xs px-2 py-0.5 rounded bg-black/30"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
               {items.map((item) => (
                 <div
                   key={item.variantId}
@@ -136,12 +149,20 @@ export default function CartPage() {
                     <p className="text-xs text-white/50 mt-1">
                       ₹{item.price} per {item.unit || "unit"}
                     </p>
+                    {item.maxStock > 0 && item.quantity >= item.maxStock && (
+                      <span className="text-[10px] text-amber-400 font-bold block mt-1">
+                        ⚠️ Max available stock reached ({item.maxStock} in stock)
+                      </span>
+                    )}
                   </div>
 
                   {/* Quantity Stepper */}
                   <div className="flex items-center bg-[#16031E] border border-white/15 rounded-lg p-1">
                     <button
-                      onClick={() => updateQuantity(item.variantId, item.quantity - 1)}
+                      onClick={() => {
+                        setCartError(null);
+                        updateQuantity(item.variantId, item.quantity - 1);
+                      }}
                       className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white rounded hover:bg-white/10 transition-colors"
                       aria-label="Decrease quantity"
                     >
@@ -151,9 +172,18 @@ export default function CartPage() {
                       {item.quantity}
                     </span>
                     <button
-                      onClick={() => updateQuantity(item.variantId, item.quantity + 1)}
-                      className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white rounded hover:bg-white/10 transition-colors"
+                      onClick={() => {
+                        const res = updateQuantity(item.variantId, item.quantity + 1);
+                        if (!res.success && res.error) {
+                          setCartError(res.error);
+                        } else {
+                          setCartError(null);
+                        }
+                      }}
+                      disabled={item.maxStock > 0 && item.quantity >= item.maxStock}
+                      className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed rounded hover:bg-white/10 transition-colors"
                       aria-label="Increase quantity"
+                      title={item.maxStock > 0 && item.quantity >= item.maxStock ? `Max stock (${item.maxStock}) reached` : "Increase quantity"}
                     >
                       <Plus className="w-3.5 h-3.5" />
                     </button>

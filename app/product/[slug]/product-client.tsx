@@ -66,18 +66,32 @@ export function ProductDetailClient({ product }: { product: Product }) {
   const inCartItemForVariant = items.find(
     (it) => it.productId === currentProduct.id && it.variantId === selectedVariant?.id
   );
+  const inCartQty = inCartItemForVariant?.quantity || 0;
+  const availableStock = selectedVariant ? Math.max(0, selectedVariant.stock_quantity) : 0;
+  const remainingStock = Math.max(0, availableStock - inCartQty);
+
   const totalInCartForProduct = items
     .filter((it) => it.productId === currentProduct.id)
     .reduce((sum, it) => sum + it.quantity, 0);
 
-  const isOutOfStock = !selectedVariant || selectedVariant.stock_quantity <= 0;
+  const isOutOfStock = availableStock <= 0;
+  const isMaxInCart = availableStock > 0 && inCartQty >= availableStock;
   const isLowStock =
+    availableStock > 0 &&
     selectedVariant &&
-    selectedVariant.stock_quantity > 0 &&
-    selectedVariant.stock_quantity <= selectedVariant.low_stock_threshold;
+    availableStock <= selectedVariant.low_stock_threshold;
+
+  useEffect(() => {
+    if (remainingStock <= 0) {
+      setQuantity(1);
+    } else if (quantity > remainingStock) {
+      setQuantity(remainingStock);
+    }
+  }, [remainingStock, quantity]);
 
   const handleAddToCart = () => {
-    if (!selectedVariant || isOutOfStock) return;
+    if (!selectedVariant || isOutOfStock || isMaxInCart) return;
+    const qtyToAdd = Math.min(quantity, remainingStock > 0 ? remainingStock : 1);
     addItem(
       {
         productId: currentProduct.id,
@@ -87,9 +101,9 @@ export function ProductDetailClient({ product }: { product: Product }) {
         unit: selectedVariant.unit,
         price: selectedVariant.price,
         imageUrl: currentProduct.image_url,
-        maxStock: selectedVariant.stock_quantity,
+        maxStock: availableStock,
       },
-      quantity
+      qtyToAdd
     );
     setAdded(true);
     setTimeout(() => setAdded(false), 1500);
@@ -229,7 +243,8 @@ export function ProductDetailClient({ product }: { product: Product }) {
             <button
               type="button"
               onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-              className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+              disabled={quantity <= 1 || isMaxInCart}
+              className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed rounded-full hover:bg-white/10 transition-colors"
               aria-label="Decrease quantity"
             >
               <Minus className="w-4 h-4" />
@@ -240,11 +255,10 @@ export function ProductDetailClient({ product }: { product: Product }) {
             <button
               type="button"
               onClick={() =>
-                setQuantity((q) =>
-                  selectedVariant ? Math.min(selectedVariant.stock_quantity, q + 1) : q + 1
-                )
+                setQuantity((q) => Math.min(remainingStock > 0 ? remainingStock : 1, q + 1))
               }
-              className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+              disabled={quantity >= remainingStock || isMaxInCart}
+              className="w-10 h-10 flex items-center justify-center text-white/80 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed rounded-full hover:bg-white/10 transition-colors"
               aria-label="Increase quantity"
             >
               <Plus className="w-4 h-4" />
@@ -255,9 +269,9 @@ export function ProductDetailClient({ product }: { product: Product }) {
         <button
           type="button"
           onClick={handleAddToCart}
-          disabled={isOutOfStock}
+          disabled={isOutOfStock || isMaxInCart}
           className={`flex-1 w-full py-4 px-6 rounded-full font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-xl ${
-            isOutOfStock
+            isOutOfStock || isMaxInCart
               ? "bg-white/10 text-white/40 cursor-not-allowed border border-white/5"
               : added
               ? "bg-emerald-600 text-white border border-emerald-400"
@@ -271,6 +285,8 @@ export function ProductDetailClient({ product }: { product: Product }) {
             </>
           ) : isOutOfStock ? (
             <span>Currently Unavailable</span>
+          ) : isMaxInCart ? (
+            <span>Max in Cart ({availableStock} units)</span>
           ) : (
             <>
               <ShoppingBag className="w-4 h-4" />

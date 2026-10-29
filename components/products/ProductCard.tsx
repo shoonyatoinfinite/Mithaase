@@ -35,19 +35,34 @@ export function ProductCard({ product }: ProductCardProps) {
   const inCartItemForVariant = items.find(
     (it) => it.productId === product.id && it.variantId === selectedVariant?.id
   );
+  const inCartQty = inCartItemForVariant?.quantity || 0;
+  const availableStock = selectedVariant ? Math.max(0, selectedVariant.stock_quantity) : 0;
+  const remainingStock = Math.max(0, availableStock - inCartQty);
+
   const totalInCartForProduct = items
     .filter((it) => it.productId === product.id)
     .reduce((sum, it) => sum + it.quantity, 0);
 
-  const isOutOfStock = !selectedVariant || selectedVariant.stock_quantity <= 0;
+  const isOutOfStock = availableStock <= 0;
+  const isMaxInCart = availableStock > 0 && inCartQty >= availableStock;
   const isLowStock =
+    availableStock > 0 &&
     selectedVariant &&
-    selectedVariant.stock_quantity > 0 &&
-    selectedVariant.stock_quantity <= selectedVariant.low_stock_threshold;
+    availableStock <= selectedVariant.low_stock_threshold;
+
+  // Auto-clamp quantity selector when remaining stock changes
+  React.useEffect(() => {
+    if (remainingStock <= 0) {
+      setQuantity(1);
+    } else if (quantity > remainingStock) {
+      setQuantity(remainingStock);
+    }
+  }, [remainingStock, quantity]);
 
   const handleAddToCart = () => {
-    if (!selectedVariant || isOutOfStock) return;
+    if (!selectedVariant || isOutOfStock || isMaxInCart) return;
 
+    const qtyToAdd = Math.min(quantity, remainingStock > 0 ? remainingStock : 1);
     const res = addItem(
       {
         productId: product.id,
@@ -57,9 +72,9 @@ export function ProductCard({ product }: ProductCardProps) {
         unit: selectedVariant.unit,
         price: selectedVariant.price,
         imageUrl: product.image_url,
-        maxStock: selectedVariant.stock_quantity,
+        maxStock: availableStock,
       },
-      quantity
+      qtyToAdd
     );
 
     if (res.success) {
@@ -214,7 +229,8 @@ export function ProductCard({ product }: ProductCardProps) {
                 <button
                   type="button"
                   onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-white rounded hover:bg-white/10 transition-colors"
+                  disabled={quantity <= 1 || isMaxInCart}
+                  className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed rounded hover:bg-white/10 transition-colors"
                   aria-label="Decrease quantity"
                 >
                   <Minus className="w-3 h-3" />
@@ -225,11 +241,10 @@ export function ProductCard({ product }: ProductCardProps) {
                 <button
                   type="button"
                   onClick={() =>
-                    setQuantity((q) =>
-                      selectedVariant ? Math.min(selectedVariant.stock_quantity, q + 1) : q + 1
-                    )
+                    setQuantity((q) => Math.min(remainingStock > 0 ? remainingStock : 1, q + 1))
                   }
-                  className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-white rounded hover:bg-white/10 transition-colors"
+                  disabled={quantity >= remainingStock || isMaxInCart}
+                  className="w-7 h-7 flex items-center justify-center text-white/70 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed rounded hover:bg-white/10 transition-colors"
                   aria-label="Increase quantity"
                 >
                   <Plus className="w-3 h-3" />
@@ -240,15 +255,21 @@ export function ProductCard({ product }: ProductCardProps) {
             <button
               type="button"
               onClick={handleAddToCart}
-              disabled={isOutOfStock}
+              disabled={isOutOfStock || isMaxInCart}
               className={`h-9 px-3.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-bold transition-all ${
-                isOutOfStock
+                isOutOfStock || isMaxInCart
                   ? "bg-white/10 text-white/40 cursor-not-allowed border border-white/5"
                   : addedAnimation
                   ? "bg-emerald-600 text-white border border-emerald-400"
                   : "gold-gradient-btn"
               }`}
-              title={isOutOfStock ? "Out of stock" : "Add to cart"}
+              title={
+                isOutOfStock
+                  ? "Out of stock"
+                  : isMaxInCart
+                  ? `Maximum available stock (${availableStock}) already in cart`
+                  : "Add to cart"
+              }
             >
               {addedAnimation ? (
                 <>
@@ -257,6 +278,8 @@ export function ProductCard({ product }: ProductCardProps) {
                 </>
               ) : isOutOfStock ? (
                 <span>Sold Out</span>
+              ) : isMaxInCart ? (
+                <span>Max in Cart</span>
               ) : (
                 <>
                   <ShoppingBag className="w-3.5 h-3.5" />
