@@ -1,6 +1,0 @@
-fix(whatsapp): resolve QR message delivery pipeline and add customer-facing gateway route
-
-- Pointed notifyPaymentInstructions to YouPI's dedicated POST /api/v1/customer/send-payment-qr endpoint
-- Added X-Merchant-Key and webhook secret authorization fallbacks
-- Resolved 401 Unauthorized gateway error when dispatching payment QR details to customer WhatsApp
-- Improved user-facing delivery status feedback
