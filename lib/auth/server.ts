@@ -7,7 +7,8 @@ const resolvedBaseUrl =
 
 const resolvedCookieSecret =
   process.env.NEON_AUTH_COOKIE_SECRET ||
-  "88d0344211d77e4394f7a4cece6e2588472216ec9a137f5db1e88fc5db614abe";
+  process.env.SESSION_SECRET ||
+  "default_fallback_session_cookie_secret_key_32_chars";
 
 export const auth = createNeonAuth({
   baseUrl: resolvedBaseUrl,
