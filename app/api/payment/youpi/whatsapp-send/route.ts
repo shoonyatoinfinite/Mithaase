@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { notifyPaymentInstructions } from "@/lib/whatsapp/payment-notifications";
+import { notifyPaymentInstructions, getAppBaseUrl } from "@/lib/whatsapp/payment-notifications";
 import { normalizeAndValidateWhatsAppPhone } from "@/lib/utils/phone";
 
 export const dynamic = "force-dynamic";
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { phone, orderRef, amount, upiId, customerName } = body;
+    const { phone, orderRef, amount, upiId, customerName, origin } = body;
 
     if (!phone) {
       return NextResponse.json({ error: "Customer phone number is required" }, { status: 400 });
@@ -19,9 +19,24 @@ export async function POST(req: Request) {
     }
 
     const cleanPhone = phoneVal.dbFormat;
-    const finalOrderRef = orderRef || `MTH-${Date.now().toString().slice(-6)}`;
+    const finalOrderRef = (orderRef || `MTH-${Date.now().toString().slice(-6)}`).trim();
     const finalAmount = Math.max(1, Math.round(Number(amount) || 0));
     const finalUpiId = (upiId || process.env.NEXT_PUBLIC_STORE_UPI_ID || "shreeshyam@upi").trim();
+
+    // Dynamically resolve real domain from headers, client origin, or Vercel URL (never hardcoded)
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host");
+    const proto = req.headers.get("x-forwarded-proto") || "https";
+    const appBaseUrl = origin || (host ? `${proto}://${host}` : getAppBaseUrl());
+
+    const formattedAmount = finalAmount.toFixed(2);
+    const qrImageUrl = `${appBaseUrl}/api/payment/youpi/qr-image?orderRef=${encodeURIComponent(
+      finalOrderRef
+    )}&amount=${formattedAmount}&upiId=${encodeURIComponent(finalUpiId)}`;
+    const upiIntentUri = `upi://pay?pa=${finalUpiId}&pn=${encodeURIComponent(
+      "Mithaase"
+    )}&cu=INR&am=${formattedAmount}&tr=${encodeURIComponent(
+      finalOrderRef
+    )}&tn=${encodeURIComponent(`Order ${finalOrderRef}`)}`;
 
     const sent = await notifyPaymentInstructions({
       phone: cleanPhone,
@@ -29,25 +44,33 @@ export async function POST(req: Request) {
       amount: finalAmount,
       upiId: finalUpiId,
       customerName: customerName || "Customer",
+      baseUrl: appBaseUrl,
     });
 
-    const appBaseUrl =
-      process.env.NEXT_PUBLIC_APP_URL ||
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://mithaase.com");
+    const prefilledText =
+      `🍬 *Mithaasé — UPI Payment QR & Details*\n\n` +
+      `Hello *${customerName || "Customer"}*! Here are your payment details:\n\n` +
+      `📦 *Order Ref:* ${finalOrderRef}\n` +
+      `💰 *Exact Amount:* ₹${formattedAmount}\n` +
+      `💳 *UPI ID:* ${finalUpiId}\n` +
+      `⏳ *Time Limit:* Pay within 10 minutes\n\n` +
+      `🖼️ *Direct QR Code Image:* \n👉 ${qrImageUrl}\n\n` +
+      `⚡ *1-Tap Pay via UPI App:* \n👉 ${upiIntentUri}\n\n` +
+      `— *Shree Shyam Sweets (Mithaasé)*`;
 
-    const waLink = `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(
-      `🍬 Mithaasé Payment Details\nOrder Ref: ${finalOrderRef}\nAmount: ₹${finalAmount.toFixed(2)}\nUPI ID: ${finalUpiId}\nPay here: ${appBaseUrl}/pay/${encodeURIComponent(finalOrderRef)}`
-    )}`;
+    const waLink = `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(prefilledText)}`;
 
     return NextResponse.json({
       success: true,
       delivered: sent,
       phone: cleanPhone,
       orderRef: finalOrderRef,
+      qrImageUrl,
+      upiIntentUri,
       waLink,
       message: sent
-        ? `Payment instructions sent to your WhatsApp (+91 ${cleanPhone})`
-        : `Payment link prepared for WhatsApp (+91 ${cleanPhone})`,
+        ? `Payment QR & details dispatched to your WhatsApp (+91 ${cleanPhone}) ✓`
+        : `Payment QR prepared for WhatsApp (+91 ${cleanPhone})`,
     });
   } catch (error: any) {
     console.error("[WhatsApp Send Route Error]:", error);

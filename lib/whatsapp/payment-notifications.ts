@@ -19,14 +19,20 @@ function getYoupiConfig() {
   return { baseUrl, adminToken };
 }
 
-function getAppBaseUrl(): string {
+export function getAppBaseUrl(overrideUrl?: string): string {
+  if (overrideUrl && overrideUrl.startsWith("http")) {
+    return overrideUrl.replace(/\/+$/, "");
+  }
   if (process.env.NEXT_PUBLIC_APP_URL) {
     return process.env.NEXT_PUBLIC_APP_URL.replace(/\/+$/, "");
+  }
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.replace(/\/+$/, "")}`;
   }
   if (process.env.VERCEL_URL) {
     return `https://${process.env.VERCEL_URL.replace(/\/+$/, "")}`;
   }
-  return "https://mithaase.com";
+  return "https://mithaase.vercel.app";
 }
 
 /**
@@ -88,8 +94,9 @@ export async function notifyTurnStarted(params: {
   phone: string;
   orderRef: string;
   customerName?: string;
+  baseUrl?: string;
 }): Promise<boolean> {
-  const appUrl = getAppBaseUrl();
+  const appUrl = getAppBaseUrl(params.baseUrl);
   const payUrl = `${appUrl}/pay/${encodeURIComponent(params.orderRef)}`;
   const greeting = params.customerName ? `Hello *${params.customerName}*!` : "Hello!";
 
@@ -98,7 +105,7 @@ export async function notifyTurnStarted(params: {
     `${greeting} It's now your turn to complete your payment.\n\n` +
     `📦 *Order Ref:* ${params.orderRef}\n` +
     `⏳ *Payment Window:* 10 minutes\n\n` +
-    `Please tap the link below to verify your WhatsApp OTP and complete payment:\n` +
+    `Please tap the link below to view your payment QR and complete payment:\n` +
     `👉 ${payUrl}\n\n` +
     `_If payment is not completed within 10 minutes, the slot will be released to the next customer._`;
 
@@ -106,7 +113,7 @@ export async function notifyTurnStarted(params: {
 }
 
 /**
- * Sends payment instructions with UPI ID, exact amount, 10-minute warning, and direct QR tracker link
+ * Sends payment instructions with embedded QR image URL, UPI ID, exact amount, and 1-tap UPI link
  */
 export async function notifyPaymentInstructions(params: {
   phone: string;
@@ -114,22 +121,29 @@ export async function notifyPaymentInstructions(params: {
   amount: number;
   upiId: string;
   customerName?: string;
+  baseUrl?: string;
 }): Promise<boolean> {
-  const appUrl = getAppBaseUrl();
-  const payUrl = `${appUrl}/pay/${encodeURIComponent(params.orderRef)}`;
+  const appUrl = getAppBaseUrl(params.baseUrl);
   const formattedAmount = Number(params.amount).toFixed(2);
+  const cleanUpi = (params.upiId || "shreeshyam@upi").trim();
+  const cleanRef = params.orderRef.trim();
   const greeting = params.customerName ? `Hello *${params.customerName}*!` : "Hello!";
 
+  const qrImageUrl = `${appUrl}/api/payment/youpi/qr-image?orderRef=${encodeURIComponent(cleanRef)}&amount=${formattedAmount}&upiId=${encodeURIComponent(cleanUpi)}`;
+  const upiIntentUri = `upi://pay?pa=${cleanUpi}&pn=${encodeURIComponent("Mithaase")}&cu=INR&am=${formattedAmount}&tr=${encodeURIComponent(cleanRef)}&tn=${encodeURIComponent(`Order ${cleanRef}`)}`;
+
   const message =
-    `🍬 *Mithaasé — UPI Payment Details*\n\n` +
-    `${greeting} Your order is ready for payment.\n\n` +
-    `📦 *Order Ref:* ${params.orderRef}\n` +
+    `🍬 *Mithaasé — UPI Payment QR & Details*\n\n` +
+    `${greeting} Your order is confirmed and ready for payment.\n\n` +
+    `📦 *Order Ref:* ${cleanRef}\n` +
     `💰 *Exact Amount:* ₹${formattedAmount}\n` +
-    `💳 *UPI ID:* ${params.upiId}\n` +
+    `💳 *UPI ID:* ${cleanUpi}\n` +
     `⏳ *Time Limit:* Pay within 10 minutes\n\n` +
     `⚠️ *Important:* Please transfer the exact amount of *₹${formattedAmount}* for automated bank verification.\n\n` +
-    `📱 *Scan QR Code or 1-Tap Pay:* \n` +
-    `👉 ${payUrl}\n\n` +
+    `🖼️ *Direct QR Code Image:* \n` +
+    `👉 ${qrImageUrl}\n\n` +
+    `⚡ *1-Tap Pay via UPI App (GPay, PhonePe, Paytm, CRED):* \n` +
+    `👉 ${upiIntentUri}\n\n` +
     `— *Shree Shyam Sweets (Mithaasé)*`;
 
   return sendWhatsAppMessage(params.phone, message);

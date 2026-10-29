@@ -491,7 +491,7 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
                payment_method, payment_status, order_status, upi_reference, upi_screenshot,
                latitude, longitude, map_url, source, idempotency_key, booking_status, created_at, updated_at
              ) VALUES (
-               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, NOW(), NOW()
+               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, NOW(), NOW()
              );`,
             [
               orderId,

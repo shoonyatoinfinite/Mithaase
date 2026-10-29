@@ -1246,7 +1246,7 @@ export default function CheckoutPage() {
         onClose={() => setIsPaymentModalOpen(false)}
         amount={finalTotal}
         customerName={customerName}
-        customerPhone={customerPhone}
+        customerPhone={customerPhone || user?.savedProfile?.customer_phone || user?.phone || ""}
         customerEmail={user?.email || loginEmail || signupEmail}
         locality={locality}
         settings={settings}

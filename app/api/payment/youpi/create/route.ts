@@ -180,9 +180,16 @@ export async function POST(req: Request) {
     }
 
     // 4. Call live YouPI-PG Gateway passing attempt_ref in orderId and metadata
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host");
+    const proto = req.headers.get("x-forwarded-proto") || "https";
+    const appBaseUrl = host
+      ? `${proto}://${host}`
+      : process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://mithaase.vercel.app");
+
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      // Fast 3500ms timeout prevents freezing when Render/gateway is sleeping
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
 
       const gatewayRes = await fetch(`${youpiBaseUrl}/api/v1/payments`, {
         method: "POST",
@@ -201,7 +208,7 @@ export async function POST(req: Request) {
             email: customerEmail || "",
           },
           description: `Mithaase - Order ${finalOrderRef} (${attempt.attempt_ref})`,
-          returnUrl: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/order-confirmation/${finalOrderRef}`,
+          returnUrl: `${appBaseUrl}/order-confirmation/${finalOrderRef}`,
           metadata: {
             orderId: targetOrderId,
             orderRef: finalOrderRef,
@@ -267,6 +274,7 @@ export async function POST(req: Request) {
             amount: finalAmount,
             upiId: payeeVpa,
             customerName: customerName || "Customer",
+            baseUrl: appBaseUrl,
           }).catch((waErr) => {
             console.warn("[YouPI Create] WhatsApp instructions dispatch warning:", waErr);
           });
@@ -331,6 +339,7 @@ export async function POST(req: Request) {
         amount: finalAmount,
         upiId: storeVpa,
         customerName: customerName || "Customer",
+        baseUrl: appBaseUrl,
       }).catch(() => {});
     }
 

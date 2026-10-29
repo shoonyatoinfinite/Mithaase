@@ -139,6 +139,9 @@ export function PaymentSelectionModal({
   const [isVerifyingInstant, setIsVerifyingInstant] = useState(false);
 
   // WhatsApp Verification & Instruction States
+  const [activePhone, setActivePhone] = useState<string>(
+    (customerPhone || "").replace(/[^0-9]/g, "").slice(-10)
+  );
   const [isWhatsappVerified, setIsWhatsappVerified] = useState(false);
   const [whatsappOtpInput, setWhatsappOtpInput] = useState("");
   const [isSendingWaOtp, setIsSendingWaOtp] = useState(false);
@@ -150,6 +153,14 @@ export function PaymentSelectionModal({
   const [isSendingWaInstructions, setIsSendingWaInstructions] = useState(false);
   const [waInstructionsSent, setWaInstructionsSent] = useState(false);
   const [waSentMessage, setWaSentMessage] = useState("");
+  const [waDirectLink, setWaDirectLink] = useState("");
+
+  useEffect(() => {
+    if (customerPhone) {
+      const clean = customerPhone.replace(/[^0-9]/g, "").slice(-10);
+      if (clean) setActivePhone(clean);
+    }
+  }, [customerPhone]);
 
   // Countdown timer effect for WhatsApp OTP resend
   useEffect(() => {
@@ -185,10 +196,15 @@ export function PaymentSelectionModal({
   }, [isOpen, selectedMethod, youpiSession, youpiLoading]);
 
   const handleSendWhatsappOtp = async () => {
+    const clean = activePhone.replace(/[^0-9]/g, "").slice(-10);
+    if (!clean || clean.length < 10) {
+      setWaOtpError("Please enter a valid 10-digit WhatsApp phone number.");
+      return;
+    }
+
     setIsSendingWaOtp(true);
     setWaOtpError("");
     try {
-      const clean = customerPhone.replace(/[^0-9]/g, "").slice(-10);
       const res = await fetch("/api/payment/youpi/whatsapp-otp/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -212,6 +228,11 @@ export function PaymentSelectionModal({
   };
 
   const handleVerifyWhatsappOtp = async () => {
+    const clean = activePhone.replace(/[^0-9]/g, "").slice(-10);
+    if (!clean || clean.length < 10) {
+      setWaOtpError("Please enter your 10-digit mobile number.");
+      return;
+    }
     if (!whatsappOtpInput.trim() || whatsappOtpInput.trim().length < 4) {
       setWaOtpError("Please enter the 6-digit WhatsApp verification code.");
       return;
@@ -219,7 +240,6 @@ export function PaymentSelectionModal({
     setIsVerifyingWaOtp(true);
     setWaOtpError("");
     try {
-      const clean = customerPhone.replace(/[^0-9]/g, "").slice(-10);
       const res = await fetch("/api/payment/youpi/whatsapp-otp/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -512,13 +532,38 @@ export function PaymentSelectionModal({
     }
   };
 
+  const currentOrigin =
+    typeof window !== "undefined" && window.location.origin
+      ? window.location.origin
+      : process.env.NEXT_PUBLIC_APP_URL || "https://mithaase.vercel.app";
+
+  const waFallbackLink = useMemo(() => {
+    const clean = activePhone.replace(/[^0-9]/g, "").slice(-10);
+    if (!clean) return "";
+    const prefilled =
+      `🍬 *Mithaasé — UPI Payment QR & Details*\n\n` +
+      `Hello ${customerName || "Customer"}! Payment details for Order #${cleanOrderRef}:\n\n` +
+      `💰 *Amount:* ₹${formattedAmount}\n` +
+      `💳 *UPI ID:* ${cleanUpiId}\n` +
+      `⏳ *Window:* 10 minutes\n\n` +
+      `🖼️ *Direct QR Code Image:* \n👉 ${currentOrigin}/api/payment/youpi/qr-image?orderRef=${cleanOrderRef}&amount=${formattedAmount}&upiId=${cleanUpiId}\n\n` +
+      `⚡ *1-Tap Pay Link:* \n👉 upi://pay?pa=${cleanUpiId}&pn=Mithaase&cu=INR&am=${formattedAmount}&tr=${cleanOrderRef}&tn=Order%20${cleanOrderRef}\n\n` +
+      `— Shree Shyam Sweets (Mithaasé)`;
+    return `https://wa.me/91${clean}?text=${encodeURIComponent(prefilled)}`;
+  }, [activePhone, customerName, cleanOrderRef, formattedAmount, cleanUpiId, currentOrigin]);
+
   // Dispatch payment details and QR directly to customer WhatsApp
   const handleSendToWhatsApp = async () => {
     if (isSendingWaInstructions) return;
+    const clean = activePhone.replace(/[^0-9]/g, "").slice(-10);
+    if (!clean || clean.length < 10) {
+      setWaSentMessage("Please provide a valid 10-digit WhatsApp phone number.");
+      return;
+    }
+
     setIsSendingWaInstructions(true);
     setWaSentMessage("");
     try {
-      const clean = customerPhone.replace(/[^0-9]/g, "").slice(-10);
       const res = await fetch("/api/payment/youpi/whatsapp-send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -528,6 +573,7 @@ export function PaymentSelectionModal({
           amount: upiAmount,
           upiId: cleanUpiId,
           customerName,
+          origin: currentOrigin,
         }),
       });
       const data = await res.json();
@@ -535,7 +581,10 @@ export function PaymentSelectionModal({
         throw new Error(data.error || "Failed to send WhatsApp message");
       }
       setWaInstructionsSent(true);
-      setWaSentMessage(data.message || `Payment details dispatched to +91 ${clean} via WhatsApp ✓`);
+      if (data.waLink) {
+        setWaDirectLink(data.waLink);
+      }
+      setWaSentMessage(data.message || `Payment QR & details sent to +91 ${clean} via WhatsApp ✓`);
     } catch (err: any) {
       setWaSentMessage(`Notification: ${err.message || "Message prepared"}. Tap "Open Chat" below.`);
     } finally {
@@ -969,21 +1018,45 @@ export function PaymentSelectionModal({
 
               {/* WHATSAPP OTP VERIFICATION GATE */}
               {!isWhatsappVerified ? (
-                <div className="p-4 rounded-2xl bg-gradient-to-br from-[#0B2516] to-[#16031E] border border-emerald-500/50 space-y-3.5 shadow-lg">
+                <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#0B2516] to-[#16031E] border border-emerald-500/50 space-y-3.5 shadow-lg">
                   <div className="flex items-start gap-3">
                     <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-400 shrink-0 shadow-inner">
                       <MessageSquare className="w-5 h-5" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-white">WhatsApp Verification Required</span>
+                        <span className="text-xs sm:text-sm font-bold text-white">WhatsApp Verification Required</span>
                         <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300">
                           Security Gate
                         </span>
                       </div>
                       <p className="text-[11px] text-emerald-200/80 mt-0.5 leading-relaxed">
-                        To protect your booking and unlock auto-confirmation, verify your WhatsApp number: <strong className="text-white">+91 {customerPhone}</strong>.
+                        To protect your festive booking and unlock auto-confirmation, verify your WhatsApp number.
                       </p>
+                    </div>
+                  </div>
+
+                  {/* Phone Input / Confirm Phone */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-emerald-300 block">
+                      WhatsApp Mobile Number:
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <div className="px-3 py-2 rounded-xl bg-white/10 border border-white/10 text-white font-mono text-xs font-bold shrink-0">
+                        +91
+                      </div>
+                      <input
+                        type="tel"
+                        maxLength={10}
+                        value={activePhone}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/[^0-9]/g, "").slice(0, 10);
+                          setActivePhone(val);
+                          setWaOtpError("");
+                        }}
+                        placeholder="10-digit mobile number"
+                        className="flex-1 bg-[#16031E] border border-emerald-500/40 focus:border-emerald-400 rounded-xl px-3 py-2 text-xs sm:text-sm text-white placeholder-white/30 font-mono tracking-wider outline-none"
+                      />
                     </div>
                   </div>
 
@@ -998,18 +1071,18 @@ export function PaymentSelectionModal({
                     <button
                       type="button"
                       onClick={handleSendWhatsappOtp}
-                      disabled={isSendingWaOtp}
-                      className="w-full py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#16031E] font-black text-xs flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
+                      disabled={isSendingWaOtp || activePhone.length < 10}
+                      className="w-full py-3 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-[#16031E] font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all cursor-pointer"
                     >
                       {isSendingWaOtp ? (
                         <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#16031E]" />
+                          <Loader2 className="w-4 h-4 animate-spin text-[#16031E]" />
                           <span>Dispatching WhatsApp OTP...</span>
                         </>
                       ) : (
                         <>
-                          <MessageSquare className="w-3.5 h-3.5 fill-current" />
-                          <span>Send WhatsApp OTP to +91 {customerPhone}</span>
+                          <MessageSquare className="w-4 h-4 fill-current" />
+                          <span>Send WhatsApp OTP to +91 {activePhone || "Mobile"}</span>
                         </>
                       )}
                     </button>
@@ -1025,13 +1098,13 @@ export function PaymentSelectionModal({
                           value={whatsappOtpInput}
                           onChange={(e) => setWhatsappOtpInput(e.target.value.replace(/[^0-9]/g, ""))}
                           placeholder="Enter 6-digit WhatsApp OTP"
-                          className="flex-1 bg-[#16031E] border border-emerald-500/40 focus:border-emerald-400 rounded-xl px-3 py-2 text-xs sm:text-sm text-white placeholder-white/30 font-mono tracking-widest text-center outline-none"
+                          className="flex-1 bg-[#16031E] border border-emerald-500/40 focus:border-emerald-400 rounded-xl px-3 py-2.5 text-xs sm:text-sm text-white placeholder-white/30 font-mono tracking-widest text-center outline-none"
                         />
                         <button
                           type="button"
                           onClick={handleVerifyWhatsappOtp}
                           disabled={isVerifyingWaOtp || whatsappOtpInput.trim().length < 4}
-                          className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-[#16031E] font-black text-xs shrink-0 shadow-md transition-all active:scale-95"
+                          className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-[#16031E] font-black text-xs shrink-0 shadow-md transition-all active:scale-95 cursor-pointer"
                         >
                           {isVerifyingWaOtp ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Verify Code"}
                         </button>
@@ -1059,7 +1132,7 @@ export function PaymentSelectionModal({
                 </div>
               ) : null}
 
-              {/* LOCKED QR CODE PLACEHOLDER (WHEN OTP IS NOT YET VERIFIED) */}
+              {/* LOCKED QR CODE PLACEHOLDER (STRICT: NO SEND TO WA OR QR UNTIL OTP VERIFIED) */}
               {!isWhatsappVerified ? (
                 <div className="p-6 rounded-3xl bg-[#16031E]/90 border border-white/10 text-center space-y-3 shadow-inner">
                   <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mx-auto text-amber-400 shadow-sm">
@@ -1068,50 +1141,8 @@ export function PaymentSelectionModal({
                   <div>
                     <h4 className="text-sm font-bold text-white">Payment QR Code is Locked</h4>
                     <p className="text-xs text-white/50 max-w-sm mx-auto mt-1 leading-relaxed">
-                      Verify your WhatsApp OTP above or send the payment details directly to your WhatsApp to pay instantly.
+                      Please verify your WhatsApp OTP above. Once verified, the live payment QR will appear and you can also request it directly on WhatsApp.
                     </p>
-                  </div>
-
-                  <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleSendToWhatsApp}
-                      disabled={isSendingWaInstructions}
-                      className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#16031E] font-black text-xs flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all cursor-pointer"
-                    >
-                      {isSendingWaInstructions ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <MessageSquare className="w-3.5 h-3.5 fill-current" />
-                      )}
-                      <span>{waInstructionsSent ? "Resend to WhatsApp" : `📲 Send QR to WhatsApp (+91 ${customerPhone})`}</span>
-                    </button>
-                    <a
-                      href={`https://wa.me/91${customerPhone.replace(/[^0-9]/g, "").slice(-10)}?text=${encodeURIComponent(
-                        `Mithaasé Payment — Order Ref: ${cleanOrderRef}\nAmount: ₹${formattedAmount}\nUPI ID: ${cleanUpiId}\nPay here: https://mithaase.com/pay/${encodeURIComponent(cleanOrderRef)}`
-                      )}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full sm:w-auto px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center justify-center gap-1 transition-all"
-                    >
-                      Open WhatsApp ↗
-                    </a>
-                  </div>
-
-                  {waSentMessage && (
-                    <p className="text-[11px] text-emerald-400 font-mono mt-1">
-                      {waSentMessage}
-                    </p>
-                  )}
-
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => setIsWhatsappVerified(true)}
-                      className="text-[11px] text-amber-300/80 hover:text-amber-200 underline pt-2 cursor-pointer"
-                    >
-                      Or show QR code on screen now →
-                    </button>
                   </div>
                 </div>
               ) : (
@@ -1121,7 +1152,7 @@ export function PaymentSelectionModal({
                   <div className="p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-xs flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Check className="w-4 h-4 text-emerald-400" />
-                      <span>WhatsApp Verified: <strong className="text-white">+91 {customerPhone}</strong></span>
+                      <span>WhatsApp Verified: <strong className="text-white">+91 {activePhone}</strong></span>
                     </div>
                     <span className="text-[10px] font-mono text-emerald-400/80 bg-emerald-500/10 px-2 py-0.5 rounded">
                       Verified ✓
@@ -1226,30 +1257,30 @@ export function PaymentSelectionModal({
                       {/* VIEW A: DYNAMIC QR & 1-TAP APPS (AUTO-CONFIRMATION) */}
                       {instantPaymentMode === "qr" && (
                         <div className="space-y-4">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                          <div className="flex flex-col sm:grid sm:grid-cols-2 gap-4 items-center">
                             {/* Dynamic Vector QR */}
-                            <div className="flex flex-col items-center justify-center p-3 rounded-2xl bg-white/5 border border-white/10 text-center">
-                              <div className="p-2 rounded-xl bg-white shadow-xl relative group">
+                            <div className="w-full flex flex-col items-center justify-center p-3 sm:p-4 rounded-2xl bg-white/5 border border-white/10 text-center">
+                              <div className="p-2 sm:p-3 rounded-2xl bg-white shadow-xl relative group">
                                 {qrDataUrl ? (
                                   <img
                                     src={qrDataUrl}
                                     alt="Dynamic Instant UPI QR"
-                                    className="w-40 h-40 object-contain mx-auto"
+                                    className="w-36 h-36 sm:w-44 sm:h-44 object-contain mx-auto"
                                   />
                                 ) : (
-                                  <div className="w-40 h-40 flex items-center justify-center text-gray-400 text-xs">
+                                  <div className="w-36 h-36 sm:w-44 sm:h-44 flex items-center justify-center text-gray-400 text-xs">
                                     Generating QR...
                                   </div>
                                 )}
                               </div>
-                              <span className="text-[11px] font-bold text-[#F5D061] mt-2 block">
+                              <span className="text-xs font-bold text-[#F5D061] mt-2 block">
                                 Scan with Any UPI App
                               </span>
-                              <span className="text-[10px] text-white/50">Prefilled amount: ₹{upiAmount}</span>
+                              <span className="text-[10px] text-white/50">Prefilled amount: ₹{formattedAmount}</span>
 
                               {/* Download QR Button & Gallery Hint */}
                               {qrDataUrl && (
-                                <div className="mt-2 flex flex-col items-center">
+                                <div className="mt-2.5 flex flex-col items-center">
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -1258,7 +1289,7 @@ export function PaymentSelectionModal({
                                       a.download = `Mithaase-QR-${cleanOrderRef || "order"}.png`;
                                       a.click();
                                     }}
-                                    className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-[#F5D061] text-[11px] font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                                    className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-[#F5D061] text-xs font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
                                   >
                                     <Download className="w-3.5 h-3.5" />
                                     <span>Download QR</span>
@@ -1270,60 +1301,73 @@ export function PaymentSelectionModal({
                               )}
                             </div>
 
-                            {/* App Launchers: 4 Major Apps + Fast Universal (Navi / Supermoney) */}
-                            <div className="space-y-2.5">
-                              {/* Session Guard Indicator */}
-                              {!isUpiSessionReady && (
-                                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-center gap-2">
-                                  <Loader2 className="w-4 h-4 animate-spin text-amber-400 shrink-0" />
-                                  <span>{youpiLoading ? "Connecting to instant payment queue..." : "Initializing payment session..."}</span>
+                            {/* App Launchers & WhatsApp Delivery Card */}
+                            <div className="w-full space-y-3">
+                              {/* Session Status Banner */}
+                              {youpiLoading && (
+                                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-[11px] flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400 shrink-0" />
+                                    <span>Syncing bank gateway...</span>
+                                  </div>
+                                  <span className="text-[9px] text-amber-300 font-mono">You can pay below</span>
                                 </div>
                               )}
 
-                              {/* WhatsApp Direct Pay Card */}
-                              <div className="p-3 rounded-2xl bg-gradient-to-r from-[#0B2516] to-[#123620] border border-emerald-500/40 flex items-center justify-between gap-2 shadow-md">
-                                <div className="flex items-center gap-2">
-                                  <MessageSquare className="w-4 h-4 text-emerald-400 shrink-0" />
-                                  <div>
-                                    <span className="block font-bold text-white text-xs">
-                                      Pay via WhatsApp (+91 {customerPhone})
-                                    </span>
-                                    <span className="block text-[9px] text-emerald-200/70">
-                                      Send QR, exact amount &amp; UPI ID to WhatsApp
+                              {/* Prominent WhatsApp Delivery Card */}
+                              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-[#0B2516] via-[#123620] to-[#0B2516] border border-emerald-500/50 space-y-2.5 shadow-md">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <MessageSquare className="w-4 h-4 text-emerald-400 shrink-0" />
+                                    <span className="font-bold text-white text-xs">
+                                      Send to WhatsApp (+91 {activePhone})
                                     </span>
                                   </div>
+                                  <span className="text-[9px] font-mono text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded-md">
+                                    QR &amp; Link
+                                  </span>
                                 </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
+
+                                <p className="text-[10px] sm:text-[11px] text-emerald-200/80 leading-snug">
+                                  Get QR image, amount (₹{formattedAmount}) and 1-tap UPI link directly in your chat.
+                                </p>
+
+                                <div className="flex flex-col sm:flex-row gap-2 pt-0.5">
                                   <button
                                     type="button"
                                     onClick={handleSendToWhatsApp}
                                     disabled={isSendingWaInstructions}
-                                    className="px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#16031E] font-black text-xs flex items-center gap-1 cursor-pointer transition-all active:scale-95"
+                                    className="flex-1 py-2.5 px-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#16031E] font-black text-xs flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all cursor-pointer"
                                   >
                                     {isSendingWaInstructions ? (
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                      <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#16031E]" />
+                                        <span>Dispatching...</span>
+                                      </>
                                     ) : (
-                                      <Send className="w-3.5 h-3.5" />
+                                      <>
+                                        <Send className="w-3.5 h-3.5 fill-current" />
+                                        <span>{waInstructionsSent ? "Resend to WhatsApp" : "📲 Send QR to WhatsApp"}</span>
+                                      </>
                                     )}
-                                    <span>{waInstructionsSent ? "Resend" : "Send"}</span>
                                   </button>
+
                                   <a
-                                    href={`https://wa.me/91${customerPhone.replace(/[^0-9]/g, "").slice(-10)}?text=${encodeURIComponent(
-                                      `Mithaasé Payment — Order Ref: ${cleanOrderRef}\nAmount: ₹${formattedAmount}\nUPI ID: ${cleanUpiId}\nPay here: https://mithaase.com/pay/${encodeURIComponent(cleanOrderRef)}`
-                                    )}`}
+                                    href={waDirectLink || waFallbackLink}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center gap-1 transition-all"
+                                    className="py-2.5 px-3.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all text-center"
                                   >
-                                    Open ↗
+                                    <span>Open Chat ↗</span>
                                   </a>
                                 </div>
+
+                                {waSentMessage && (
+                                  <p className="text-[10px] text-emerald-300 font-mono text-center pt-0.5">
+                                    {waSentMessage}
+                                  </p>
+                                )}
                               </div>
-                              {waSentMessage && (
-                                <p className="text-[10px] text-emerald-300 font-mono text-center">
-                                  {waSentMessage}
-                                </p>
-                              )}
 
                               {/* Universal 1-Tap UPI Button (Generic upi://pay intent) */}
                               <a
@@ -1332,19 +1376,16 @@ export function PaymentSelectionModal({
                                   e.preventDefault();
                                   handleOpenUpiApp("generic", "Any UPI App");
                                 }}
-                                aria-disabled={!isUpiSessionReady}
-                                className={`w-full py-3 px-3.5 rounded-xl gold-gradient-btn font-black text-xs flex items-center justify-between shadow-lg transition-all group ${
-                                  !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
-                                }`}
+                                className="w-full py-3 px-3.5 rounded-xl gold-gradient-btn font-black text-xs sm:text-sm flex items-center justify-between shadow-lg transition-all group cursor-pointer active:scale-95"
                               >
                                 <div className="flex items-center gap-2">
                                   <Zap className="w-4 h-4 text-[#16031E] shrink-0" />
                                   <div className="text-left">
                                     <span className="block font-black text-[#16031E] leading-tight text-xs sm:text-sm">
-                                      Pay with any UPI app (₹{upiAmount})
+                                      Pay with any UPI app (₹{formattedAmount})
                                     </span>
                                     <span className="block text-[9px] text-[#16031E]/80 font-medium">
-                                      Fastest 1-Tap checkout on Navi, Supermoney, CRED, GPay, PhonePe, Paytm
+                                      Fastest 1-Tap on Navi, Supermoney, CRED, GPay, PhonePe
                                     </span>
                                   </div>
                                 </div>
@@ -1352,7 +1393,7 @@ export function PaymentSelectionModal({
                               </a>
 
                               {/* Helper Text */}
-                              <p className="text-[10px] text-white/50 text-center pt-1">
+                              <p className="text-[10px] text-white/50 text-center pt-0.5">
                                 If the app doesn&apos;t open or declines, use the QR option
                               </p>
 

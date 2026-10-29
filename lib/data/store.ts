@@ -1863,6 +1863,15 @@ export async function updatePaymentStatus(
     }
   }
   serverCache.invalidateTag("orders");
+
+  if (newStatus === "paid") {
+    import("@/lib/notifications/order-notifications")
+      .then(({ sendOrderConfirmedNotification }) => {
+        sendOrderConfirmedNotification(order.id).catch(() => {});
+      })
+      .catch(() => {});
+  }
+
   return { success: true, order };
 }
 

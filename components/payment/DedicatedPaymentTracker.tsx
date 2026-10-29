@@ -358,122 +358,43 @@ export function DedicatedPaymentTracker({ orderRef }: DedicatedPaymentTrackerPro
               </div>
             </div>
 
-            {/* If WhatsApp OTP is not verified yet, show verification gate */}
-            {!isWhatsappVerified ? (
-              <div className="p-4 rounded-2xl bg-gradient-to-br from-[#0B2516] to-[#16031E] border border-emerald-500/50 space-y-3.5 shadow-lg">
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-400 shrink-0">
-                    <MessageSquare className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-white">Your Payment Turn Has Started!</h3>
-                    <p className="text-[11px] text-emerald-200/80 mt-0.5 leading-relaxed">
-                      Verify your WhatsApp number to start payment tracking:{" "}
-                      <strong className="text-white">+91 {customerPhone || "your phone"}</strong>
-                    </p>
-                  </div>
-                </div>
-
-                {waOtpError && (
-                  <div className="p-2.5 rounded-xl bg-red-950/80 border border-red-500/40 text-red-200 text-xs flex items-center gap-2">
-                    <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                    <span>{waOtpError}</span>
-                  </div>
-                )}
-
-                {!waOtpSent ? (
-                  <button
-                    type="button"
-                    onClick={handleSendWhatsappOtp}
-                    disabled={isSendingWaOtp}
-                    className="w-full py-2.5 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#16031E] font-black text-xs flex items-center justify-center gap-2 shadow-md active:scale-95 transition-all"
-                  >
-                    {isSendingWaOtp ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#16031E]" />
-                        <span>Dispatching WhatsApp OTP...</span>
-                      </>
-                    ) : (
-                      <>
-                        <MessageSquare className="w-3.5 h-3.5 fill-current" />
-                        <span>Send WhatsApp Verification Code</span>
-                      </>
-                    )}
-                  </button>
-                ) : (
-                  <div className="space-y-2.5">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="tel"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        autoComplete="one-time-code"
-                        maxLength={6}
-                        value={whatsappOtpInput}
-                        onChange={(e) => setWhatsappOtpInput(e.target.value.replace(/[^0-9]/g, ""))}
-                        placeholder="Enter 6-digit code"
-                        className="flex-1 bg-[#16031E] border border-emerald-500/40 focus:border-emerald-400 rounded-xl px-3 py-2 text-xs sm:text-sm text-white placeholder-white/30 font-mono tracking-widest text-center outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleVerifyWhatsappOtp}
-                        disabled={isVerifyingWaOtp || whatsappOtpInput.trim().length < 4}
-                        className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-[#16031E] font-black text-xs shrink-0 shadow-md transition-all active:scale-95"
-                      >
-                        {isVerifyingWaOtp ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Verify Code"}
-                      </button>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleSendWhatsappOtp}
-                      disabled={isSendingWaOtp}
-                      className="text-[10px] text-emerald-400 hover:underline block mx-auto font-medium"
-                    >
-                      Resend Code via WhatsApp
-                    </button>
-                  </div>
-                )}
+            {/* Live Payment Tracking Badge */}
+            <div className="p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-xs flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span>Automated Bank Tracking Active</span>
               </div>
-            ) : (
-              <>
-                {/* Verified Badge */}
-                <div className="p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-emerald-200 text-xs flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Check className="w-4 h-4 text-emerald-400" />
-                    <span>WhatsApp Verified &amp; Tracking Active</span>
-                  </div>
-                  <span className="text-[10px] font-mono text-emerald-400/80 bg-emerald-500/10 px-2 py-0.5 rounded">
-                    Active ✓
-                  </span>
-                </div>
+              <span className="text-[10px] font-mono text-emerald-400/80 bg-emerald-500/10 px-2 py-0.5 rounded">
+                Live Session ✓
+              </span>
+            </div>
 
-                {/* QR Code Container */}
-                <div className="bg-white p-4 rounded-2xl flex flex-col items-center justify-center shadow-lg">
-                  {qrDataUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={qrDataUrl}
-                      alt="UPI QR Code"
-                      className="w-56 h-56 object-contain rounded-lg"
-                    />
-                  ) : (
-                    <div className="w-56 h-56 flex items-center justify-center text-black/50 text-xs">
-                      Generating secure QR...
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-2 mt-2">
-                    <button
-                      onClick={handleDownloadQr}
-                      className="px-3 py-1.5 rounded-lg bg-[#16031E] text-[#F5D061] text-xs font-bold flex items-center gap-1.5 hover:bg-black transition-all shadow"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Download QR</span>
-                    </button>
-                    <span className="text-[10px] text-black/60 font-medium">Use &ldquo;Scan from gallery&rdquo;</span>
-                  </div>
+            {/* QR Code Container */}
+            <div className="bg-white p-4 rounded-2xl flex flex-col items-center justify-center shadow-lg">
+              {qrDataUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={qrDataUrl}
+                  alt="UPI QR Code"
+                  className="w-56 h-56 object-contain rounded-lg"
+                />
+              ) : (
+                <div className="w-56 h-56 flex items-center justify-center text-black/50 text-xs">
+                  Generating secure QR...
                 </div>
+              )}
+
+              <div className="flex items-center gap-2 mt-2">
+                <button
+                  onClick={handleDownloadQr}
+                  className="px-3 py-1.5 rounded-lg bg-[#16031E] text-[#F5D061] text-xs font-bold flex items-center gap-1.5 hover:bg-black transition-all shadow"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download QR</span>
+                </button>
+                <span className="text-[10px] text-black/60 font-medium">Use &ldquo;Scan from gallery&rdquo;</span>
+              </div>
+            </div>
 
                 {/* Amount & UPI Details Strip */}
                 <div className="grid grid-cols-2 gap-2">
@@ -522,8 +443,6 @@ export function DedicatedPaymentTracker({ orderRef }: DedicatedPaymentTrackerPro
                   </div>
                   <ExternalLink className="w-4 h-4 text-[#16031E]" />
                 </button>
-              </>
-            )}
 
             {/* Cancel Slot Button */}
             <div className="pt-2 text-center">
