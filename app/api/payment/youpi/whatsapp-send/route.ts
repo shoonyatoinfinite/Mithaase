@@ -125,40 +125,6 @@ export async function POST(req: Request) {
       }
     } catch {}
 
-    // Dispatch active payment session details to YouPI / Store Admin WhatsApp
-    try {
-      const { sql } = await import("@/lib/neon/db");
-      let adminPhone = "8290683668";
-      if (sql) {
-        const sRows = await sql.query(`SELECT business_phone, whatsapp_number FROM store_settings WHERE id = 1 LIMIT 1;`).catch(() => []);
-        if (sRows && sRows.length > 0) {
-          const raw = (sRows[0].whatsapp_number || sRows[0].business_phone || "").replace(/[^0-9]/g, "");
-          if (raw.length >= 10) adminPhone = raw.slice(-10);
-        }
-      }
-      if (adminPhone) {
-        const { sendWhatsAppMessage } = await import("@/lib/whatsapp/payment-notifications");
-        const adminAlert =
-          `🚨 *YouPI Active Payment Session Started*\n\n` +
-          `A customer has verified WhatsApp OTP and initiated payment:\n\n` +
-          `📦 *Order Ref:* ${finalOrderRef}\n` +
-          `👤 *Customer:* ${customerName || "Customer"} (+91 ${cleanPhone})\n` +
-          orderBreakdownText +
-          `💰 *Payable Amount:* *₹${formattedAmount}*\n` +
-          `💳 *UPI ID:* ${finalUpiId}\n` +
-          `⏳ *Window:* 10 Minutes (Live on YouPI for Auto-Verification)\n\n` +
-          `🖼️ *Direct QR:* ${qrImageUrl}\n` +
-          `⚡ *UPI URI:* ${upiIntentUri}\n\n` +
-          `— *Mithaasé Auto-Verification Engine*`;
-
-        sendWhatsAppMessage(adminPhone, adminAlert).catch((waErr) => {
-          console.warn("[Admin WA Session Alert Warning]:", waErr);
-        });
-      }
-    } catch (adminErr) {
-      console.warn("[Admin Notification Error]:", adminErr);
-    }
-
     return NextResponse.json({
       success: true,
       delivered: sent,

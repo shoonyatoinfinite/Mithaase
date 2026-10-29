@@ -681,37 +681,7 @@ const createdOrder = createdOrderResult;
 
   broadcastRealtimeEvent("order_created", fullOrder);
 
-  // 1. Dispatch immediate real-time Order Alert directly to Store Admin WhatsApp
-  try {
-    import("@/lib/whatsapp/payment-notifications")
-      .then(({ notifyAdminNewOrder }) => {
-        const itemsSummary =
-          Array.isArray(fullOrder.items) && fullOrder.items.length > 0
-            ? fullOrder.items
-                .map((it: any) => {
-                  const pName = it.product_name_snapshot || it.productName || "Sweet";
-                  const vName = it.variant_name_snapshot || it.variantName || "";
-                  const qty = it.quantity || 1;
-                  const total = Number(it.line_total ?? (Number(it.unit_price || 0) * qty));
-                  return `• ${qty}x ${pName}${vName ? ` (${vName})` : ""} — ₹${total.toFixed(2)}`;
-                })
-                .join("\n")
-            : "• Fresh Festive Sweets Assortment";
-
-        notifyAdminNewOrder({
-          order: fullOrder,
-          itemsSummary,
-          isBookingRequest: fullOrder.booking_status === "requested",
-        }).catch((err) => {
-          console.warn("[Checkout] Admin WhatsApp alert warning:", err);
-        });
-      })
-      .catch(() => {});
-  } catch (err) {
-    console.warn("[Checkout] Admin notification error:", err);
-  }
-
-  // 2. Dispatch automated customer confirmation for confirmed, COD, or booking request orders
+  // Dispatch automated order confirmation & real-time store admin alert for placed orders (confirmed, requested booking, COD, or manual UPI)
   import("@/lib/notifications/order-notifications")
     .then(({ sendOrderConfirmedNotification }) => {
       sendOrderConfirmedNotification(fullOrder).catch(() => {});
