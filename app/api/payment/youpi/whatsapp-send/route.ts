@@ -70,7 +70,7 @@ export async function POST(req: Request) {
       waLink,
       message: sent
         ? `Payment QR & details dispatched to your WhatsApp (+91 ${cleanPhone}) ✓`
-        : `Payment QR prepared for WhatsApp (+91 ${cleanPhone})`,
+        : `Payment details & QR prepared. Tap "Open Chat" below to send to your WhatsApp.`,
     });
   } catch (error: any) {
     console.error("[WhatsApp Send Route Error]:", error);

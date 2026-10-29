@@ -48,7 +48,35 @@ export async function sendWhatsAppMessage(toPhone: string, message: string): Pro
   const { baseUrl, adminToken } = getYoupiConfig();
   const cleanPhone = phoneVal.dbFormat; // 10 digits
   const intlPhone = `91${cleanPhone}`;
+  const webhookSecret = process.env.YOUPI_WEBHOOK_SECRET || process.env.YOUPI_MERCHANT_KEY || "";
 
+  // 1. Try first via customer-facing route (bypasses admin token barrier)
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const custRes = await fetch(`${baseUrl}/api/v1/customer/send-payment-qr`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mobileNumber: cleanPhone,
+        message,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (custRes.ok) {
+      const data = await custRes.json().catch(() => ({}));
+      if (data.delivered || data.success) {
+        console.log(`[WhatsApp Notification] Message delivered to ${cleanPhone} via customer channel`);
+        return true;
+      }
+    }
+  } catch (err: unknown) {
+    // Fall through to admin route attempt
+  }
+
+  // 2. Fallback to admin route with bearer or merchant authorization
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12000);
@@ -58,6 +86,11 @@ export async function sendWhatsAppMessage(toPhone: string, message: string): Pro
     };
     if (adminToken) {
       headers["Authorization"] = `Bearer ${adminToken}`;
+    } else if (webhookSecret) {
+      headers["Authorization"] = `Bearer ${webhookSecret}`;
+    }
+    if (webhookSecret) {
+      headers["X-Merchant-Key"] = webhookSecret;
     }
 
     const res = await fetch(`${baseUrl}/api/v1/admin/whatsapp/test-message`, {
@@ -146,6 +179,44 @@ export async function notifyPaymentInstructions(params: {
     `👉 ${upiIntentUri}\n\n` +
     `— *Shree Shyam Sweets (Mithaasé)*`;
 
+  const { baseUrl } = getYoupiConfig();
+  const phoneVal = normalizeAndValidateWhatsAppPhone(params.phone);
+  const cleanPhone = phoneVal.isValid ? phoneVal.dbFormat : params.phone.replace(/[^0-9]/g, "").slice(-10);
+
+  // 1. Direct gateway payment QR dispatch (customer route, zero auth hurdle)
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    const res = await fetch(`${baseUrl}/api/v1/customer/send-payment-qr`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mobileNumber: cleanPhone,
+        orderRef: cleanRef,
+        amount: params.amount,
+        upiId: cleanUpi,
+        customerName: params.customerName || "Customer",
+        qrImageUrl,
+        upiIntentUri,
+        message,
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data.delivered || data.success) {
+        console.log(`[WhatsApp Notification] Payment QR delivered via customer API to ${cleanPhone}`);
+        return true;
+      }
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[WhatsApp Notification] Customer payment QR route notice:`, msg);
+  }
+
+  // 2. Fallback to generic sender
   return sendWhatsAppMessage(params.phone, message);
 }
 
