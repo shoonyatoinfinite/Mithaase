@@ -73,6 +73,10 @@ interface PaymentSelectionModalProps {
   isOpen: boolean;
   onClose: () => void;
   amount: number;
+  subtotal?: number;
+  deliveryFee?: number;
+  discountAmount?: number;
+  couponCode?: string;
   customerName: string;
   customerPhone: string;
   customerEmail?: string;
@@ -93,6 +97,10 @@ export function PaymentSelectionModal({
   isOpen,
   onClose,
   amount,
+  subtotal,
+  deliveryFee,
+  discountAmount,
+  couponCode,
   customerName,
   customerPhone,
   customerEmail,
@@ -271,6 +279,8 @@ export function PaymentSelectionModal({
       } catch {}
       // Generate live payment session & database queries immediately upon WhatsApp verification
       await initYoupiPayment(clean, true);
+      // Immediately dispatch active session details to customer and YouPI admin WhatsApp
+      await handleSendToWhatsApp(clean);
     } catch (err: any) {
       setWaOtpError(err.message || "Invalid OTP code.");
     } finally {
@@ -509,10 +519,15 @@ export function PaymentSelectionModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           amount: upiAmount,
+          subtotal: subtotal || upiAmount,
+          deliveryFee: deliveryFee != null ? deliveryFee : 0,
+          discountAmount: discountAmount || 0,
+          couponCode: couponCode || null,
           customerName,
           customerPhone: phoneToUse,
           customerEmail,
           orderId: syncOrderNumber,
+          customerVerified: isWhatsappVerified || Boolean(overridePhone),
         }),
       });
       const data = await res.json();
@@ -575,10 +590,10 @@ export function PaymentSelectionModal({
     return `https://wa.me/91${adminWaPhone}?text=${encodeURIComponent(prefilled)}`;
   }, [adminWaPhone, cleanOrderRef, formattedAmount, cleanUpiId, currentOrigin, customerName, activePhone, customerPhone]);
 
-  // Dispatch payment details and QR directly to customer WhatsApp
-  const handleSendToWhatsApp = async () => {
+  // Dispatch payment details and QR directly to customer & admin WhatsApp
+  const handleSendToWhatsApp = async (overridePhone?: string | React.MouseEvent | unknown) => {
     if (isSendingWaInstructions) return;
-    const clean = activePhone.replace(/[^0-9]/g, "").slice(-10);
+    const clean = (typeof overridePhone === "string" ? overridePhone : activePhone || customerPhone || "").replace(/[^0-9]/g, "").slice(-10);
     if (!clean || clean.length < 10) {
       setWaSentMessage("Please provide a valid 10-digit WhatsApp phone number.");
       return;
@@ -594,6 +609,10 @@ export function PaymentSelectionModal({
           phone: clean,
           orderRef: cleanOrderRef,
           amount: upiAmount,
+          subtotal: subtotal || upiAmount,
+          deliveryFee: deliveryFee != null ? deliveryFee : 0,
+          discountAmount: discountAmount || 0,
+          couponCode: couponCode || "",
           upiId: cleanUpiId,
           customerName,
           origin: currentOrigin,
@@ -918,6 +937,56 @@ export function PaymentSelectionModal({
               <span>{validationError}</span>
             </div>
           )}
+
+          {/* Synchronized Order Summary & Clear Discount Breakdown */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-[#23052A] via-[#1B0321] to-[#23052A] border border-[#D4AF37]/30 space-y-2.5 shadow-lg">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <span className="text-[11px] font-bold text-white/80 uppercase tracking-wider flex items-center gap-1.5">
+                <span>🛒 Order Breakdown</span>
+              </span>
+              <span className="text-xs font-mono font-bold text-[#F5D061]">₹{upiAmount} Net Payable</span>
+            </div>
+
+            <div className="space-y-1.5 text-xs text-white/70">
+              <div className="flex justify-between">
+                <span>Items Subtotal:</span>
+                <span className="font-mono text-white font-semibold">₹{subtotal || upiAmount}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Delivery Charges:</span>
+                <span className="font-mono font-semibold">
+                  {deliveryFee === 0 ? (
+                    <span className="text-emerald-400 font-bold">FREE</span>
+                  ) : (
+                    <span className="text-white">₹{deliveryFee || 0}</span>
+                  )}
+                </span>
+              </div>
+
+              {Number(discountAmount) > 0 && (
+                <div className="flex items-center justify-between p-2 rounded-xl bg-emerald-950/70 border border-emerald-500/50 text-emerald-300">
+                  <span className="flex items-center gap-1.5 font-bold text-xs">
+                    <span>🏷️ Coupon Discount:</span>
+                    {couponCode && (
+                      <span className="font-mono uppercase bg-black/50 px-1.5 py-0.5 rounded text-[10px] text-[#F5D061] border border-[#D4AF37]/40">
+                        {couponCode}
+                      </span>
+                    )}
+                  </span>
+                  <span className="font-mono font-black text-emerald-400">
+                    -₹{Number(discountAmount)} OFF
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-white/10 flex items-center justify-between text-sm font-bold text-white">
+              <span>Total to Pay:</span>
+              <span className="text-base sm:text-lg font-serif font-black text-[#F5D061]">
+                ₹{upiAmount}
+              </span>
+            </div>
+          </div>
 
           {/* Payment Method Selector Cards - 3 Options */}
           <div className="space-y-2.5">

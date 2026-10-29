@@ -26,8 +26,24 @@ export const sandboxSessions = new Map<
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { amount, customerName, customerPhone, customerEmail, orderId, method = "intent" } = body;
+    const {
+      amount,
+      subtotal,
+      deliveryFee,
+      discountAmount,
+      couponCode,
+      customerName,
+      customerPhone,
+      customerEmail,
+      orderId,
+      method = "intent",
+      customerVerified = false,
+    } = body;
     const finalAmount = Math.max(1, Math.round(Number(amount) || 0));
+    const finalSubtotal = subtotal ? Math.round(Number(subtotal)) : finalAmount;
+    const finalDeliveryCharge = deliveryFee != null ? Math.round(Number(deliveryFee)) : 0;
+    const finalDiscount = discountAmount ? Math.round(Number(discountAmount)) : 0;
+    const finalCouponCode = couponCode ? String(couponCode).trim().toUpperCase() : null;
 
     if (!finalAmount || finalAmount <= 0) {
       return NextResponse.json({ error: "Invalid payment amount" }, { status: 400 });
@@ -38,8 +54,9 @@ export async function POST(req: Request) {
     const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "https://youpi-pg-yer7.onrender.com";
     const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
     const merchantKey = process.env.YOUPI_MERCHANT_KEY || "00000000-0000-0000-0000-000000000001";
+    const adminToken = process.env.YOUPI_ADMIN_TOKEN || process.env.ADMIN_API_TOKEN || "";
 
-    // 1. Ensure order exists in orders table and has an order_ref
+    // 1. Ensure order exists in orders table and has an order_ref with correct subtotal & discount
     let targetOrderId = requestedOrderId;
     let finalOrderRef = "";
 
@@ -57,8 +74,19 @@ export async function POST(req: Request) {
             finalOrderRef = ord.order_ref.trim();
           } else {
             finalOrderRef = generateOrderRef();
-            await sql.query(`UPDATE orders SET order_ref = $1 WHERE id = $2;`, [finalOrderRef, ord.id]).catch(() => {});
           }
+          await sql.query(
+            `UPDATE orders SET
+               order_ref = $1,
+               subtotal = $2,
+               discount_amount = $3,
+               delivery_charge = $4,
+               total_amount = $5,
+               coupon_code = COALESCE($6, orders.coupon_code),
+               updated_at = NOW()
+             WHERE id = $7;`,
+            [finalOrderRef, finalSubtotal, finalDiscount, finalDeliveryCharge, finalAmount, finalCouponCode, ord.id]
+          ).catch(() => {});
         } else {
           // Pre-create pending order row so foreign key constraint in payments table is satisfied
           finalOrderRef = generateOrderRef();
@@ -70,13 +98,19 @@ export async function POST(req: Request) {
           await sql.query(
             `INSERT INTO orders (
                id, order_number, order_ref, customer_name, customer_email, customer_phone,
-               delivery_address, locality, subtotal, total_amount, payment_method,
+               delivery_address, locality, subtotal, discount_amount, delivery_charge,
+               total_amount, coupon_code, payment_method,
                payment_status, order_status, source, created_at, updated_at
              ) VALUES (
                $1, $2, $3, $4, $5, $6, 'Pending checkout address', 'Pending Locality',
-               $7, $7, 'upi', 'unpaid', 'pending_confirmation', 'online', NOW(), NOW()
+               $7, $8, $9, $10, $11, 'upi', 'unpaid', 'pending_confirmation', 'online', NOW(), NOW()
              )
-             ON CONFLICT (id) DO NOTHING;`,
+             ON CONFLICT (id) DO UPDATE SET
+               subtotal = EXCLUDED.subtotal,
+               discount_amount = EXCLUDED.discount_amount,
+               delivery_charge = EXCLUDED.delivery_charge,
+               total_amount = EXCLUDED.total_amount,
+               coupon_code = COALESCE(EXCLUDED.coupon_code, orders.coupon_code);`,
             [
               targetOrderId,
               orderNumber,
@@ -84,7 +118,11 @@ export async function POST(req: Request) {
               customerName || "Customer",
               customerEmail || null,
               cleanPhone || "0000000000",
+              finalSubtotal,
+              finalDiscount,
+              finalDeliveryCharge,
               finalAmount,
+              finalCouponCode,
             ]
           ).catch((e: unknown) => {
             // If order_ref column doesn't exist yet on orders table, insert without order_ref
@@ -181,17 +219,25 @@ export async function POST(req: Request) {
       // 12000ms timeout accommodates cloud container spin-up and network latency
       const timeoutId = setTimeout(() => controller.abort(), 12000);
 
+      const gatewayHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+        "X-Merchant-Id": merchantKey,
+        "X-Merchant-Key": merchantKey,
+        "Idempotency-Key": `idem_${attempt.attempt_ref}`,
+      };
+      if (adminToken) {
+        gatewayHeaders["Authorization"] = `Bearer ${adminToken}`;
+      }
+
       const gatewayRes = await fetch(`${youpiBaseUrl}/api/v1/payments`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Merchant-Id": merchantKey,
-          "Idempotency-Key": `idem_${attempt.attempt_ref}`,
-        },
+        headers: gatewayHeaders,
         body: JSON.stringify({
           orderId: attempt.attempt_ref, // Links YouPI payment directly to our attempt_ref
           amount: finalAmount,
           currency: "INR",
+          autoActivate: true,
+          customerVerified: Boolean(customerVerified),
           customer: {
             name: customerName || "Guest Customer",
             phoneNumber: cleanPhone,
@@ -203,6 +249,10 @@ export async function POST(req: Request) {
             orderId: targetOrderId,
             orderRef: finalOrderRef,
             attemptRef: attempt.attempt_ref,
+            subtotal: finalSubtotal,
+            discountAmount: finalDiscount,
+            couponCode: finalCouponCode,
+            deliveryFee: finalDeliveryCharge,
           },
         }),
         signal: controller.signal,
@@ -221,6 +271,19 @@ export async function POST(req: Request) {
         ) {
           finalCheckoutUrl = `${youpiBaseUrl}/checkout/${pId}`;
         }
+
+        // Ensure active payment session is activated so YouPI admin & observer auto-verification detects it
+        try {
+          await fetch(`${youpiBaseUrl}/api/v1/payments/${pId}/activate`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Merchant-Key": merchantKey,
+              ...(adminToken ? { Authorization: `Bearer ${adminToken}` } : {}),
+            },
+            signal: AbortSignal.timeout(4000),
+          }).catch(() => {});
+        } catch {}
 
         // Fetch live state from YouPI-PG to obtain configured payeeVpa & payeeName
         let payeeVpa = "";

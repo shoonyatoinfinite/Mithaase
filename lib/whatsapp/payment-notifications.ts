@@ -152,6 +152,10 @@ export async function notifyPaymentInstructions(params: {
   phone: string;
   orderRef: string;
   amount: number;
+  subtotal?: number;
+  deliveryFee?: number;
+  discountAmount?: number;
+  couponCode?: string;
   upiId: string;
   customerName?: string;
   baseUrl?: string;
@@ -162,6 +166,18 @@ export async function notifyPaymentInstructions(params: {
   const cleanRef = params.orderRef.trim();
   const greeting = params.customerName ? `Hello *${params.customerName}*!` : "Hello!";
 
+  const finalDiscount = params.discountAmount ? Math.round(Number(params.discountAmount)) : 0;
+  const finalSubtotal = params.subtotal ? Math.round(Number(params.subtotal)) : Number(params.amount);
+  const finalDelivery = params.deliveryFee != null ? Math.round(Number(params.deliveryFee)) : 0;
+  const finalCoupon = params.couponCode ? String(params.couponCode).trim().toUpperCase() : "";
+
+  const orderBreakdownText =
+    finalDiscount > 0
+      ? `🛒 *Subtotal:* ₹${finalSubtotal}\n🏷️ *Coupon (${finalCoupon}):* -₹${finalDiscount}\n🚚 *Delivery:* ${finalDelivery === 0 ? "FREE" : `₹${finalDelivery}`}\n`
+      : finalDelivery > 0
+      ? `🛒 *Subtotal:* ₹${finalSubtotal}\n🚚 *Delivery:* ₹${finalDelivery}\n`
+      : "";
+
   const qrImageUrl = `${appUrl}/api/payment/youpi/qr-image?orderRef=${encodeURIComponent(cleanRef)}&amount=${formattedAmount}&upiId=${encodeURIComponent(cleanUpi)}`;
   const upiIntentUri = `upi://pay?pa=${cleanUpi}&pn=${encodeURIComponent("Mithaase")}&cu=INR&am=${formattedAmount}&tr=${encodeURIComponent(cleanRef)}&tn=${encodeURIComponent(`Order ${cleanRef}`)}`;
 
@@ -169,7 +185,8 @@ export async function notifyPaymentInstructions(params: {
     `🍬 *Mithaasé — UPI Payment QR & Details*\n\n` +
     `${greeting} Your order is confirmed and ready for payment.\n\n` +
     `📦 *Order Ref:* ${cleanRef}\n` +
-    `💰 *Exact Amount:* ₹${formattedAmount}\n` +
+    orderBreakdownText +
+    `💰 *Net Amount to Pay:* *₹${formattedAmount}*\n` +
     `💳 *UPI ID:* ${cleanUpi}\n` +
     `⏳ *Time Limit:* Pay within 10 minutes\n\n` +
     `⚠️ *Important:* Please transfer the exact amount of *₹${formattedAmount}* for automated bank verification.\n\n` +

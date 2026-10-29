@@ -1253,6 +1253,10 @@ export default function CheckoutPage() {
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}
         amount={finalTotal}
+        subtotal={subtotal}
+        deliveryFee={deliveryFee}
+        discountAmount={couponDiscountAmount}
+        couponCode={appliedCoupon?.code}
         customerName={customerName}
         customerPhone={customerPhone || user?.savedProfile?.customer_phone || user?.phone || ""}
         customerEmail={user?.email || loginEmail || signupEmail}
