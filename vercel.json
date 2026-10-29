@@ -2,8 +2,9 @@
   "crons": [
     {
       "path": "/api/orders/expire-unpaid",
-      "schedule": "* * * * *"
+      "schedule": "0 2 * * *"
     }
   ]
 }
+
 
