@@ -19,7 +19,7 @@ export function OrderNotFoundFallback({ searchedId }: OrderNotFoundFallbackProps
     const clean = query.trim();
     if (!clean) return;
     setIsSearching(true);
-    router.push(`/order-confirmation/${encodeURIComponent(clean)}`);
+    router.push(`/track/${encodeURIComponent(clean)}`);
   };
 
   return (

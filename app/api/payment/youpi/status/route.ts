@@ -16,11 +16,11 @@ export async function GET(req: Request) {
     // Lazily expire stale attempts older than expires_at
     expireStaleAttempts().catch(() => {});
 
-    const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
+    const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "https://youpi-pg-yer7.onrender.com";
     const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
 
-    // 1. Check if it's a live YouPI session
-    if (!paymentId.startsWith("yp_sbx_")) {
+    // 1. Check if it's a live YouPI session (skip local fallback and sandbox IDs)
+    if (!paymentId.startsWith("yp_sbx_") && !paymentId.startsWith("yp_fb_")) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 8000);

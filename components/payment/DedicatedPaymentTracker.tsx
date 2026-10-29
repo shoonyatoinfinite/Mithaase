@@ -88,7 +88,7 @@ export function DedicatedPaymentTracker({ orderRef }: DedicatedPaymentTrackerPro
 
         // If paid, redirect immediately
         if (data.queueStatus === "paid" || data.paymentStatus === "paid") {
-          router.push(`/order-confirmation/${encodeURIComponent(orderRef)}`);
+          router.push(`/track/${encodeURIComponent(orderRef)}`);
         }
       } catch {
         // Transient network error

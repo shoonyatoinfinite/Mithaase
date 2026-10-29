@@ -555,20 +555,25 @@ export function PaymentSelectionModal({
       ? window.location.origin
       : process.env.NEXT_PUBLIC_APP_URL || "https://mithaase.vercel.app";
 
+  const adminWaPhone = useMemo(() => {
+    const raw = (settings?.whatsapp_number || settings?.business_phone || "").replace(/[^0-9]/g, "");
+    return raw.length >= 10 ? raw.slice(-10) : "8290683668";
+  }, [settings?.whatsapp_number, settings?.business_phone]);
+
   const waFallbackLink = useMemo(() => {
-    const clean = activePhone.replace(/[^0-9]/g, "").slice(-10);
-    if (!clean) return "";
+    if (!adminWaPhone) return "";
     const prefilled =
       `🍬 *Mithaasé — UPI Payment QR & Details*\n\n` +
-      `Hello ${customerName || "Customer"}! Payment details for Order #${cleanOrderRef}:\n\n` +
+      `Hello Admin! Payment details for Order #${cleanOrderRef}:\n\n` +
       `💰 *Amount:* ₹${formattedAmount}\n` +
       `💳 *UPI ID:* ${cleanUpiId}\n` +
       `⏳ *Window:* 10 minutes\n\n` +
       `🖼️ *Direct QR Code Image:* \n👉 ${currentOrigin}/api/payment/youpi/qr-image?orderRef=${cleanOrderRef}&amount=${formattedAmount}&upiId=${cleanUpiId}\n\n` +
       `⚡ *1-Tap Pay Link:* \n👉 upi://pay?pa=${cleanUpiId}&pn=Mithaase&cu=INR&am=${formattedAmount}&tr=${cleanOrderRef}&tn=Order%20${cleanOrderRef}\n\n` +
+      `— Customer: ${customerName || "Customer"} (${activePhone || customerPhone || "N/A"})\n` +
       `— Shree Shyam Sweets (Mithaasé)`;
-    return `https://wa.me/91${clean}?text=${encodeURIComponent(prefilled)}`;
-  }, [activePhone, customerName, cleanOrderRef, formattedAmount, cleanUpiId, currentOrigin]);
+    return `https://wa.me/91${adminWaPhone}?text=${encodeURIComponent(prefilled)}`;
+  }, [adminWaPhone, cleanOrderRef, formattedAmount, cleanUpiId, currentOrigin, customerName, activePhone, customerPhone]);
 
   // Dispatch payment details and QR directly to customer WhatsApp
   const handleSendToWhatsApp = async () => {
@@ -1951,11 +1956,11 @@ export function PaymentSelectionModal({
               <div className="p-2.5 rounded-xl bg-[#16031E] border border-amber-500/30 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px]">
                 <span className="text-white/80 font-medium">Need sweets urgently?</span>
                 <a
-                  href={`tel:${settings.business_phone || "9306859388"}`}
+                  href={`tel:${settings?.business_phone || settings?.whatsapp_number || "8290683668"}`}
                   className="text-amber-400 hover:text-amber-300 font-bold underline flex items-center gap-1 shrink-0"
                 >
                   <Phone className="w-3 h-3" />
-                  <span>Call Admin: +91 {settings.business_phone || "9306859388"}</span>
+                  <span>Call Admin: +91 {settings?.business_phone || settings?.whatsapp_number || "8290683668"}</span>
                 </a>
               </div>
             </div>

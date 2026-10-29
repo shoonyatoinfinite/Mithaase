@@ -16,6 +16,53 @@ const sentDeliveredOrders = new Set<string>();
 const sentCancellationOrders = new Set<string>();
 
 /**
+ * Atomic deduplication lock spanning serverless lambdas.
+ * Uses PostgreSQL primary key constraint on notification_dispatches table.
+ * If another lambda is already dispatching or has dispatched this notification, returns false.
+ */
+async function claimNotificationLock(
+  orderId: string,
+  notificationType: "confirmed" | "delivered" | "cancelled"
+): Promise<boolean> {
+  const memKey = `${orderId}:${notificationType}`;
+  if (notificationType === "confirmed" && sentConfirmationOrders.has(memKey)) return false;
+  if (notificationType === "delivered" && sentDeliveredOrders.has(memKey)) return false;
+  if (notificationType === "cancelled" && sentCancellationOrders.has(memKey)) return false;
+
+  // Mark in-memory set immediately
+  if (notificationType === "confirmed") sentConfirmationOrders.add(memKey);
+  if (notificationType === "delivered") sentDeliveredOrders.add(memKey);
+  if (notificationType === "cancelled") sentCancellationOrders.add(memKey);
+
+  if (sql) {
+    try {
+      // Lazy table creation (safe, runs once)
+      await sql.query(`
+        CREATE TABLE IF NOT EXISTS notification_dispatches (
+          lock_key TEXT PRIMARY KEY,
+          dispatched_at TIMESTAMPTZ DEFAULT NOW()
+        );
+      `).catch(() => {});
+
+      const lockKey = `${orderId}:${notificationType}`;
+      const res = await sql.query(
+        `INSERT INTO notification_dispatches (lock_key) VALUES ($1) ON CONFLICT (lock_key) DO NOTHING RETURNING lock_key;`,
+        [lockKey]
+      ).catch(() => null);
+
+      if (res && Array.isArray(res) && res.length === 0) {
+        console.log(`[OrderNotification] Deduplication: ${notificationType} already dispatched for order ${orderId} by another instance.`);
+        return false;
+      }
+    } catch (err) {
+      console.warn("[OrderNotification] Lock check warning, falling back to memory:", err);
+    }
+  }
+
+  return true;
+}
+
+/**
  * Resolves a valid email for the customer, checking the order first, then fallback to database profile.
  */
 async function resolveOrderEmail(order: Order): Promise<string | null> {
@@ -55,12 +102,10 @@ export async function sendOrderConfirmedNotification(
       return;
     }
 
-    const orderKey = `${order.id}-${order.order_number}`;
-    if (sentConfirmationOrders.has(orderKey)) {
-      console.log(`[OrderNotification] Confirmation already dispatched for #${order.order_number}`);
+    const acquired = await claimNotificationLock(order.id, "confirmed");
+    if (!acquired) {
       return;
     }
-    sentConfirmationOrders.add(orderKey);
 
     const settings = await getStoreSettings();
 
@@ -120,12 +165,10 @@ export async function sendOrderDeliveredNotification(
       return;
     }
 
-    const orderKey = `${order.id}-${order.order_number}`;
-    if (sentDeliveredOrders.has(orderKey)) {
-      console.log(`[OrderNotification] Delivery bill already dispatched for #${order.order_number}`);
+    const acquired = await claimNotificationLock(order.id, "delivered");
+    if (!acquired) {
       return;
     }
-    sentDeliveredOrders.add(orderKey);
 
     const settings = await getStoreSettings();
 
@@ -175,12 +218,10 @@ export async function sendOrderCancelledNotification(
       return;
     }
 
-    const orderKey = `cancel-${order.id}-${order.order_number}`;
-    if (sentCancellationOrders.has(orderKey)) {
-      console.log(`[OrderNotification] Cancellation already dispatched for #${order.order_number}`);
+    const acquired = await claimNotificationLock(order.id, "cancelled");
+    if (!acquired) {
       return;
     }
-    sentCancellationOrders.add(orderKey);
 
     const settings = await getStoreSettings();
     const finalReason = reason || order.cancellation_reason || "Cancelled as per customer or store request";

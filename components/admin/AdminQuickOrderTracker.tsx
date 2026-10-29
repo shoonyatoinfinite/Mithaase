@@ -226,7 +226,7 @@ export function AdminQuickOrderTracker() {
           {/* Action Link */}
           <div className="pt-2 border-t border-white/10 flex justify-end gap-2">
             <Link
-              href={`/order-confirmation/${searchedOrder.id}`}
+              href={`/track/${searchedOrder.id}`}
               target="_blank"
               className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[#F5D061] font-bold text-[11px] flex items-center gap-1"
             >

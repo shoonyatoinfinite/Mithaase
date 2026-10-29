@@ -160,7 +160,7 @@ export function Navbar({ hideAnnouncement = false }: NavbarProps) {
             {/* Live Order Status Icon (Visible only after customer login when an active order is placed but not yet delivered) */}
             {isAuthenticated && activeCustomerOrder && (
               <Link
-                href={`/order-confirmation/${activeCustomerOrder.id}`}
+                href={`/track/${activeCustomerOrder.id}`}
                 id="header-live-order-tracker"
                 title={`Track Live Order #${activeCustomerOrder.order_number}: ${activeCustomerOrder.order_status.replace(/_/g, " ")}`}
                 className="inline-flex items-center gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full bg-gradient-to-r from-amber-950/90 via-[#3B0E4D] to-amber-950/90 border border-[#D4AF37] text-white text-xs font-bold shadow-[0_0_15px_rgba(212,175,55,0.4)] hover:shadow-[0_0_25px_rgba(212,175,55,0.7)] hover:border-[#F5D061] transition-all active:scale-95 group shrink-0"

@@ -397,7 +397,8 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
         pathname === "/checkout" ||
         pathname === "/orders" ||
         pathname === "/receipts" ||
-        pathname.startsWith("/order-confirmation");
+        pathname.startsWith("/order-confirmation") ||
+        pathname.startsWith("/track");
 
       const cleanRedirect = typeof redirectTo === "string" ? redirectTo : undefined;
       const dest = cleanRedirect ?? (isPrivateCustomerPage ? "/#shop" : pathname);

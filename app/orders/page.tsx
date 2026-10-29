@@ -339,7 +339,7 @@ export default function CustomerOrdersPage() {
 
                         {/* Track Live button */}
                         <Link
-                          href={`/order-confirmation/${ord.id}`}
+                          href={`/track/${ord.id}`}
                           className="py-2 px-3.5 rounded-xl bg-white/10 hover:bg-white/20 text-[#F5D061] hover:text-white font-bold text-xs flex items-center gap-1.5 transition-all"
                         >
                           <span>Track Live ⚡</span>

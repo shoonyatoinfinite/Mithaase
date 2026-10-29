@@ -197,7 +197,7 @@ export async function sendWhatsAppOtp(params: {
   );
 
   // 6. Dispatch through live YouPI WhatsApp gateway
-  const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
+  const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "https://youpi-pg-yer7.onrender.com";
   const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
   let delivered = false;
 
@@ -274,7 +274,7 @@ export async function verifyWhatsAppOtp(params: {
   // 1. Authoritative check: Check if YouPI live gateway validates this OTP (YouPI generates & sends its own OTP over WhatsApp)
   let youpiVerified = false;
   try {
-    const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
+    const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "https://youpi-pg-yer7.onrender.com";
     const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);

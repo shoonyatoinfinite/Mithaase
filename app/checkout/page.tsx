@@ -536,14 +536,15 @@ export default function CheckoutPage() {
       setIsPaymentModalOpen(false);
       clearCart();
 
+      const hasUpiReference = Boolean(paymentData.upiReference && paymentData.upiReference.trim().length > 0);
       const isPaymentVerified =
         Boolean(paymentData.upiReference?.toUpperCase().startsWith("YOUPI:")) ||
         data.payment_status === "paid" ||
         data.order_status === "confirmed";
 
-      if (isPaymentVerified) {
-        router.push(`/order-confirmation/${data.id}`);
-      } else if (paymentData.isAutoUpi || paymentData.orderRef) {
+      if (isPaymentVerified || hasUpiReference || paymentData.paymentMethod === "cod") {
+        router.push(`/track/${encodeURIComponent(data.id)}`);
+      } else if (paymentData.isAutoUpi) {
         // Enqueue or claim active slot in Neon queue engine
         try {
           await fetch("/api/payment/queue/claim", {
@@ -561,7 +562,7 @@ export default function CheckoutPage() {
         const trackingRef = data.order_ref || data.order_number || data.id;
         router.push(`/pay/${encodeURIComponent(trackingRef)}`);
       } else {
-        router.push(`/order-confirmation/${data.id}`);
+        router.push(`/track/${encodeURIComponent(data.id)}`);
       }
     } catch (err: any) {
       setOrderError(err.message || "An unexpected error occurred while placing your order.");

@@ -235,9 +235,9 @@ export async function sendOrderConfirmedEmail(
 
   const appUrl = getAppBaseUrl();
   const trackingRef = order.order_ref || order.order_number || order.id;
-  const trackingUrl = `${appUrl}/order-confirmation/${encodeURIComponent(trackingRef)}`;
+  const trackingUrl = `${appUrl}/track/${encodeURIComponent(trackingRef)}`;
   const storeName = settings?.store_name || "Shree Shyam Sweets";
-  const helpline = settings?.business_phone || "+91 9416262453";
+  const helpline = settings?.business_phone || settings?.whatsapp_number || "+91 8290683668";
   const shopAddress = settings?.shop_address || "Shop No. 12, Main Chowk, Kothal Kalan, Mahendragarh, Haryana 123029";
 
   const orderDate = new Date(order.created_at).toLocaleDateString("en-IN", {
@@ -428,7 +428,7 @@ export async function sendOrderDeliveredBillEmail(
   }
 
   const storeName = settings?.store_name || "Shree Shyam Sweets";
-  const helpline = settings?.business_phone || "+91 9416262453";
+  const helpline = settings?.business_phone || settings?.whatsapp_number || "+91 8290683668";
   const shopAddress = settings?.shop_address || "Shop No. 12, Main Chowk, Kothal Kalan, Mahendragarh, Haryana 123029";
   const receiptNumber = `REC-${order.order_number.replace(/[^0-9]/g, "") || order.id.slice(-6)}`;
 
@@ -614,7 +614,7 @@ export async function sendOrderCancelledEmail(
 
   const appUrl = getAppBaseUrl();
   const storeName = settings?.store_name || "Shree Shyam Sweets";
-  const helpline = settings?.business_phone || "+91 9416262453";
+  const helpline = settings?.business_phone || settings?.whatsapp_number || "+91 8290683668";
   const shopAddress = settings?.shop_address || "Shop No. 12, Main Chowk, Kothal Kalan, Mahendragarh, Haryana 123029";
   const reason = cancellationReason || order.cancellation_reason || "Cancelled as per customer or store request";
 

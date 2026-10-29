@@ -220,6 +220,16 @@ export async function notifyPaymentInstructions(params: {
   return sendWhatsAppMessage(params.phone, message);
 }
 
+async function resolveAdminHelpline(): Promise<string> {
+  try {
+    const { getStoreSettings } = await import("@/lib/data/store");
+    const settings = await getStoreSettings();
+    return settings?.business_phone || settings?.whatsapp_number || "+91 8290683668";
+  } catch {
+    return "+91 8290683668";
+  }
+}
+
 /**
  * Sends order confirmation and payment verified WhatsApp notification
  */
@@ -237,7 +247,8 @@ export async function notifyOrderConfirmed(params: {
 }): Promise<boolean> {
   const appUrl = getAppBaseUrl();
   const trackingRef = params.orderRef || params.orderNumber;
-  const trackingUrl = `${appUrl}/order-confirmation/${encodeURIComponent(trackingRef)}`;
+  const trackingUrl = `${appUrl}/track/${encodeURIComponent(trackingRef)}`;
+  const helpline = await resolveAdminHelpline();
   const formattedAmount = Number(params.amount).toFixed(2);
   const paymentBadge =
     params.paymentMethod.toLowerCase() === "cod"
@@ -255,7 +266,7 @@ export async function notifyOrderConfirmed(params: {
     `Track your preparation and rider delivery live:\n` +
     `👉 ${trackingUrl}\n\n` +
     `— *Shree Shyam Sweets (Mithaasé)*\n` +
-    `📞 Helpline: +91 9416262453`;
+    `📞 Helpline: ${helpline}`;
 
   return sendWhatsAppMessage(params.phone, message);
 }
@@ -274,6 +285,7 @@ export async function notifyOrderDelivered(params: {
   customerEmail?: string;
 }): Promise<boolean> {
   const formattedAmount = Number(params.amount).toFixed(2);
+  const helpline = await resolveAdminHelpline();
   const receiptNo = `REC-${params.orderNumber.replace(/[^0-9]/g, "")}`;
   const emailNotice = params.customerEmail
     ? `\n\n🧾 *Bill Sent:* A complete itemized delivery bill and tax receipt has been emailed to *${params.customerEmail}*.`
@@ -287,7 +299,7 @@ export async function notifyOrderDelivered(params: {
     `📍 *Delivered To:* ${params.deliveryAddress}, ${params.locality}${emailNotice}\n\n` +
     `We hope you enjoy every bite of your fresh sweets! Thank you for choosing Shree Shyam Sweets for your festive celebrations. 🍬✨\n\n` +
     `— *Shree Shyam Sweets*\n` +
-    `📞 Helpline: +91 9416262453`;
+    `📞 Helpline: ${helpline}`;
 
   return sendWhatsAppMessage(params.phone, message);
 }
@@ -306,6 +318,7 @@ export async function notifyOrderCancelled(params: {
   refundNote?: string;
 }): Promise<boolean> {
   const formattedAmount = Number(params.amount).toFixed(2);
+  const helpline = await resolveAdminHelpline();
   const reasonText = params.cancellationReason ? `\n📝 *Reason:* ${params.cancellationReason}` : "";
   const refundText = params.refundNote ? `\n💳 *Refund Details:* ${params.refundNote}` : "";
 
@@ -315,7 +328,7 @@ export async function notifyOrderCancelled(params: {
     `💰 *Order Total:* ₹${formattedAmount}\n` +
     `🏷️ *Payment Method:* ${(params.paymentMethod || "UPI").toUpperCase()}${refundText}\n\n` +
     `If you have questions or believe this was done in error, please reach out to our team:\n` +
-    `📞 Helpline: +91 9416262453\n\n` +
+    `📞 Helpline: ${helpline}\n\n` +
     `— *Shree Shyam Sweets (Mithaasé)*`;
 
   return sendWhatsAppMessage(params.phone, message);

@@ -3,7 +3,6 @@ import crypto from "crypto";
 import { sql } from "@/lib/neon/db";
 import { createAttempt, attachYoupi, markAttemptFailed } from "@/lib/payments";
 import { generateOrderRef } from "@/lib/utils/order-ref";
-import { notifyPaymentInstructions } from "@/lib/whatsapp/payment-notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +35,7 @@ export async function POST(req: Request) {
 
     const cleanPhone = (customerPhone || "").replace(/[^0-9]/g, "");
     const requestedOrderId = orderId || `ord-${Date.now()}`;
-    const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "http://localhost:6100";
+    const rawBaseUrl = process.env.YOUPI_API_URL || process.env.YOUPI_BASE_URL || "https://youpi-pg-yer7.onrender.com";
     const youpiBaseUrl = rawBaseUrl.replace(/\/+$/, "");
     const merchantKey = process.env.YOUPI_MERCHANT_KEY || "00000000-0000-0000-0000-000000000001";
 
@@ -154,15 +153,6 @@ export async function POST(req: Request) {
 
     // 3. If attempt is reused and has already-attached YouPI data, return immediately (zero row spam)
     if (attempt.reused && attempt.youpi_payment_id && attempt.payee_vpa) {
-      if (cleanPhone && attempt.payee_vpa) {
-        notifyPaymentInstructions({
-          phone: cleanPhone,
-          orderRef: finalOrderRef,
-          amount: finalAmount,
-          upiId: attempt.payee_vpa,
-          customerName: customerName || "Customer",
-        }).catch(() => {});
-      }
       return NextResponse.json({
         success: true,
         mode: "live",
@@ -188,8 +178,8 @@ export async function POST(req: Request) {
 
     try {
       const controller = new AbortController();
-      // Fast 3500ms timeout prevents freezing when Render/gateway is sleeping
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      // 12000ms timeout accommodates cloud container spin-up and network latency
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
 
       const gatewayRes = await fetch(`${youpiBaseUrl}/api/v1/payments`, {
         method: "POST",
@@ -208,7 +198,7 @@ export async function POST(req: Request) {
             email: customerEmail || "",
           },
           description: `Mithaase - Order ${finalOrderRef} (${attempt.attempt_ref})`,
-          returnUrl: `${appBaseUrl}/order-confirmation/${finalOrderRef}`,
+          returnUrl: `${appBaseUrl}/track/${finalOrderRef}`,
           metadata: {
             orderId: targetOrderId,
             orderRef: finalOrderRef,
@@ -266,20 +256,6 @@ export async function POST(req: Request) {
           console.error("[YouPI Create] attachYoupi failed:", attachErr);
         }
 
-        // Dispatch WhatsApp Payment Instructions
-        if (cleanPhone && payeeVpa) {
-          notifyPaymentInstructions({
-            phone: cleanPhone,
-            orderRef: finalOrderRef,
-            amount: finalAmount,
-            upiId: payeeVpa,
-            customerName: customerName || "Customer",
-            baseUrl: appBaseUrl,
-          }).catch((waErr) => {
-            console.warn("[YouPI Create] WhatsApp instructions dispatch warning:", waErr);
-          });
-        }
-
         return NextResponse.json({
           success: true,
           mode: "live",
@@ -331,17 +307,6 @@ export async function POST(req: Request) {
       status: "PENDING",
       createdAt: Date.now(),
     });
-
-    if (cleanPhone && storeVpa) {
-      notifyPaymentInstructions({
-        phone: cleanPhone,
-        orderRef: finalOrderRef,
-        amount: finalAmount,
-        upiId: storeVpa,
-        customerName: customerName || "Customer",
-        baseUrl: appBaseUrl,
-      }).catch(() => {});
-    }
 
     return NextResponse.json({
       success: true,
