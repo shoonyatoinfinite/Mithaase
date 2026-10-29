@@ -24,6 +24,9 @@ export const sandboxSessions = new Map<
   }
 >();
 
+// In-memory set to prevent duplicate admin WhatsApp alerts for the same initiated order session
+const initiatedAdminNotifSet = new Set<string>();
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -237,6 +240,57 @@ export async function POST(req: Request) {
     }
     if (!finalOrderRef) {
       finalOrderRef = generateOrderRef();
+    }
+
+    // 1c. Dispatch real-time Order Initiated WhatsApp Alert to Store Admin
+    const notifKey = `${targetOrderId}:${finalOrderRef}`;
+    if (!initiatedAdminNotifSet.has(notifKey)) {
+      initiatedAdminNotifSet.add(notifKey);
+      setTimeout(() => initiatedAdminNotifSet.delete(notifKey), 300000); // 5 min cooldown
+
+      import("@/lib/whatsapp/payment-notifications")
+        .then(({ notifyAdminNewOrder }) => {
+          const itemsSummary =
+            Array.isArray(items) && items.length > 0
+              ? items
+                  .map((it: any) => {
+                    const pName = it.productName || it.product_name_snapshot || "Sweet";
+                    const vName = it.variantName || it.variant_name_snapshot || "";
+                    const qty = it.quantity || 1;
+                    const total = Number(it.lineTotal ?? ((it.unitPrice ?? it.price ?? 0) * qty));
+                    return `• ${qty}x ${pName}${vName ? ` (${vName})` : ""} — ₹${total.toFixed(2)}`;
+                  })
+                  .join("\n")
+              : "• Fresh Festive Sweets Assortment";
+
+          notifyAdminNewOrder({
+            order: {
+              id: targetOrderId,
+              order_number: requestedOrderId.startsWith("SSS-")
+                ? requestedOrderId
+                : `SSS-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
+              order_ref: finalOrderRef,
+              customer_name: customerName || "Customer",
+              customer_phone: cleanPhone || "0000000000",
+              customer_email: customerEmail || undefined,
+              delivery_address: finalDeliveryAddress,
+              locality: finalLocality,
+              subtotal: finalSubtotal,
+              discount_amount: finalDiscount,
+              delivery_charge: finalDeliveryCharge,
+              total_amount: finalAmount,
+              coupon_code: finalCouponCode,
+              payment_method: "upi",
+              payment_status: "unpaid",
+              order_status: "pending_confirmation",
+            },
+            itemsSummary,
+            statusBadge: "⚡ *NEW ORDER INITIATED (PAYMENT PENDING)*",
+          }).catch((err) => {
+            console.warn("[YouPI Create] Admin WhatsApp alert error:", err);
+          });
+        })
+        .catch(() => {});
     }
 
     // 2. Create or reuse payment attempt row in Neon DB

@@ -331,10 +331,11 @@ export async function notifyOrderConfirmed(params: {
  * Sends real-time new order alert to the Store Admin on WhatsApp
  */
 export async function notifyAdminNewOrder(params: {
-  order: Order;
+  order: Order | any;
   itemsSummary: string;
   adminPhone?: string;
   isBookingRequest?: boolean;
+  statusBadge?: string;
 }): Promise<boolean> {
   let targetAdminPhone = (params.adminPhone || "").trim();
   if (!targetAdminPhone) {
@@ -347,7 +348,7 @@ export async function notifyAdminNewOrder(params: {
     return false;
   }
 
-  const { order, itemsSummary, isBookingRequest } = params;
+  const { order, itemsSummary, isBookingRequest, statusBadge } = params;
   const appUrl = getAppBaseUrl();
   const formattedTotal = Number(order.total_amount).toFixed(2);
   const formattedSubtotal = Number(order.subtotal || order.total_amount).toFixed(2);
@@ -356,13 +357,15 @@ export async function notifyAdminNewOrder(params: {
   const deliveryCharge = Number(order.delivery_charge || 0);
 
   const isBooking = isBookingRequest || order.booking_status === "requested";
-  const orderTypeBadge = isBooking
-    ? "⏳ *AFTER-HOURS BOOKING REQUEST*"
-    : order.payment_status === "paid" || order.order_status === "confirmed"
-    ? "✅ *CONFIRMED ORDER (PAYMENT VERIFIED)*"
-    : order.payment_method?.toLowerCase() === "cod"
-    ? "💵 *CASH ON DELIVERY ORDER*"
-    : "💳 *NEW ORDER (PAYMENT PENDING)*";
+  const orderTypeBadge =
+    statusBadge ||
+    (isBooking
+      ? "⏳ *AFTER-HOURS BOOKING REQUEST*"
+      : order.payment_status === "paid" || order.order_status === "confirmed"
+      ? "✅ *CONFIRMED ORDER (PAYMENT VERIFIED)*"
+      : order.payment_method?.toLowerCase() === "cod"
+      ? "💵 *CASH ON DELIVERY ORDER*"
+      : "⚡ *NEW ORDER INITIATED (PAYMENT PENDING)*");
 
   const paymentDetails =
     order.payment_method?.toLowerCase() === "cod"
