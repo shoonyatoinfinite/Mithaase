@@ -149,7 +149,33 @@ export async function sendOrderConfirmedNotification(
 
     const settings = await getStoreSettings();
 
-    // 1. Resolve real address and email for accurate notifications
+    // 1. Ensure order items are loaded from database if missing or empty
+    if (!order.items || order.items.length === 0) {
+      if (sql) {
+        try {
+          const itemRows = await sql.query(
+            `SELECT * FROM order_items WHERE order_id = $1 OR order_id = $2;`,
+            [order.id, order.order_number]
+          );
+          if (itemRows && itemRows.length > 0) {
+            order.items = itemRows.map((it: any) => ({
+              id: it.id,
+              order_id: it.order_id,
+              product_id: it.product_id,
+              variant_id: it.variant_id,
+              product_name_snapshot: it.product_name_snapshot,
+              variant_name_snapshot: it.variant_name_snapshot,
+              quantity: Number(it.quantity),
+              unit_price: Number(it.unit_price),
+              line_total: Number(it.line_total),
+              image_url: it.image_url,
+            }));
+          }
+        } catch {}
+      }
+    }
+
+    // 2. Resolve real address and email for accurate notifications
     await resolveOrderAddress(order);
     const targetEmail = await resolveOrderEmail(order);
     if (targetEmail) {
@@ -162,14 +188,24 @@ export async function sendOrderConfirmedNotification(
       console.warn(`[OrderNotification] No valid email address found for order #${order.order_number} to send confirmation.`);
     }
 
-    // 2. Send Order Confirmation & Payment Details via WhatsApp (if customer phone is available)
+    // 3. Send Order Confirmation & Payment Details via WhatsApp (if customer phone is available)
     if (order.customer_phone) {
-      const itemsSummary = (order.items || [])
-        .map(
-          (it) =>
-            `• ${it.quantity}x ${it.product_name_snapshot}${it.variant_name_snapshot ? ` (${it.variant_name_snapshot})` : ""} — ₹${Number(it.line_total).toFixed(2)}`
-        )
-        .join("\n") || "• Fresh Festive Sweets Assortment";
+      const validItems = (order.items || []).filter(
+        (it) => it && (it.product_name_snapshot || (it as any).productName)
+      );
+
+      const itemsSummary =
+        validItems.length > 0
+          ? validItems
+              .map((it) => {
+                const name = it.product_name_snapshot || (it as any).productName || "Sweet";
+                const variant = it.variant_name_snapshot || (it as any).variantName || "";
+                const qty = it.quantity || 1;
+                const total = Number(it.line_total ?? (Number(it.unit_price || 0) * qty));
+                return `• ${qty}x ${name}${variant ? ` (${variant})` : ""} — ₹${total.toFixed(2)}`;
+              })
+              .join("\n")
+          : `• 1x Fresh Festive Sweets Assortment — ₹${Number(order.total_amount).toFixed(2)}`;
 
       notifyOrderConfirmed({
         phone: order.customer_phone,
@@ -177,6 +213,10 @@ export async function sendOrderConfirmedNotification(
         orderNumber: order.order_number,
         orderRef: order.order_ref,
         amount: Number(order.total_amount) || 0,
+        subtotal: Number(order.subtotal) || Number(order.total_amount) || 0,
+        discountAmount: Number(order.discount_amount) || 0,
+        couponCode: order.coupon_code || undefined,
+        deliveryFee: Number(order.delivery_charge) || 0,
         paymentMethod: order.payment_method || "UPI",
         upiReference: order.upi_reference,
         itemsSummary,

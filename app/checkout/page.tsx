@@ -1262,6 +1262,17 @@ export default function CheckoutPage() {
         customerEmail={user?.email || loginEmail || signupEmail}
         locality={locality}
         deliveryAddress={deliveryAddress}
+        items={items.map((i) => ({
+          productId: i.productId,
+          variantId: i.variantId,
+          productName: i.productName,
+          variantName: i.variantName,
+          price: i.price,
+          unitPrice: i.price,
+          quantity: i.quantity,
+          lineTotal: i.price * i.quantity,
+          imageUrl: i.imageUrl,
+        }))}
         settings={settings}
         isSubmitting={isSubmitting}
         onConfirmOrder={handleConfirmOrder}

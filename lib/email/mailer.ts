@@ -243,8 +243,6 @@ export async function sendOrderConfirmedEmail(
   }
 
   const appUrl = getAppBaseUrl();
-  const trackingRef = order.order_ref || order.order_number || order.id;
-  const trackingUrl = `${appUrl}/track/${encodeURIComponent(trackingRef)}`;
   const storeName = settings?.store_name || "Shree Shyam Sweets";
   const helpline = settings?.business_phone || settings?.whatsapp_number || "+91 8290683668";
   const shopAddress = settings?.shop_address || "Shop No. 12, Main Chowk, Kothal Kalan, Mahendragarh, Haryana 123029";
@@ -262,9 +260,38 @@ export async function sendOrderConfirmedEmail(
       ? "Cash on Delivery"
       : `Paid via UPI (Ref: ${order.upi_reference || "Auto-Confirmed"})`;
 
-  const itemsHtml = (order.items || [])
-    .map(
-      (item) => `
+  let itemsToRender = order.items || [];
+  if (itemsToRender.length === 0 && order.id) {
+    try {
+      const { sql: dbSql } = await import("@/lib/neon/db");
+      if (dbSql) {
+        const dbItems = await dbSql.query(
+          `SELECT * FROM order_items WHERE order_id = $1 OR order_id = $2;`,
+          [order.id, order.order_number]
+        );
+        if (dbItems && dbItems.length > 0) {
+          itemsToRender = dbItems.map((it: any) => ({
+            id: it.id,
+            order_id: it.order_id,
+            product_id: it.product_id,
+            variant_id: it.variant_id,
+            product_name_snapshot: it.product_name_snapshot,
+            variant_name_snapshot: it.variant_name_snapshot,
+            quantity: Number(it.quantity),
+            unit_price: Number(it.unit_price),
+            line_total: Number(it.line_total),
+            image_url: it.image_url,
+          }));
+        }
+      }
+    } catch {}
+  }
+
+  const itemsHtml =
+    itemsToRender.length > 0
+      ? itemsToRender
+          .map(
+            (item) => `
       <tr>
         <td style="padding: 10px 12px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); color: #FFF8EE; font-size: 13px;">
           <strong style="color: #F5D061;">${item.product_name_snapshot}</strong>
@@ -281,8 +308,24 @@ export async function sendOrderConfirmedEmail(
         </td>
       </tr>
     `
-    )
-    .join("");
+          )
+          .join("")
+      : `
+      <tr>
+        <td style="padding: 10px 12px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); color: #FFF8EE; font-size: 13px;">
+          <strong style="color: #F5D061;">Fresh Handcrafted Sweets Assortment</strong>
+        </td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); color: #FFF8EE; font-size: 13px; text-align: center;">
+          1
+        </td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); color: #FFF8EE; font-size: 13px; text-align: right;">
+          ₹${Number(order.subtotal || order.total_amount).toFixed(2)}
+        </td>
+        <td style="padding: 10px 12px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); color: #F5D061; font-weight: bold; font-size: 13px; text-align: right;">
+          ₹${Number(order.subtotal || order.total_amount).toFixed(2)}
+        </td>
+      </tr>
+    `;
 
   const html = `
     <!DOCTYPE html>
@@ -400,10 +443,15 @@ export async function sendOrderConfirmedEmail(
             </table>
           </div>
 
-          <!-- Track CTA Button -->
-          <a href="${trackingUrl}" class="btn-track">
-            Track Order Live &rarr;
-          </a>
+          <!-- Check Status on Website CTA -->
+          <div style="text-align: center; margin: 24px 0 12px 0;">
+            <p style="color: #D3BEB0; font-size: 13px; margin: 0 0 12px 0;">
+              You can check your order status, preparation updates, and delivery anytime directly on our website.
+            </p>
+            <a href="${appUrl}" class="btn-track" style="margin: 0; display: block;">
+              Visit Website &amp; Check Order Status &rarr;
+            </a>
+          </div>
         </div>
 
         <div class="footer">
@@ -419,7 +467,7 @@ export async function sendOrderConfirmedEmail(
   return sendEmail({
     to: order.customer_email,
     subject: `🍬 Order Confirmed! Shree Shyam Sweets — Order #${order.order_number}`,
-    text: `Hello ${order.customer_name}, your order #${order.order_number} has been confirmed! Total: ₹${Number(order.total_amount).toFixed(2)}. Track your order here: ${trackingUrl}`,
+    text: `Hello ${order.customer_name}, your order #${order.order_number} has been confirmed! Subtotal: ₹${Number(order.subtotal || order.total_amount).toFixed(2)}${order.discount_amount > 0 ? `, Discount (${order.coupon_code || "Offer"}): -₹${Number(order.discount_amount).toFixed(2)}` : ""}, Total Amount Paid: ₹${Number(order.total_amount).toFixed(2)}. Check your order status directly on our website: ${appUrl}`,
     html,
   });
 }

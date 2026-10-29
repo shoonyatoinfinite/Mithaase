@@ -265,6 +265,10 @@ export async function notifyOrderConfirmed(params: {
   orderNumber: string;
   orderRef?: string;
   amount: number;
+  subtotal?: number;
+  discountAmount?: number;
+  couponCode?: string;
+  deliveryFee?: number;
   paymentMethod: string;
   upiReference?: string;
   itemsSummary: string;
@@ -272,25 +276,46 @@ export async function notifyOrderConfirmed(params: {
   locality: string;
 }): Promise<boolean> {
   const appUrl = getAppBaseUrl();
-  const trackingRef = params.orderRef || params.orderNumber;
-  const trackingUrl = `${appUrl}/track/${encodeURIComponent(trackingRef)}`;
   const helpline = await resolveAdminHelpline();
-  const formattedAmount = Number(params.amount).toFixed(2);
+  const totalAmount = Number(params.amount) || 0;
+  const formattedAmount = totalAmount.toFixed(2);
+  const subtotal = Number(params.subtotal && params.subtotal > 0 ? params.subtotal : totalAmount);
+  const discountAmount = Number(params.discountAmount) || 0;
+  const deliveryFee = Number(params.deliveryFee != null ? params.deliveryFee : 0);
+  const couponText = params.couponCode ? ` (${params.couponCode})` : "";
+
   const paymentBadge =
     params.paymentMethod.toLowerCase() === "cod"
       ? "Cash on Delivery"
       : `Verified (UPI Ref: ${params.upiReference || "Auto-Confirmed"})`;
 
+  let pricingBlock = "";
+  if (discountAmount > 0) {
+    pricingBlock =
+      `🛒 *Subtotal:* ₹${subtotal.toFixed(2)}\n` +
+      `🏷️ *Discount${couponText}:* -₹${discountAmount.toFixed(2)}\n` +
+      `🚚 *Delivery:* ${deliveryFee === 0 ? "FREE" : `₹${deliveryFee.toFixed(2)}`}\n` +
+      `💰 *Net Amount Paid:* ₹${formattedAmount}\n`;
+  } else if (deliveryFee > 0) {
+    pricingBlock =
+      `🛒 *Subtotal:* ₹${subtotal.toFixed(2)}\n` +
+      `🚚 *Delivery:* ₹${deliveryFee.toFixed(2)}\n` +
+      `💰 *Total Amount Paid:* ₹${formattedAmount}\n`;
+  } else {
+    pricingBlock = `💰 *Amount Paid:* ₹${formattedAmount}\n`;
+  }
+
   const message =
     `🍬 *Mithaasé — Order Confirmed & Payment Verified!*\n\n` +
     `Hello *${params.customerName}*! Thank you for your order. Our halwais are preparing your fresh festive sweets with pure desi ghee.\n\n` +
     `📦 *Order Number:* #${params.orderNumber}\n` +
-    `💰 *Amount:* ₹${formattedAmount}\n` +
+    pricingBlock +
     `💳 *Payment:* ${paymentBadge}\n\n` +
     `🛒 *Items Ordered:*\n${params.itemsSummary}\n\n` +
     `📍 *Delivery Location:*\n${cleanLocationString(params.deliveryAddress, params.locality)}\n\n` +
-    `Track your preparation and rider delivery live:\n` +
-    `👉 ${trackingUrl}\n\n` +
+    `🌐 *Order Tracking:*\n` +
+    `You can check your order status and updates directly on our website:\n` +
+    `👉 ${appUrl}\n\n` +
     `— *Shree Shyam Sweets (Mithaasé)*\n` +
     `📞 Helpline: ${helpline}`;
 

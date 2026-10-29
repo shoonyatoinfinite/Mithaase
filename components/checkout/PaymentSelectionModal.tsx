@@ -82,6 +82,17 @@ interface PaymentSelectionModalProps {
   customerEmail?: string;
   locality: string;
   deliveryAddress?: string;
+  items?: Array<{
+    productId: string;
+    variantId: string;
+    productName: string;
+    variantName: string;
+    unitPrice?: number;
+    price?: number;
+    quantity: number;
+    lineTotal?: number;
+    imageUrl?: string;
+  }>;
   settings: StoreSettings;
   isSubmitting: boolean;
   onConfirmOrder: (data: {
@@ -107,6 +118,7 @@ export function PaymentSelectionModal({
   customerEmail,
   locality,
   deliveryAddress,
+  items,
   settings,
   isSubmitting,
   onConfirmOrder,
@@ -536,6 +548,16 @@ export function PaymentSelectionModal({
           locality: (locality || "").trim(),
           orderId: syncOrderNumber,
           customerVerified: Boolean(overridePhone) || isWhatsappVerified || force,
+          items: (items || []).map((it) => ({
+            productId: it.productId,
+            variantId: it.variantId,
+            productName: it.productName,
+            variantName: it.variantName,
+            quantity: it.quantity,
+            unitPrice: it.unitPrice ?? it.price ?? 0,
+            lineTotal: it.lineTotal ?? ((it.unitPrice ?? it.price ?? 0) * it.quantity),
+            imageUrl: it.imageUrl,
+          })),
         }),
       });
       const data = await res.json();

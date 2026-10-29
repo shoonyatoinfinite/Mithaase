@@ -39,6 +39,7 @@ export async function POST(req: Request) {
       deliveryAddress,
       locality,
       orderId,
+      items,
       method = "intent",
       customerVerified = false,
     } = body;
@@ -196,6 +197,42 @@ export async function POST(req: Request) {
         }
       } catch (dbErr) {
         console.warn("[YouPI Create] Order lookup/init warning:", dbErr);
+      }
+
+      // 1b. Insert or sync order items for this pending order
+      if (Array.isArray(items) && items.length > 0) {
+        try {
+          const isValidUUID = (s?: string | null) =>
+            Boolean(s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s));
+
+          // Clean any previous draft items for this order before re-inserting
+          await sql.query(`DELETE FROM order_items WHERE order_id = $1;`, [targetOrderId]).catch(() => {});
+
+          for (const it of items) {
+            const itemId = crypto.randomUUID();
+            const prodId = isValidUUID(it.productId) ? it.productId : (isValidUUID(it.product_id) ? it.product_id : null);
+            const varId = isValidUUID(it.variantId) ? it.variantId : (isValidUUID(it.variant_id) ? it.variant_id : null);
+            const pName = (it.productName || it.product_name_snapshot || "Sweet").toString().slice(0, 200);
+            const vName = (it.variantName || it.variant_name_snapshot || "").toString().slice(0, 100);
+            const qty = Math.max(1, Number(it.quantity) || 1);
+            const uPrice = Math.max(0, Number(it.unitPrice ?? it.unit_price ?? it.price ?? 0));
+            const lTotal = Math.max(0, Number(it.lineTotal ?? it.line_total ?? (uPrice * qty)));
+            const img = it.imageUrl || it.image_url || null;
+
+            await sql.query(
+              `INSERT INTO order_items (
+                 id, order_id, product_id, variant_id, product_name_snapshot,
+                 variant_name_snapshot, quantity, unit_price, line_total, image_url
+               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+               ON CONFLICT (id) DO NOTHING;`,
+              [itemId, targetOrderId, prodId, varId, pName, vName, qty, uPrice, lTotal, img]
+            ).catch((e: unknown) => {
+              console.warn("[YouPI Create] order_items insert warning:", e);
+            });
+          }
+        } catch (itemsErr) {
+          console.warn("[YouPI Create] items processing warning:", itemsErr);
+        }
       }
     }
     if (!finalOrderRef) {
