@@ -96,6 +96,11 @@ export async function activateYoupiSession(options: ActivateSessionOptions): Pro
     const actRes = await fetch(`${baseUrl}/api/v1/payments/${paymentId}/activate`, {
       method: "POST",
       headers: actHeaders,
+      body: JSON.stringify({
+        customerPhone: cleanPhone,
+        customerName: (customerName || `Customer ${cleanPhone.slice(-4)}`).trim(),
+        customerEmail: (customerEmail || `${cleanPhone}@customer.youpi.local`).trim(),
+      }),
       signal: AbortSignal.timeout(5000),
     });
     if (actRes.ok) {

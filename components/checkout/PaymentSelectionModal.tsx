@@ -189,8 +189,8 @@ export function PaymentSelectionModal({
       if (clean && clean.length === 10) {
         try {
           const cached = localStorage.getItem(`youpi_wa_verified_${clean}`);
-          // Ongoing active session validity window is 10 minutes (600 seconds)
-          if (cached && Date.now() - Number(cached) < 10 * 60 * 1000) {
+          // Ongoing active session validity window is 15 minutes (900 seconds)
+          if (cached && Date.now() - Number(cached) < 15 * 60 * 1000) {
             alreadyVerified = true;
           } else if (cached) {
             localStorage.removeItem(`youpi_wa_verified_${clean}`);
@@ -569,18 +569,21 @@ export function PaymentSelectionModal({
     }
   };
 
-  // Cancel active payment session on YouPI gateway, clear verification cache, and reset state
+  // Cancel active payment session on YouPI gateway and reset state
+  // Preserves WhatsApp OTP verification within its validity window so customer does NOT need to re-verify OTP if they close & reopen the checkout modal
   const handleCancelPaymentSession = async (reason: string = "Payment cancelled by user") => {
     const clean = (activePhone || customerPhone || "").replace(/[^0-9]/g, "").slice(-10);
-    // 1. Clear verification cache so fresh OTP is required when a fresh session is started
+    let keepWaVerified = false;
     if (clean) {
       try {
-        localStorage.removeItem(`youpi_wa_verified_${clean}`);
-        sessionStorage.removeItem(`youpi_wa_verified_${clean}`);
+        const cached = localStorage.getItem(`youpi_wa_verified_${clean}`);
+        if (cached && Date.now() - Number(cached) < 15 * 60 * 1000) {
+          keepWaVerified = true;
+        }
       } catch {}
     }
 
-    // 2. Call backend cancel API to notify YouPI gateway & Neon DB
+    // 1. Call backend cancel API to notify YouPI gateway & Neon DB
     const pId = youpiSession?.paymentId;
     const oId = youpiSession?.orderId;
     const oRef = cleanOrderRef;
@@ -597,8 +600,8 @@ export function PaymentSelectionModal({
       }).catch((err) => console.warn("[YouPI Cancel] Error:", err));
     }
 
-    // 3. Reset all verification and session state
-    setIsWhatsappVerified(false);
+    // 2. Reset session state while keeping WhatsApp verified if still valid
+    setIsWhatsappVerified(keepWaVerified);
     setWaOtpSent(false);
     setWhatsappOtpInput("");
     setWaOtpError("");

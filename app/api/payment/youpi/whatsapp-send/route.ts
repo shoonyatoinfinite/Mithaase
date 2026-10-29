@@ -121,7 +121,7 @@ export async function POST(req: Request) {
           if (raw.length >= 10) adminPhone = raw.slice(-10);
         }
       }
-      if (adminPhone && adminPhone !== cleanPhone) {
+      if (adminPhone) {
         const { sendWhatsAppMessage } = await import("@/lib/whatsapp/payment-notifications");
         const adminAlert =
           `🚨 *YouPI Active Payment Session Started*\n\n` +

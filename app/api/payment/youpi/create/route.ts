@@ -291,9 +291,11 @@ export async function POST(req: Request) {
           currency: "INR",
           customerVerified: Boolean(customerVerified),
           customer: {
-            name: customerName || "Guest Customer",
+            name: customerName || "Customer",
+            mobileNumber: cleanPhone,
             phoneNumber: cleanPhone,
-            email: customerEmail || "",
+            email: cleanPhone ? `${cleanPhone}@customer.youpi.local` : (customerEmail || ""),
+            realEmail: customerEmail || "",
           },
           description: `Mithaase - Order ${finalOrderRef} (${attempt.attempt_ref})`,
           returnUrl: `${appBaseUrl}/track/${finalOrderRef}`,
