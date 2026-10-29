@@ -152,7 +152,8 @@ async function main() {
       ADD COLUMN IF NOT EXISTS refund_amount NUMERIC(10, 2),
       ADD COLUMN IF NOT EXISTS refund_txn_id VARCHAR(100),
       ADD COLUMN IF NOT EXISTS refund_screenshot TEXT,
-      ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ;
+      ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS booking_status TEXT DEFAULT 'standard';
   `);
   console.log("✓ orders table ready");
 

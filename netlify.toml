@@ -2,3 +2,7 @@
   command = "npm run build"
   publish = ".next"
 
+[build.environment]
+  SECRETS_SCAN_OMIT_PATHS = "lib/data/initial-data.ts"
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_STORE_UPI_ID,NEXT_PUBLIC_STORE_UPI_NAME"
+
