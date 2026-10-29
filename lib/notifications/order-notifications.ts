@@ -6,7 +6,14 @@
 
 import { getOrderById, getStoreSettings } from "@/lib/data/store";
 import { sendOrderConfirmedEmail, sendOrderDeliveredBillEmail, sendOrderCancelledEmail } from "@/lib/email/mailer";
-import { notifyOrderConfirmed, notifyOrderDelivered, notifyOrderCancelled, notifyAdminNewOrder } from "@/lib/whatsapp/payment-notifications";
+import {
+  notifyOrderConfirmed,
+  notifyOrderDelivered,
+  notifyOrderCancelled,
+  notifyAdminNewOrder,
+  aggregateOrderItems,
+  resolveCustomerMapUrl,
+} from "@/lib/whatsapp/payment-notifications";
 import { sql } from "@/lib/neon/db";
 import type { Order } from "@/types";
 
@@ -136,12 +143,40 @@ export async function sendOrderConfirmedNotification(
   orderOrId: string | Order
 ): Promise<void> {
   try {
-    const order = typeof orderOrId === "string" ? await getOrderById(orderOrId) : orderOrId;
+    const orderIdentifier =
+      typeof orderOrId === "string"
+        ? orderOrId
+        : (orderOrId.id || orderOrId.order_number || orderOrId.order_ref);
+
+    let order: Order | null = null;
+
+    // 1. Authoritative Backend Match: Fetch fresh, genuine order row directly from database
+    if (sql && orderIdentifier) {
+      try {
+        const rows = await sql.query(
+          `SELECT * FROM orders 
+           WHERE id = $1 OR order_number = $1 OR order_ref = $1 
+           LIMIT 1;`,
+          [orderIdentifier]
+        );
+        if (rows && rows.length > 0) {
+          order = rows[0] as Order;
+        }
+      } catch (dbErr) {
+        console.warn("[OrderNotification] DB order lookup notice:", dbErr);
+      }
+    }
+
+    if (!order) {
+      order = typeof orderOrId === "object" ? orderOrId : await getOrderById(orderOrId);
+    }
+
     if (!order) {
       console.warn("[OrderNotification] Order not found for confirmation notification:", orderOrId);
       return;
     }
 
+    // 2. Atomic Deduplication Lock: Guarantee only 1 unique message is dispatched per genuine order
     const acquired = await claimNotificationLock(order.id, "confirmed");
     if (!acquired) {
       return;
@@ -149,66 +184,75 @@ export async function sendOrderConfirmedNotification(
 
     const settings = await getStoreSettings();
 
-    // 1. Ensure order items are loaded from database if missing or empty
-    if (!order.items || order.items.length === 0) {
-      if (sql) {
-        try {
-          const itemRows = await sql.query(
-            `SELECT * FROM order_items WHERE order_id = $1 OR order_id = $2;`,
-            [order.id, order.order_number]
-          );
-          if (itemRows && itemRows.length > 0) {
-            order.items = itemRows.map((it: any) => ({
-              id: it.id,
-              order_id: it.order_id,
-              product_id: it.product_id,
-              variant_id: it.variant_id,
-              product_name_snapshot: it.product_name_snapshot,
-              variant_name_snapshot: it.variant_name_snapshot,
-              quantity: Number(it.quantity),
-              unit_price: Number(it.unit_price),
-              line_total: Number(it.line_total),
-              image_url: it.image_url,
-            }));
-          }
-        } catch {}
+    // 3. Load authoritative items directly from database table
+    if (sql) {
+      try {
+        const itemRows = await sql.query(
+          `SELECT * FROM order_items WHERE order_id = $1 OR order_id = $2;`,
+          [order.id, order.order_number]
+        );
+        if (itemRows && itemRows.length > 0) {
+          order.items = itemRows.map((it: any) => ({
+            id: it.id,
+            order_id: it.order_id,
+            product_id: it.product_id,
+            variant_id: it.variant_id,
+            product_name_snapshot: it.product_name_snapshot,
+            variant_name_snapshot: it.variant_name_snapshot,
+            quantity: Number(it.quantity),
+            unit_price: Number(it.unit_price),
+            line_total: Number(it.line_total),
+            image_url: it.image_url,
+          }));
+        }
+      } catch (itemsErr) {
+        console.warn("[OrderNotification] order_items fetch notice:", itemsErr);
       }
     }
 
-    // 2. Resolve real address and email for accurate notifications
+    // 4. Resolve real address and email for accurate notifications
     await resolveOrderAddress(order);
     const targetEmail = await resolveOrderEmail(order);
-    if (targetEmail) {
-      order.customer_email = targetEmail;
-      sendOrderConfirmedEmail(order, settings).catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[OrderNotification] Email confirmation failed for #${order.order_number}:`, msg);
-      });
-    } else {
-      console.warn(`[OrderNotification] No valid email address found for order #${order.order_number} to send confirmation.`);
-    }
 
-    // 3. Prepare Items Summary & Resolve Dashboard Admin Hotline
-    const validItems = (order.items || []).filter(
-      (it) => it && (it.product_name_snapshot || (it as any).productName)
-    );
-
+    // 5. Aggregate order items: strictly ensure no item is repeated; combine quantities & totals
+    const aggregatedItems = aggregateOrderItems(order.items || []);
     const itemsSummary =
-      validItems.length > 0
-        ? validItems
+      aggregatedItems.length > 0
+        ? aggregatedItems
             .map((it) => {
-              const name = it.product_name_snapshot || (it as any).productName || "Sweet";
-              const variant = it.variant_name_snapshot || (it as any).variantName || "";
-              const qty = it.quantity || 1;
-              const total = Number(it.line_total ?? (Number(it.unit_price || 0) * qty));
-              return `• ${qty}x ${name}${variant ? ` (${variant})` : ""} — ₹${total.toFixed(2)}`;
+              const variant = it.variantName ? ` (${it.variantName})` : "";
+              return `• ${it.quantity}x ${it.productName}${variant} — ₹${it.lineTotal.toFixed(2)}`;
             })
             .join("\n")
         : `• 1x Fresh Festive Sweets Assortment — ₹${Number(order.total_amount).toFixed(2)}`;
 
+    // Pass aggregated items to email to guarantee no duplicate rows in the email invoice table
+    if (aggregatedItems.length > 0) {
+      order.items = aggregatedItems.map((ai) => ({
+        id: `agg-${ai.productId}-${ai.variantId}`,
+        order_id: order!.id,
+        product_id: ai.productId,
+        variant_id: ai.variantId,
+        product_name_snapshot: ai.productName,
+        variant_name_snapshot: ai.variantName,
+        quantity: ai.quantity,
+        unit_price: ai.unitPrice,
+        line_total: ai.lineTotal,
+        image_url: ai.imageUrl,
+      }));
+    }
+
+    if (targetEmail) {
+      order.customer_email = targetEmail;
+      sendOrderConfirmedEmail(order, settings).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[OrderNotification] Email confirmation failed for #${order!.order_number}:`, msg);
+      });
+    }
+
     const adminHelpline = (settings?.whatsapp_number || settings?.business_phone || "").trim();
 
-    // 4. Send Order Confirmation via WhatsApp to Customer (with Admin Hotline shown at bottom)
+    // 6. Send Order Confirmation via WhatsApp to Customer (with Google Maps pin & COD amounts formatted properly)
     if (order.customer_phone) {
       notifyOrderConfirmed({
         phone: order.customer_phone,
@@ -221,18 +265,22 @@ export async function sendOrderConfirmedNotification(
         couponCode: order.coupon_code || undefined,
         deliveryFee: Number(order.delivery_charge) || 0,
         paymentMethod: order.payment_method || "UPI",
+        paymentStatus: order.payment_status,
         upiReference: order.upi_reference,
         itemsSummary,
         deliveryAddress: order.delivery_address || "",
         locality: order.locality || "",
+        mapUrl: order.map_url,
+        latitude: order.latitude,
+        longitude: order.longitude,
         adminPhone: adminHelpline,
       }).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[OrderNotification] WhatsApp confirmation failed for #${order.order_number}:`, msg);
+        console.warn(`[OrderNotification] WhatsApp confirmation failed for #${order!.order_number}:`, msg);
       });
     }
 
-    // 5. Send Real-Time Order Details to Admin's WhatsApp (both confirmed and requested orders)
+    // 7. Send Real-Time Order Details to Admin's WhatsApp (both confirmed and requested orders)
     notifyAdminNewOrder({
       order,
       itemsSummary,
@@ -240,7 +288,7 @@ export async function sendOrderConfirmedNotification(
       isBookingRequest: order.booking_status === "requested",
     }).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[OrderNotification] Admin WhatsApp alert failed for #${order.order_number}:`, msg);
+      console.warn(`[OrderNotification] Admin WhatsApp alert failed for #${order!.order_number}:`, msg);
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);

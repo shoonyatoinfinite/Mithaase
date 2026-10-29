@@ -446,6 +446,7 @@ export default function CheckoutPage() {
     orderRef?: string;
     isAutoUpi?: boolean;
   }) => {
+    if (isSubmitting) return;
     setIsSubmitting(true);
     setOrderError("");
 

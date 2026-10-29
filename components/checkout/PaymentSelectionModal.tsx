@@ -489,6 +489,7 @@ export function PaymentSelectionModal({
 
   // Immediate confirmation for Instant Pay (Customer clicks "I Have Paid / Verify Now")
   const handleInstantVerify = async (providedUtr?: string) => {
+    if (isSubmitting || isVerifyingInstant) return;
     if (!isWhatsappVerified) {
       setValidationError("WhatsApp verification is required for Instant UPI booking. Please complete WhatsApp verification above.");
       return;
@@ -911,6 +912,7 @@ export function PaymentSelectionModal({
     if (e && typeof e.preventDefault === "function") {
       e.preventDefault();
     }
+    if (isSubmitting) return;
     setValidationError("");
 
     try {

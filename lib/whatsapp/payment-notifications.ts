@@ -251,6 +251,90 @@ export async function resolveAdminHelpline(): Promise<string> {
   }
 }
 
+export interface AggregatedOrderItem {
+  productId: string;
+  variantId: string;
+  productName: string;
+  variantName: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  imageUrl?: string;
+}
+
+/**
+ * Aggregates and consolidates order items by unique product & variant identity.
+ * Strictly guarantees no duplicate items are ever listed in notifications; quantities and totals are summed.
+ */
+export function aggregateOrderItems(rawItems: any[]): AggregatedOrderItem[] {
+  if (!Array.isArray(rawItems) || rawItems.length === 0) return [];
+
+  const map = new Map<string, AggregatedOrderItem>();
+
+  for (const it of rawItems) {
+    if (!it) continue;
+    const pName = (it.product_name_snapshot || it.productName || it.name || "Sweet").toString().trim();
+    const vName = (it.variant_name_snapshot || it.variantName || it.variant || "").toString().trim();
+    const pId = (it.product_id || it.productId || pName).toString().trim();
+    const vId = (it.variant_id || it.variantId || vName).toString().trim();
+    const qty = Math.max(1, Number(it.quantity) || 1);
+    const uPrice = Math.max(0, Number(it.unit_price ?? it.unitPrice ?? it.price ?? 0));
+    const lTotal = Math.max(0, Number(it.line_total ?? it.lineTotal ?? (uPrice * qty)));
+    const img = it.image_url || it.imageUrl || undefined;
+
+    // Aggregate strictly by product name & variant (case-insensitive) to prevent duplicate listings
+    const key = `${pName.toLowerCase()}:::${vName.toLowerCase()}`;
+
+    if (map.has(key)) {
+      const existing = map.get(key)!;
+      existing.quantity += qty;
+      existing.lineTotal += lTotal;
+      if (existing.unitPrice === 0 && uPrice > 0) existing.unitPrice = uPrice;
+      if (!existing.imageUrl && img) existing.imageUrl = img;
+    } else {
+      map.set(key, {
+        productId: pId,
+        variantId: vId,
+        productName: pName,
+        variantName: vName,
+        quantity: qty,
+        unitPrice: uPrice,
+        lineTotal: lTotal,
+        imageUrl: img,
+      });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+/**
+ * Resolves a direct, clickable Google Maps pin link for customer delivery location
+ */
+export function resolveCustomerMapUrl(order: {
+  map_url?: string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  delivery_address?: string | null;
+  locality?: string | null;
+}): string {
+  if (order.map_url && typeof order.map_url === "string" && order.map_url.trim().startsWith("http")) {
+    return order.map_url.trim();
+  }
+  const lat = Number(order.latitude);
+  const lng = Number(order.longitude);
+  if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+    return `https://www.google.com/maps?q=${lat},${lng}`;
+  }
+  const cleanAddr = (order.delivery_address || "").replace(/Pending checkout address/gi, "").trim();
+  const cleanLoc = (order.locality || "").replace(/Pending Locality/gi, "").trim();
+  const query = [cleanAddr, cleanLoc, "Kothal Kalan, Haryana"].filter(Boolean).join(", ");
+  if (cleanAddr || cleanLoc) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+  }
+  return "";
+}
+
 function cleanLocationString(address?: string | null, locality?: string | null): string {
   const cleanAddr = (address || "").replace(/Pending checkout address/gi, "").trim();
   const cleanLoc = (locality || "").replace(/Pending Locality/gi, "").trim();
@@ -259,6 +343,10 @@ function cleanLocationString(address?: string | null, locality?: string | null):
   if (cleanLoc) return cleanLoc;
   return "Doorstep Delivery";
 }
+
+// In-memory rate-limiting and deduplication cooldowns (10-minute window per unique order)
+const adminOrderAlertCooldown = new Map<string, number>();
+const customerOrderAlertCooldown = new Map<string, number>();
 
 /**
  * Sends order confirmation and payment verified WhatsApp notification to Customer
@@ -274,12 +362,27 @@ export async function notifyOrderConfirmed(params: {
   couponCode?: string;
   deliveryFee?: number;
   paymentMethod: string;
+  paymentStatus?: string;
   upiReference?: string;
   itemsSummary: string;
   deliveryAddress: string;
   locality: string;
+  mapUrl?: string;
+  latitude?: number | string;
+  longitude?: number | string;
   adminPhone?: string;
 }): Promise<boolean> {
+  // 1. Rate-limiting & deduplication: ensure rapid clicks send at most 1 unique message per order
+  const orderIdentifier = (params.orderNumber || params.orderRef || "").toString().trim();
+  if (orderIdentifier) {
+    const lastSent = customerOrderAlertCooldown.get(orderIdentifier);
+    if (lastSent && Date.now() - lastSent < 10 * 60 * 1000) {
+      console.log(`[Customer Notification] Rate-limit skip: Order #${params.orderNumber} already notified.`);
+      return true;
+    }
+    customerOrderAlertCooldown.set(orderIdentifier, Date.now());
+  }
+
   const appUrl = getAppBaseUrl();
   const helpline = params.adminPhone?.trim() || (await resolveAdminHelpline());
   const totalAmount = Number(params.amount) || 0;
@@ -289,10 +392,27 @@ export async function notifyOrderConfirmed(params: {
   const deliveryFee = Number(params.deliveryFee != null ? params.deliveryFee : 0);
   const couponText = params.couponCode ? ` (${params.couponCode})` : "";
 
-  const paymentBadge =
-    params.paymentMethod.toLowerCase() === "cod"
-      ? "Cash on Delivery"
-      : `Verified (UPI Ref: ${params.upiReference || "Auto-Confirmed"})`;
+  const isPaid = (params.paymentStatus || "").toLowerCase() === "paid";
+  const isCod = params.paymentMethod.toLowerCase() === "cod";
+  const isPendingCod = isCod && !isPaid;
+
+  const paymentBadge = isCod
+    ? (isPaid ? "Cash Paid on Delivery ✓" : "Cash on Delivery (To be paid at doorstep)")
+    : isPaid
+    ? `Verified (UPI Ref: ${params.upiReference || "Auto-Confirmed"})`
+    : `UPI (Verification Pending)`;
+
+  // COD orders explicitly display "Amount to Pay" instead of "Amount Paid" until actually paid
+  let amountLabel = "💰 *Total Amount Paid:*";
+  if (isPendingCod) {
+    amountLabel = "💰 *Amount to Pay on Delivery (Cash):*";
+  } else if (!isPaid) {
+    amountLabel = "💰 *Amount to Pay:*";
+  } else if (isCod) {
+    amountLabel = "💰 *Total Amount Paid (Cash on Delivery):*";
+  } else {
+    amountLabel = "💰 *Total Amount Paid (UPI Verified):*";
+  }
 
   let pricingBlock = "";
   if (discountAmount > 0) {
@@ -300,24 +420,30 @@ export async function notifyOrderConfirmed(params: {
       `🛒 *Subtotal:* ₹${subtotal.toFixed(2)}\n` +
       `🏷️ *Discount${couponText}:* -₹${discountAmount.toFixed(2)}\n` +
       `🚚 *Delivery:* ${deliveryFee === 0 ? "FREE" : `₹${deliveryFee.toFixed(2)}`}\n` +
-      `💰 *Net Amount Paid:* ₹${formattedAmount}\n`;
+      `${amountLabel} ₹${formattedAmount}\n`;
   } else if (deliveryFee > 0) {
     pricingBlock =
       `🛒 *Subtotal:* ₹${subtotal.toFixed(2)}\n` +
       `🚚 *Delivery:* ₹${deliveryFee.toFixed(2)}\n` +
-      `💰 *Total Amount Paid:* ₹${formattedAmount}\n`;
+      `${amountLabel} ₹${formattedAmount}\n`;
   } else {
-    pricingBlock = `💰 *Amount Paid:* ₹${formattedAmount}\n`;
+    pricingBlock = `${amountLabel} ₹${formattedAmount}\n`;
   }
 
+  const mapLink = params.mapUrl || resolveCustomerMapUrl(params);
+  const locationBlock =
+    `📍 *Delivery Location:*\n${cleanLocationString(params.deliveryAddress, params.locality)}\n` +
+    (mapLink ? `🗺️ *Google Maps Pin:*\n👉 ${mapLink}\n` : "");
+
   const message =
-    `🍬 *Mithaasé — Order Confirmed & Payment Verified!*\n\n` +
+    `🍬 *Mithaasé — Order Confirmed!*\n\n` +
     `Hello *${params.customerName}*! Thank you for your order. Our halwais are preparing your fresh festive sweets with pure desi ghee.\n\n` +
     `📦 *Order Number:* #${params.orderNumber}\n` +
+    (params.orderRef ? `🏷️ *Order Ref:* ${params.orderRef}\n` : "") +
     pricingBlock +
     `💳 *Payment:* ${paymentBadge}\n\n` +
     `🛒 *Items Ordered:*\n${params.itemsSummary}\n\n` +
-    `📍 *Delivery Location:*\n${cleanLocationString(params.deliveryAddress, params.locality)}\n\n` +
+    locationBlock + `\n` +
     `🌐 *Order Tracking:*\n` +
     `You can check your order status and updates directly on our website:\n` +
     `👉 ${appUrl}\n\n` +
@@ -337,6 +463,19 @@ export async function notifyAdminNewOrder(params: {
   isBookingRequest?: boolean;
   statusBadge?: string;
 }): Promise<boolean> {
+  const { order, itemsSummary, isBookingRequest, statusBadge } = params;
+
+  // 1. Rate-limiting & deduplication: ensure rapid clicks/triggers send at most 1 unique alert per order
+  const orderIdentifier = (order.id || order.order_number || "").toString().trim();
+  if (orderIdentifier) {
+    const lastSent = adminOrderAlertCooldown.get(orderIdentifier);
+    if (lastSent && Date.now() - lastSent < 10 * 60 * 1000) {
+      console.log(`[Admin Notification] Rate-limit skip: Order #${order.order_number} alert already sent.`);
+      return true;
+    }
+    adminOrderAlertCooldown.set(orderIdentifier, Date.now());
+  }
+
   let targetAdminPhone = (params.adminPhone || "").trim();
   if (!targetAdminPhone) {
     targetAdminPhone = await resolveAdminHelpline();
@@ -348,7 +487,6 @@ export async function notifyAdminNewOrder(params: {
     return false;
   }
 
-  const { order, itemsSummary, isBookingRequest, statusBadge } = params;
   const appUrl = getAppBaseUrl();
   const formattedTotal = Number(order.total_amount).toFixed(2);
   const formattedSubtotal = Number(order.subtotal || order.total_amount).toFixed(2);
@@ -356,26 +494,39 @@ export async function notifyAdminNewOrder(params: {
   const formattedDiscount = discountAmount.toFixed(2);
   const deliveryCharge = Number(order.delivery_charge || 0);
 
+  const isPaid = order.payment_status === "paid";
+  const isCod = order.payment_method?.toLowerCase() === "cod";
   const isBooking = isBookingRequest || order.booking_status === "requested";
+
   const orderTypeBadge =
     statusBadge ||
     (isBooking
       ? "⏳ *AFTER-HOURS BOOKING REQUEST*"
-      : order.payment_status === "paid" || order.order_status === "confirmed"
+      : isPaid || order.order_status === "confirmed"
       ? "✅ *CONFIRMED ORDER (PAYMENT VERIFIED)*"
-      : order.payment_method?.toLowerCase() === "cod"
+      : isCod
       ? "💵 *CASH ON DELIVERY ORDER*"
-      : "⚡ *NEW ORDER INITIATED (PAYMENT PENDING)*");
+      : "⚡ *NEW ORDER (PAYMENT PENDING)*");
 
-  const paymentDetails =
-    order.payment_method?.toLowerCase() === "cod"
-      ? "Cash on Delivery"
-      : order.payment_status === "paid"
-      ? `UPI Verified${order.upi_reference ? ` (Ref: ${order.upi_reference})` : ""}`
-      : `UPI Pending Verification${order.upi_reference ? ` (Ref: ${order.upi_reference})` : ""}`;
+  const paymentDetails = isCod
+    ? (isPaid ? "Cash Paid on Delivery ✓" : "Cash on Delivery (Pending Collection at Doorstep)")
+    : isPaid
+    ? `UPI Verified${order.upi_reference ? ` (Ref: ${order.upi_reference})` : ""}`
+    : `UPI Pending Verification${order.upi_reference ? ` (Ref: ${order.upi_reference})` : ""}`;
+
+  const netTotalLabel = isCod
+    ? (isPaid ? "• *Net Total (Collected via COD):*" : "• *Net Total to Collect (Cash on Delivery):*")
+    : (isPaid ? "• *Net Total (Paid via UPI):*" : "• *Net Total (Amount to Pay):*");
 
   const customerPhoneClean = (order.customer_phone || "").replace(/[^0-9]/g, "").slice(-10);
   const locationStr = cleanLocationString(order.delivery_address, order.locality);
+  const mapLink = resolveCustomerMapUrl(order);
+
+  const locationBlock =
+    `📍 *Delivery Location:*\n${locationStr}\n` +
+    (order.landmark ? `• Landmark: ${order.landmark}\n` : "") +
+    (order.delivery_instructions ? `• Instructions: ${order.delivery_instructions}\n` : "") +
+    (mapLink ? `🗺️ *Customer Google Maps Pin:*\n👉 ${mapLink}\n` : "");
 
   const message =
     `🔔 *NEW ORDER ALERT — Mithaasé!*\n\n` +
@@ -387,14 +538,12 @@ export async function notifyAdminNewOrder(params: {
     `• Phone: +91 *${customerPhoneClean}*\n` +
     (order.customer_email ? `• Email: ${order.customer_email}\n` : "") +
     `\n🛒 *Items Ordered:*\n${itemsSummary}\n\n` +
-    `📍 *Delivery Location:*\n${locationStr}\n` +
-    (order.landmark ? `• Landmark: ${order.landmark}\n` : "") +
-    (order.delivery_instructions ? `• Instructions: ${order.delivery_instructions}\n` : "") +
-    `\n💰 *Bill Breakdown:*\n` +
+    locationBlock + `\n` +
+    `💰 *Bill Breakdown:*\n` +
     `• Subtotal: ₹${formattedSubtotal}\n` +
     (discountAmount > 0 ? `• Discount (${order.coupon_code || "Offer"}): -₹${formattedDiscount}\n` : "") +
     `• Delivery: ${deliveryCharge === 0 ? "FREE" : `₹${deliveryCharge.toFixed(2)}`}\n` +
-    `• *Net Total: ₹${formattedTotal}*\n` +
+    `${netTotalLabel} ₹${formattedTotal}\n` +
     `• Payment: *${paymentDetails}*\n\n` +
     `🔗 *Manage Order in Dashboard:*\n` +
     `👉 ${appUrl}/admin/orders\n` +

@@ -1,5 +1,6 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import type { Order, StoreSettings } from "@/types";
+import { aggregateOrderItems, resolveCustomerMapUrl } from "@/lib/whatsapp/payment-notifications";
 
 let cachedTransporter: Transporter | null = null;
 
@@ -255,10 +256,25 @@ export async function sendOrderConfirmedEmail(
     minute: "2-digit",
   });
 
-  const paymentBadge =
-    order.payment_method === "cod"
-      ? "Cash on Delivery"
-      : `Paid via UPI (Ref: ${order.upi_reference || "Auto-Confirmed"})`;
+  const isPaid = order.payment_status === "paid";
+  const isCod = order.payment_method === "cod";
+  const isPendingCod = isCod && !isPaid;
+
+  const paymentBadge = isCod
+    ? (isPaid ? "Cash Paid on Delivery ✓" : "Cash on Delivery (Payment on Delivery)")
+    : isPaid
+    ? `Paid via UPI (Ref: ${order.upi_reference || "Auto-Confirmed"})`
+    : `UPI (Payment Pending)`;
+
+  const totalLabel = isPendingCod
+    ? "Amount to Pay on Delivery (Cash):"
+    : isCod
+    ? "Total Amount Paid (COD):"
+    : isPaid
+    ? "Total Amount Paid (UPI Verified):"
+    : "Amount to Pay:";
+
+  const customerMapUrl = resolveCustomerMapUrl(order);
 
   let itemsToRender = order.items || [];
   if (itemsToRender.length === 0 && order.id) {
@@ -287,24 +303,27 @@ export async function sendOrderConfirmedEmail(
     } catch {}
   }
 
+  // Aggregate items so no item appears twice; quantities and totals are combined
+  const aggregatedItems = aggregateOrderItems(itemsToRender);
+
   const itemsHtml =
-    itemsToRender.length > 0
-      ? itemsToRender
+    aggregatedItems.length > 0
+      ? aggregatedItems
           .map(
             (item) => `
       <tr>
         <td style="padding: 10px 12px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); color: #FFF8EE; font-size: 13px;">
-          <strong style="color: #F5D061;">${item.product_name_snapshot}</strong>
-          ${item.variant_name_snapshot ? `<br><span style="font-size: 11px; color: #D3BEB0;">${item.variant_name_snapshot}</span>` : ""}
+          <strong style="color: #F5D061;">${item.productName}</strong>
+          ${item.variantName ? `<br><span style="font-size: 11px; color: #D3BEB0;">${item.variantName}</span>` : ""}
         </td>
         <td style="padding: 10px 12px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); color: #FFF8EE; font-size: 13px; text-align: center;">
           ${item.quantity}
         </td>
         <td style="padding: 10px 12px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); color: #FFF8EE; font-size: 13px; text-align: right;">
-          ₹${Number(item.unit_price).toFixed(2)}
+          ₹${Number(item.unitPrice).toFixed(2)}
         </td>
         <td style="padding: 10px 12px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); color: #F5D061; font-weight: bold; font-size: 13px; text-align: right;">
-          ₹${Number(item.line_total).toFixed(2)}
+          ₹${Number(item.lineTotal).toFixed(2)}
         </td>
       </tr>
     `
@@ -362,12 +381,14 @@ export async function sendOrderConfirmedEmail(
 
         <div class="content">
           <div style="text-align: center;">
-            <div class="status-badge">Payment Verified &amp; Order Confirmed ✓</div>
+            <div class="status-badge" style="${isPendingCod ? 'border-color: #F5D061; color: #F5D061; background: rgba(245, 208, 97, 0.15);' : ''}">
+              ${isPendingCod ? "Cash on Delivery Order Placed ✓" : "Payment Verified &amp; Order Confirmed ✓"}
+            </div>
             <h1 style="color: #FFF8EE; font-size: 22px; margin: 0 0 8px 0; font-family: Georgia, serif;">
               Thank You for Your Order, ${order.customer_name}!
             </h1>
             <p style="color: #D3BEB0; font-size: 13px; line-height: 1.5; margin: 0;">
-              Your payment has been successfully verified. Our halwais are freshly preparing your handcrafted sweets.
+              ${isPendingCod ? "Your Cash on Delivery order has been successfully placed. Our halwais are preparing your fresh sweets." : "Your payment has been successfully verified. Our halwais are freshly preparing your handcrafted sweets."}
             </p>
           </div>
 
@@ -384,7 +405,7 @@ export async function sendOrderConfirmedEmail(
               </tr>
               <tr>
                 <td style="color: #A89587; font-size: 12px; padding: 4px 0;">Payment Status:</td>
-                <td style="color: #34D399; font-weight: bold; font-size: 12px; text-align: right; padding: 4px 0;">${paymentBadge}</td>
+                <td style="color: ${isPaid ? '#34D399' : '#F5D061'}; font-weight: bold; font-size: 12px; text-align: right; padding: 4px 0;">${paymentBadge}</td>
               </tr>
               <tr>
                 <td style="color: #A89587; font-size: 12px; padding: 4px 0;">Delivery To:</td>
@@ -392,7 +413,10 @@ export async function sendOrderConfirmedEmail(
               </tr>
               <tr>
                 <td style="color: #A89587; font-size: 12px; padding: 4px 0;">Address:</td>
-                <td style="color: #FFF8EE; font-size: 12px; text-align: right; padding: 4px 0;">${cleanDisplayAddress(order.delivery_address, order.locality)}</td>
+                <td style="color: #FFF8EE; font-size: 12px; text-align: right; padding: 4px 0;">
+                  ${cleanDisplayAddress(order.delivery_address, order.locality)}
+                  ${customerMapUrl ? `<br><a href="${customerMapUrl}" target="_blank" style="color: #F5D061; text-decoration: underline; font-weight: bold; font-size: 11px;">📍 View Exact Location on Google Maps</a>` : ""}
+                </td>
               </tr>
             </table>
           </div>
@@ -437,7 +461,7 @@ export async function sendOrderConfirmedEmail(
                 </td>
               </tr>
               <tr>
-                <td style="color: #F5D061; font-size: 16px; font-weight: 900; padding: 8px 0 0 0; border-top: 1px solid rgba(255,255,255,0.1);">Total Amount Paid:</td>
+                <td style="color: #F5D061; font-size: 16px; font-weight: 900; padding: 8px 0 0 0; border-top: 1px solid rgba(255,255,255,0.1);">${totalLabel}</td>
                 <td style="color: #F5D061; font-size: 18px; font-weight: 900; text-align: right; padding: 8px 0 0 0; border-top: 1px solid rgba(255,255,255,0.1);">₹${Number(order.total_amount).toFixed(2)}</td>
               </tr>
             </table>
