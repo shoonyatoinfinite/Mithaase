@@ -11,17 +11,19 @@ function getTransporter() {
   const pass = process.env.SMTP_PASS?.trim();
 
   if (user && pass) {
+    // In Vercel serverless functions, pooled persistent connections hang after lambda freeze.
+    // Use individual per-invocation connection with fast timeouts.
     cachedTransporter = nodemailer.createTransport({
       host,
       port,
       secure: port === 465,
-      pool: true,
-      maxConnections: 3,
-      maxMessages: 100,
       auth: {
         user,
         pass,
       },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
     });
     return cachedTransporter;
   }

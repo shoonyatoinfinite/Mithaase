@@ -7,11 +7,39 @@
 import { getOrderById, getStoreSettings } from "@/lib/data/store";
 import { sendOrderConfirmedEmail, sendOrderDeliveredBillEmail } from "@/lib/email/mailer";
 import { notifyOrderConfirmed, notifyOrderDelivered } from "@/lib/whatsapp/payment-notifications";
+import { sql } from "@/lib/neon/db";
 import type { Order } from "@/types";
 
 // In-memory set to prevent duplicate notification bursts during the same server lifetime
 const sentConfirmationOrders = new Set<string>();
 const sentDeliveredOrders = new Set<string>();
+
+/**
+ * Resolves a valid email for the customer, checking the order first, then fallback to database profile.
+ */
+async function resolveOrderEmail(order: Order): Promise<string | null> {
+  if (order.customer_email && order.customer_email.includes("@")) {
+    return order.customer_email.trim();
+  }
+
+  if (sql && order.customer_phone) {
+    try {
+      const cleanPhone = order.customer_phone.replace(/[^0-9]/g, "").slice(-10);
+      const rows = await sql.query(
+        `SELECT email FROM customer_accounts WHERE phone = $1 AND email IS NOT NULL AND email != '' LIMIT 1;`,
+        [cleanPhone]
+      );
+      if (rows && rows.length > 0 && rows[0]?.email?.includes("@")) {
+        const foundEmail = rows[0].email.trim();
+        order.customer_email = foundEmail;
+        await sql.query(`UPDATE orders SET customer_email = $1 WHERE id = $2;`, [foundEmail, order.id]).catch(() => {});
+        return foundEmail;
+      }
+    } catch {}
+  }
+
+  return null;
+}
 
 /**
  * Sends order confirmation & payment verification notifications via Email and WhatsApp
@@ -35,12 +63,16 @@ export async function sendOrderConfirmedNotification(
 
     const settings = await getStoreSettings();
 
-    // 1. Send Order Confirmation Email (if customer email is valid)
-    if (order.customer_email && order.customer_email.includes("@")) {
+    // 1. Resolve and Send Order Confirmation Email
+    const targetEmail = await resolveOrderEmail(order);
+    if (targetEmail) {
+      order.customer_email = targetEmail;
       sendOrderConfirmedEmail(order, settings).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[OrderNotification] Email confirmation failed for #${order.order_number}:`, msg);
       });
+    } else {
+      console.warn(`[OrderNotification] No valid email address found for order #${order.order_number} to send confirmation.`);
     }
 
     // 2. Send Order Confirmation & Payment Details via WhatsApp (if customer phone is available)
@@ -96,8 +128,10 @@ export async function sendOrderDeliveredNotification(
 
     const settings = await getStoreSettings();
 
-    // 1. Send Official Delivery Bill & Tax Invoice Email
-    if (order.customer_email && order.customer_email.includes("@")) {
+    // 1. Resolve and Send Official Delivery Bill & Tax Invoice Email
+    const targetEmail = await resolveOrderEmail(order);
+    if (targetEmail) {
+      order.customer_email = targetEmail;
       sendOrderDeliveredBillEmail(order, settings).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[OrderNotification] Delivery bill email failed for #${order.order_number}:`, msg);

@@ -1247,6 +1247,7 @@ export default function CheckoutPage() {
         amount={finalTotal}
         customerName={customerName}
         customerPhone={customerPhone}
+        customerEmail={user?.email || loginEmail || signupEmail}
         locality={locality}
         settings={settings}
         isSubmitting={isSubmitting}

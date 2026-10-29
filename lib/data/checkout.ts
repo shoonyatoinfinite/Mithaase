@@ -37,6 +37,7 @@ export interface CreateOrderParams {
   isBookingRequest?: boolean;
   customerPhone?: string;
   customerName?: string;
+  customerEmail?: string;
   orderNumber?: string;
   orderRef?: string;
 }
@@ -432,6 +433,8 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
           [orderNumber]
         );
 
+        const finalEmail = (params.customerEmail?.trim() || customer.email || "").trim() || null;
+
         if (existingRes.rows && existingRes.rows.length > 0) {
           const ex = existingRes.rows[0];
           orderId = ex.id;
@@ -454,7 +457,7 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
              WHERE id = $24;`,
             [
               customer.name || params.customerName || "Customer",
-              customer.email,
+              finalEmail,
               finalPhone,
               finalAddress,
               finalLocality,
@@ -495,7 +498,7 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
               orderNumber,
               finalOrderRef,
               customer.name || params.customerName || "Customer",
-              customer.email,
+              finalEmail,
               finalPhone,
               finalAddress,
               finalLocality,
@@ -592,7 +595,7 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
         id: orderId,
         order_number: orderNumber,
         customer_name: customer.name || params.customerName || "Customer",
-        customer_email: customer.email,
+        customer_email: finalEmail || undefined,
         customer_phone: finalPhone,
         delivery_address: finalAddress,
         locality: finalLocality,
@@ -677,6 +680,20 @@ const createdOrder = createdOrderResult;
   const fullOrder = (await getOrderById(createdOrder.id)) || (createdOrder as any);
 
   broadcastRealtimeEvent("order_created", fullOrder);
+
+  // Dispatch automated order confirmation notifications for COD, bookings, or already confirmed orders
+  if (
+    fullOrder.payment_status === "paid" ||
+    fullOrder.order_status === "confirmed" ||
+    fullOrder.payment_method === "cod" ||
+    fullOrder.booking_status === "requested"
+  ) {
+    import("@/lib/notifications/order-notifications")
+      .then(({ sendOrderConfirmedNotification }) => {
+        sendOrderConfirmedNotification(fullOrder).catch(() => {});
+      })
+      .catch(() => {});
+  }
 
   return {
     success: true,

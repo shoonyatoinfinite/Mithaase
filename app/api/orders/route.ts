@@ -160,6 +160,7 @@ export async function POST(req: Request) {
       isBookingRequest: Boolean(body.is_booking_request || body.isBookingRequest),
       customerPhone: body.customer_phone,
       customerName: body.customer_name,
+      customerEmail: body.customer_email || body.customerEmail || (session as any).email,
       orderNumber: body.order_number || body.orderNumber,
       orderRef: body.order_ref || body.orderRef,
     });
