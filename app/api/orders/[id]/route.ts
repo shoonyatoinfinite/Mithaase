@@ -103,18 +103,26 @@ export async function PATCH(
 
     const body = await req.json();
 
-    // Check if this is an authorized customer selecting payment for an approved booking request
+    // Check if this is an authorized customer selecting payment or requesting bill email
     const isCustomerPaymentSelection =
       isOrderOwner &&
       body.booking_status === "payment_selected" &&
       order.booking_status === "approved_for_payment";
 
+    const isCustomerSendBill = isOrderOwner && body.action === "send_bill";
+
     // Strict Server-Side Role Enforcement
-    if (!isAdmin && !isRider && !isCustomerPaymentSelection) {
+    if (!isAdmin && !isRider && !isCustomerPaymentSelection && !isCustomerSendBill) {
       return NextResponse.json(
-        { error: "Forbidden: Staff administrator, rider, or authorized customer payment action required." },
+        { error: "Forbidden: Staff administrator, rider, or authorized customer action required." },
         { status: 403 }
       );
+    }
+
+    if (isCustomerSendBill) {
+      const { sendOrderDeliveredNotification } = await import("@/lib/notifications/order-notifications");
+      await sendOrderDeliveredNotification(order.id);
+      return NextResponse.json({ success: true, message: "Official bill and receipt sent to customer email" });
     }
 
     // Customer Payment Selection Handler
@@ -192,6 +200,18 @@ export async function PATCH(
 
     // Only Admin can update payment status, delivery queue, or refunds
     if (isAdmin) {
+      if (body.action === "send_confirmation") {
+        const { sendOrderConfirmedNotification } = await import("@/lib/notifications/order-notifications");
+        await sendOrderConfirmedNotification(order.id);
+        return NextResponse.json({ success: true, message: "Confirmation notification sent successfully" });
+      }
+
+      if (body.action === "send_bill") {
+        const { sendOrderDeliveredNotification } = await import("@/lib/notifications/order-notifications");
+        await sendOrderDeliveredNotification(order.id);
+        return NextResponse.json({ success: true, message: "Delivery bill sent successfully" });
+      }
+
       if (body.payment_status) {
         await updatePaymentStatus(id, body.payment_status as PaymentStatus, body.upi_reference);
       }

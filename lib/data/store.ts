@@ -1750,6 +1750,20 @@ export async function updateOrderStatus(
   }
 
   serverCache.invalidateTag("orders");
+
+  // Automated Customer Notifications: Email (Receipt / Confirmation) & WhatsApp
+  try {
+    if (newStatus === "confirmed" && prevStatus !== "confirmed") {
+      const { sendOrderConfirmedNotification } = await import("@/lib/notifications/order-notifications");
+      sendOrderConfirmedNotification(order.id).catch(() => {});
+    } else if (newStatus === "delivered" && prevStatus !== "delivered") {
+      const { sendOrderDeliveredNotification } = await import("@/lib/notifications/order-notifications");
+      sendOrderDeliveredNotification(order.id).catch(() => {});
+    }
+  } catch (notifErr) {
+    console.warn("[STORE] Notification dispatch warning:", notifErr);
+  }
+
   return { success: true, order };
 }
 
@@ -1950,6 +1964,14 @@ export async function updateBookingStatus(
   }
 
   serverCache.invalidateTag("orders");
+
+  if (newBookingStatus === "confirmed") {
+    try {
+      const { sendOrderConfirmedNotification } = await import("@/lib/notifications/order-notifications");
+      sendOrderConfirmedNotification(order.id).catch(() => {});
+    } catch {}
+  }
+
   return { success: true, order };
 }
 

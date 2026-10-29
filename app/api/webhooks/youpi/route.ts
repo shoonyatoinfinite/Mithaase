@@ -175,6 +175,14 @@ export async function POST(req: Request) {
       if (updatedOrder && updatedOrder.length > 0) {
         broadcastRealtimeEvent("order_status_updated", updatedOrder[0]);
       }
+
+      // Dispatch Order Confirmed & Payment Verified Notification via Email and WhatsApp
+      try {
+        const { sendOrderConfirmedNotification } = await import("@/lib/notifications/order-notifications");
+        sendOrderConfirmedNotification(order.id).catch(() => {});
+      } catch (notifErr) {
+        console.warn("[YouPI Webhook] Order confirmation notification warning:", notifErr);
+      }
     }
 
     return NextResponse.json({ received: true, processed: true });

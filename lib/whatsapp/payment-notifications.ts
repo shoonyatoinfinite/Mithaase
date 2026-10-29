@@ -135,3 +135,76 @@ export async function notifyPaymentInstructions(params: {
   return sendWhatsAppMessage(params.phone, message);
 }
 
+/**
+ * Sends order confirmation and payment verified WhatsApp notification
+ */
+export async function notifyOrderConfirmed(params: {
+  phone: string;
+  customerName: string;
+  orderNumber: string;
+  orderRef?: string;
+  amount: number;
+  paymentMethod: string;
+  upiReference?: string;
+  itemsSummary: string;
+  deliveryAddress: string;
+  locality: string;
+}): Promise<boolean> {
+  const appUrl = getAppBaseUrl();
+  const trackingRef = params.orderRef || params.orderNumber;
+  const trackingUrl = `${appUrl}/order-confirmation/${encodeURIComponent(trackingRef)}`;
+  const formattedAmount = Number(params.amount).toFixed(2);
+  const paymentBadge =
+    params.paymentMethod.toLowerCase() === "cod"
+      ? "Cash on Delivery"
+      : `Verified (UPI Ref: ${params.upiReference || "Auto-Confirmed"})`;
+
+  const message =
+    `🍬 *Mithaasé — Order Confirmed & Payment Verified!*\n\n` +
+    `Hello *${params.customerName}*! Thank you for your order. Our halwais are preparing your fresh festive sweets with pure desi ghee.\n\n` +
+    `📦 *Order Number:* #${params.orderNumber}\n` +
+    `💰 *Amount:* ₹${formattedAmount}\n` +
+    `💳 *Payment:* ${paymentBadge}\n\n` +
+    `🛒 *Items Ordered:*\n${params.itemsSummary}\n\n` +
+    `📍 *Delivery Location:*\n${params.deliveryAddress}, ${params.locality}\n\n` +
+    `Track your preparation and rider delivery live:\n` +
+    `👉 ${trackingUrl}\n\n` +
+    `— *Shree Shyam Sweets (Mithaasé)*\n` +
+    `📞 Helpline: +91 9416262453`;
+
+  return sendWhatsAppMessage(params.phone, message);
+}
+
+/**
+ * Sends order delivered WhatsApp notification with bill notice
+ */
+export async function notifyOrderDelivered(params: {
+  phone: string;
+  customerName: string;
+  orderNumber: string;
+  orderRef?: string;
+  amount: number;
+  deliveryAddress: string;
+  locality: string;
+  customerEmail?: string;
+}): Promise<boolean> {
+  const formattedAmount = Number(params.amount).toFixed(2);
+  const receiptNo = `REC-${params.orderNumber.replace(/[^0-9]/g, "")}`;
+  const emailNotice = params.customerEmail
+    ? `\n\n🧾 *Bill Sent:* A complete itemized delivery bill and tax receipt has been emailed to *${params.customerEmail}*.`
+    : "";
+
+  const message =
+    `🎉 *Mithaasé — Order Delivered!*\n\n` +
+    `Hello *${params.customerName}*, your fresh sweets order *#${params.orderNumber}* has been successfully delivered to your doorstep!\n\n` +
+    `📦 *Receipt No:* ${receiptNo}\n` +
+    `💰 *Total Paid:* ₹${formattedAmount}\n` +
+    `📍 *Delivered To:* ${params.deliveryAddress}, ${params.locality}${emailNotice}\n\n` +
+    `We hope you enjoy every bite of your fresh sweets! Thank you for choosing Shree Shyam Sweets for your festive celebrations. 🍬✨\n\n` +
+    `— *Shree Shyam Sweets*\n` +
+    `📞 Helpline: +91 9416262453`;
+
+  return sendWhatsAppMessage(params.phone, message);
+}
+
+

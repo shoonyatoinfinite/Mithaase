@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import { Order, StoreSettings } from "@/types";
 import { Diya } from "@/components/animations/Diya";
 import {
@@ -8,6 +8,9 @@ import {
   Calendar,
   RotateCcw,
   AlertCircle,
+  Mail,
+  Check,
+  Loader2,
 } from "lucide-react";
 
 interface OrderReceiptProps {
@@ -17,6 +20,25 @@ interface OrderReceiptProps {
 
 export function OrderReceipt({ order, settings }: OrderReceiptProps) {
   const receiptRef = useRef<HTMLDivElement>(null);
+  const [isSendingBill, setIsSendingBill] = useState(false);
+  const [billSentSuccess, setBillSentSuccess] = useState(false);
+
+  const handleSendBillEmail = async () => {
+    setIsSendingBill(true);
+    try {
+      const res = await fetch(`/api/orders/${order.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "send_bill" }),
+      });
+      if (res.ok) {
+        setBillSentSuccess(true);
+        setTimeout(() => setBillSentSuccess(false), 4000);
+      }
+    } catch {} finally {
+      setIsSendingBill(false);
+    }
+  };
 
   const receiptNumber = `REC-${order.order_number.replace(/[^0-9]/g, "") || order.id.slice(-6)}`;
   const orderDate = new Date(order.created_at).toLocaleDateString("en-IN", {
@@ -79,6 +101,33 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
               <Calendar className="w-3 h-3 text-[#B45309]" />
               <span>{orderDate}</span>
             </div>
+            {order.customer_email && (
+              <div className="pt-2 flex sm:justify-end print:hidden">
+                <button
+                  type="button"
+                  onClick={handleSendBillEmail}
+                  disabled={isSendingBill}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#3B0820] hover:bg-[#4E0A2B] text-[#F5D061] text-[11px] font-bold transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  {billSentSuccess ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-emerald-300">Bill Emailed! ✓</span>
+                    </>
+                  ) : isSendingBill ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Sending...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mail className="w-3.5 h-3.5" />
+                      <span>Email me official bill</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

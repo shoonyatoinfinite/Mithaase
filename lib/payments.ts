@@ -274,6 +274,12 @@ export async function markVerified(args: {
       promoteNextQueuedOrder().catch(() => {});
     } catch {}
 
+    // Dispatch Order Confirmed Notification via Email & WhatsApp
+    try {
+      const { sendOrderConfirmedNotification } = await import("@/lib/notifications/order-notifications");
+      sendOrderConfirmedNotification(p.order_id).catch(() => {});
+    } catch {}
+
     return { ...p, status: "verified" };
   });
 }
