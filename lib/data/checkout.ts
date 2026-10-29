@@ -681,19 +681,12 @@ const createdOrder = createdOrderResult;
 
   broadcastRealtimeEvent("order_created", fullOrder);
 
-  // Dispatch automated order confirmation notifications for COD, bookings, or already confirmed orders
-  if (
-    fullOrder.payment_status === "paid" ||
-    fullOrder.order_status === "confirmed" ||
-    fullOrder.payment_method === "cod" ||
-    fullOrder.booking_status === "requested"
-  ) {
-    import("@/lib/notifications/order-notifications")
-      .then(({ sendOrderConfirmedNotification }) => {
-        sendOrderConfirmedNotification(fullOrder).catch(() => {});
-      })
-      .catch(() => {});
-  }
+  // Dispatch automated order confirmation & real-time admin WhatsApp alert for all incoming orders (confirmed, requested booking, COD, or manual UPI)
+  import("@/lib/notifications/order-notifications")
+    .then(({ sendOrderConfirmedNotification }) => {
+      sendOrderConfirmedNotification(fullOrder).catch(() => {});
+    })
+    .catch(() => {});
 
   return {
     success: true,

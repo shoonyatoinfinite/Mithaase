@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { notifyPaymentInstructions, getAppBaseUrl } from "@/lib/whatsapp/payment-notifications";
+import { notifyPaymentInstructions, getAppBaseUrl, resolveAdminHelpline } from "@/lib/whatsapp/payment-notifications";
 import { normalizeAndValidateWhatsAppPhone } from "@/lib/utils/phone";
 
 export const dynamic = "force-dynamic";
@@ -75,6 +75,7 @@ export async function POST(req: Request) {
       baseUrl: appBaseUrl,
     });
 
+    const adminHelpline = await resolveAdminHelpline();
     const prefilledText =
       `🍬 *Mithaasé — UPI Payment QR & Details*\n\n` +
       `Hello *${customerName || "Customer"}*! Here are your payment details:\n\n` +
@@ -85,7 +86,8 @@ export async function POST(req: Request) {
       `⏳ *Time Limit:* Pay within 10 minutes\n\n` +
       `🖼️ *Direct QR Code Image:* \n👉 ${qrImageUrl}\n\n` +
       `⚡ *1-Tap Pay via UPI App (GPay, PhonePe, Paytm, CRED):* \n👉 ${upiIntentUri}\n\n` +
-      `— *Shree Shyam Sweets (Mithaasé)*`;
+      `— *Shree Shyam Sweets (Mithaasé)*\n` +
+      `📞 Helpline: ${adminHelpline}`;
 
     const waLink = `https://wa.me/91${cleanPhone}?text=${encodeURIComponent(prefilledText)}`;
 

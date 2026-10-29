@@ -6,7 +6,7 @@
 
 import { getOrderById, getStoreSettings } from "@/lib/data/store";
 import { sendOrderConfirmedEmail, sendOrderDeliveredBillEmail, sendOrderCancelledEmail } from "@/lib/email/mailer";
-import { notifyOrderConfirmed, notifyOrderDelivered, notifyOrderCancelled } from "@/lib/whatsapp/payment-notifications";
+import { notifyOrderConfirmed, notifyOrderDelivered, notifyOrderCancelled, notifyAdminNewOrder } from "@/lib/whatsapp/payment-notifications";
 import { sql } from "@/lib/neon/db";
 import type { Order } from "@/types";
 
@@ -188,25 +188,28 @@ export async function sendOrderConfirmedNotification(
       console.warn(`[OrderNotification] No valid email address found for order #${order.order_number} to send confirmation.`);
     }
 
-    // 3. Send Order Confirmation & Payment Details via WhatsApp (if customer phone is available)
+    // 3. Prepare Items Summary & Resolve Dashboard Admin Hotline
+    const validItems = (order.items || []).filter(
+      (it) => it && (it.product_name_snapshot || (it as any).productName)
+    );
+
+    const itemsSummary =
+      validItems.length > 0
+        ? validItems
+            .map((it) => {
+              const name = it.product_name_snapshot || (it as any).productName || "Sweet";
+              const variant = it.variant_name_snapshot || (it as any).variantName || "";
+              const qty = it.quantity || 1;
+              const total = Number(it.line_total ?? (Number(it.unit_price || 0) * qty));
+              return `• ${qty}x ${name}${variant ? ` (${variant})` : ""} — ₹${total.toFixed(2)}`;
+            })
+            .join("\n")
+        : `• 1x Fresh Festive Sweets Assortment — ₹${Number(order.total_amount).toFixed(2)}`;
+
+    const adminHelpline = (settings?.whatsapp_number || settings?.business_phone || "").trim();
+
+    // 4. Send Order Confirmation via WhatsApp to Customer (with Admin Hotline shown at bottom)
     if (order.customer_phone) {
-      const validItems = (order.items || []).filter(
-        (it) => it && (it.product_name_snapshot || (it as any).productName)
-      );
-
-      const itemsSummary =
-        validItems.length > 0
-          ? validItems
-              .map((it) => {
-                const name = it.product_name_snapshot || (it as any).productName || "Sweet";
-                const variant = it.variant_name_snapshot || (it as any).variantName || "";
-                const qty = it.quantity || 1;
-                const total = Number(it.line_total ?? (Number(it.unit_price || 0) * qty));
-                return `• ${qty}x ${name}${variant ? ` (${variant})` : ""} — ₹${total.toFixed(2)}`;
-              })
-              .join("\n")
-          : `• 1x Fresh Festive Sweets Assortment — ₹${Number(order.total_amount).toFixed(2)}`;
-
       notifyOrderConfirmed({
         phone: order.customer_phone,
         customerName: order.customer_name || "Valued Customer",
@@ -222,11 +225,23 @@ export async function sendOrderConfirmedNotification(
         itemsSummary,
         deliveryAddress: order.delivery_address || "",
         locality: order.locality || "",
+        adminPhone: adminHelpline,
       }).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[OrderNotification] WhatsApp confirmation failed for #${order.order_number}:`, msg);
       });
     }
+
+    // 5. Send Real-Time Order Details to Admin's WhatsApp (both confirmed and requested orders)
+    notifyAdminNewOrder({
+      order,
+      itemsSummary,
+      adminPhone: adminHelpline,
+      isBookingRequest: order.booking_status === "requested",
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[OrderNotification] Admin WhatsApp alert failed for #${order.order_number}:`, msg);
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("[OrderNotification] sendOrderConfirmedNotification error:", msg);

@@ -4,6 +4,7 @@
  */
 
 import { normalizeAndValidateWhatsAppPhone } from "@/lib/utils/phone";
+import type { Order } from "@/types";
 
 function getYoupiConfig() {
   const rawBase =
@@ -194,7 +195,8 @@ export async function notifyPaymentInstructions(params: {
     `👉 ${qrImageUrl}\n\n` +
     `⚡ *1-Tap Pay via UPI App (GPay, PhonePe, Paytm, CRED):* \n` +
     `👉 ${upiIntentUri}\n\n` +
-    `— *Shree Shyam Sweets (Mithaasé)*`;
+    `— *Shree Shyam Sweets (Mithaasé)*\n` +
+    `📞 Helpline: ${await resolveAdminHelpline()}`;
 
   const { baseUrl } = getYoupiConfig();
   const phoneVal = normalizeAndValidateWhatsAppPhone(params.phone);
@@ -237,11 +239,13 @@ export async function notifyPaymentInstructions(params: {
   return sendWhatsAppMessage(params.phone, message);
 }
 
-async function resolveAdminHelpline(): Promise<string> {
+export async function resolveAdminHelpline(): Promise<string> {
   try {
     const { getStoreSettings } = await import("@/lib/data/store");
     const settings = await getStoreSettings();
-    return settings?.business_phone || settings?.whatsapp_number || "+91 8290683668";
+    const raw = (settings?.whatsapp_number || settings?.business_phone || "").trim();
+    if (raw) return raw;
+    return "+91 8290683668";
   } catch {
     return "+91 8290683668";
   }
@@ -257,7 +261,7 @@ function cleanLocationString(address?: string | null, locality?: string | null):
 }
 
 /**
- * Sends order confirmation and payment verified WhatsApp notification
+ * Sends order confirmation and payment verified WhatsApp notification to Customer
  */
 export async function notifyOrderConfirmed(params: {
   phone: string;
@@ -274,9 +278,10 @@ export async function notifyOrderConfirmed(params: {
   itemsSummary: string;
   deliveryAddress: string;
   locality: string;
+  adminPhone?: string;
 }): Promise<boolean> {
   const appUrl = getAppBaseUrl();
-  const helpline = await resolveAdminHelpline();
+  const helpline = params.adminPhone?.trim() || (await resolveAdminHelpline());
   const totalAmount = Number(params.amount) || 0;
   const formattedAmount = totalAmount.toFixed(2);
   const subtotal = Number(params.subtotal && params.subtotal > 0 ? params.subtotal : totalAmount);
@@ -320,6 +325,80 @@ export async function notifyOrderConfirmed(params: {
     `📞 Helpline: ${helpline}`;
 
   return sendWhatsAppMessage(params.phone, message);
+}
+
+/**
+ * Sends real-time new order alert to the Store Admin on WhatsApp
+ */
+export async function notifyAdminNewOrder(params: {
+  order: Order;
+  itemsSummary: string;
+  adminPhone?: string;
+  isBookingRequest?: boolean;
+}): Promise<boolean> {
+  let targetAdminPhone = (params.adminPhone || "").trim();
+  if (!targetAdminPhone) {
+    targetAdminPhone = await resolveAdminHelpline();
+  }
+  const cleanAdminPhone = targetAdminPhone.replace(/[^0-9]/g, "").slice(-10);
+
+  if (!cleanAdminPhone || cleanAdminPhone.length < 10) {
+    console.warn("[Admin Notification] No valid admin WhatsApp phone configured");
+    return false;
+  }
+
+  const { order, itemsSummary, isBookingRequest } = params;
+  const appUrl = getAppBaseUrl();
+  const formattedTotal = Number(order.total_amount).toFixed(2);
+  const formattedSubtotal = Number(order.subtotal || order.total_amount).toFixed(2);
+  const discountAmount = Number(order.discount_amount || 0);
+  const formattedDiscount = discountAmount.toFixed(2);
+  const deliveryCharge = Number(order.delivery_charge || 0);
+
+  const isBooking = isBookingRequest || order.booking_status === "requested";
+  const orderTypeBadge = isBooking
+    ? "⏳ *AFTER-HOURS BOOKING REQUEST*"
+    : order.payment_status === "paid" || order.order_status === "confirmed"
+    ? "✅ *CONFIRMED ORDER (PAYMENT VERIFIED)*"
+    : order.payment_method?.toLowerCase() === "cod"
+    ? "💵 *CASH ON DELIVERY ORDER*"
+    : "💳 *NEW ORDER (PAYMENT PENDING)*";
+
+  const paymentDetails =
+    order.payment_method?.toLowerCase() === "cod"
+      ? "Cash on Delivery"
+      : order.payment_status === "paid"
+      ? `UPI Verified${order.upi_reference ? ` (Ref: ${order.upi_reference})` : ""}`
+      : `UPI Pending Verification${order.upi_reference ? ` (Ref: ${order.upi_reference})` : ""}`;
+
+  const customerPhoneClean = (order.customer_phone || "").replace(/[^0-9]/g, "").slice(-10);
+  const locationStr = cleanLocationString(order.delivery_address, order.locality);
+
+  const message =
+    `🔔 *NEW ORDER ALERT — Mithaasé!*\n\n` +
+    `Status: ${orderTypeBadge}\n` +
+    `📦 *Order Number:* #${order.order_number}\n` +
+    (order.order_ref ? `🏷️ *Order Ref:* ${order.order_ref}\n` : "") +
+    `\n👤 *Customer Details:*\n` +
+    `• Name: *${order.customer_name}*\n` +
+    `• Phone: +91 *${customerPhoneClean}*\n` +
+    (order.customer_email ? `• Email: ${order.customer_email}\n` : "") +
+    `\n🛒 *Items Ordered:*\n${itemsSummary}\n\n` +
+    `📍 *Delivery Location:*\n${locationStr}\n` +
+    (order.landmark ? `• Landmark: ${order.landmark}\n` : "") +
+    (order.delivery_instructions ? `• Instructions: ${order.delivery_instructions}\n` : "") +
+    `\n💰 *Bill Breakdown:*\n` +
+    `• Subtotal: ₹${formattedSubtotal}\n` +
+    (discountAmount > 0 ? `• Discount (${order.coupon_code || "Offer"}): -₹${formattedDiscount}\n` : "") +
+    `• Delivery: ${deliveryCharge === 0 ? "FREE" : `₹${deliveryCharge.toFixed(2)}`}\n` +
+    `• *Net Total: ₹${formattedTotal}*\n` +
+    `• Payment: *${paymentDetails}*\n\n` +
+    `🔗 *Manage Order in Dashboard:*\n` +
+    `👉 ${appUrl}/admin/orders\n` +
+    (customerPhoneClean ? `💬 Chat Customer: https://wa.me/91${customerPhoneClean}` : "");
+
+  console.log(`[Admin Notification] Dispatching order #${order.order_number} alert to Admin WhatsApp (+91 ${cleanAdminPhone})`);
+  return sendWhatsAppMessage(cleanAdminPhone, message);
 }
 
 /**
