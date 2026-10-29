@@ -257,7 +257,7 @@ async function main() {
       email VARCHAR(255) NOT NULL UNIQUE,
       phone VARCHAR(20) NOT NULL,
       password TEXT,
-      pin VARCHAR(20) NOT NULL,
+      pin VARCHAR(20),
       name VARCHAR(150) NOT NULL,
       delivery_address TEXT NOT NULL,
       locality VARCHAR(120) NOT NULL,
@@ -269,7 +269,9 @@ async function main() {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     );
+  `);
 
+  await sql.query(`
     ALTER TABLE customer_accounts
       ADD COLUMN IF NOT EXISTS password TEXT;
   `);
@@ -304,9 +306,9 @@ async function main() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-    CREATE INDEX IF NOT EXISTS idx_riders_phone ON riders(phone);
-    CREATE INDEX IF NOT EXISTS idx_riders_is_active ON riders(is_active);
   `);
+  await sql.query(`CREATE INDEX IF NOT EXISTS idx_riders_phone ON riders(phone);`);
+  await sql.query(`CREATE INDEX IF NOT EXISTS idx_riders_is_active ON riders(is_active);`);
   console.log("✓ riders table ready");
 
   // Insert default settings

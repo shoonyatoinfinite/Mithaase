@@ -106,7 +106,7 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
           try {
             // Keep safe user profile locally for display only (NO credentials)
             localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(liveUser));
-          } catch {}
+          } catch { }
           return liveUser;
         }
       }
@@ -114,7 +114,7 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       try {
         localStorage.removeItem(AUTH_STORAGE_KEY);
-      } catch {}
+      } catch { }
       return null;
     } catch {
       return null;
@@ -130,7 +130,7 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
         if (stored) {
           try {
             setUser(JSON.parse(stored));
-          } catch {}
+          } catch { }
         }
 
         // Authoritative verification with Neon DB
@@ -212,7 +212,7 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
       setUser(loggedInUser);
       try {
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(loggedInUser));
-      } catch {}
+      } catch { }
 
       return { success: true };
     } catch {
@@ -252,7 +252,7 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
         setUser(newUser);
         try {
           localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(newUser));
-        } catch {}
+        } catch { }
 
         return { success: true };
       } catch {
@@ -315,7 +315,7 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
         setUser(syncedUser);
         try {
           localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(syncedUser));
-        } catch {}
+        } catch { }
         return { success: true };
       } catch {
         return { success: false, error: "Network error linking Google account." };
@@ -329,15 +329,15 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
       const updated: CustomerUser = prev
         ? { ...prev, savedProfile: profile }
         : {
-            email: "",
-            name: profile.customer_name,
-            phone: profile.customer_phone,
-            savedProfile: profile,
-          };
+          email: "",
+          name: profile.customer_name,
+          phone: profile.customer_phone,
+          savedProfile: profile,
+        };
 
       try {
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
-      } catch {}
+      } catch { }
 
       // Authoritative persist to PostgreSQL database via live PUT /api/auth/customer/profile
       fetch("/api/auth/customer/profile", {
@@ -384,14 +384,14 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
       try {
         await fetch("/api/auth/customer/logout", { method: "POST" });
         await authClient.signOut();
-      } catch {}
+      } catch { }
 
       setUser(null);
       try {
         localStorage.removeItem(AUTH_STORAGE_KEY);
         localStorage.removeItem("mithaase_user");
         sessionStorage.removeItem("mithaase_user_email");
-      } catch {}
+      } catch { }
 
       const isPrivateCustomerPage =
         pathname === "/checkout" ||
