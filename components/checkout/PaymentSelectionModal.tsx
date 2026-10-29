@@ -83,6 +83,7 @@ interface PaymentSelectionModalProps {
     upiScreenshot?: string;
     orderNumber?: string;
     orderRef?: string;
+    isAutoUpi?: boolean;
   }) => Promise<void>;
 }
 
@@ -478,12 +479,6 @@ export function PaymentSelectionModal({
     }
   };
 
-  // Auto-initiate YouPI session when modal opens and upi_auto is selected
-  useEffect(() => {
-    if (isOpen && selectedMethod === "upi_auto" && !youpiSession) {
-      initYoupiPayment();
-    }
-  }, [isOpen, selectedMethod]);
 
   // Countdown timer for Payment Session (5:00 minutes = 300s)
   // Auto-cancels payment session when time runs out and returns user to cart
@@ -708,29 +703,10 @@ export function PaymentSelectionModal({
       }
 
       if (selectedMethod === "upi_auto") {
-        if (!isWhatsappVerified) {
-          setValidationError(
-            "WhatsApp verification is required for Auto-Confirmed Instant UPI booking. Please complete WhatsApp verification above."
-          );
-          return;
-        }
-        if (!instantUtr.trim() || instantUtr.trim().length < 6) {
-          setValidationError(
-            "Please enter the 12-digit UPI Reference / UTR Number from your payment app."
-          );
-          return;
-        }
-        if (youpiStatus === "SUCCESS" && youpiUtr) {
-          const finalScreenshotUrl = await uploadScreenshotOnPlaceOrder();
-          await onConfirmOrder({
-            paymentMethod: "upi",
-            upiReference: `youpi:${youpiUtr}`,
-            upiScreenshot: finalScreenshotUrl || undefined,
-          });
-          return;
-        }
-        // Trigger instant verification immediately
-        await handleInstantVerify(instantUtr.trim());
+        await onConfirmOrder({
+          paymentMethod: "upi",
+          isAutoUpi: true,
+        });
         return;
       }
 
@@ -1199,132 +1175,26 @@ export function PaymentSelectionModal({
                                 </div>
                               )}
 
-                              {/* 4 Major Apps Grid */}
-                              <div className="grid grid-cols-2 gap-2">
-                                {/* 1. Google Pay */}
-                                <a
-                                  href={isUpiSessionReady ? getUpiUrlForApp("gpay") : "#"}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    handleOpenUpiApp("gpay", "Google Pay");
-                                  }}
-                                  aria-disabled={!isUpiSessionReady}
-                                  className={`p-2.5 rounded-xl bg-[#1B2234] hover:bg-[#232C43] border border-[#4285F4]/40 hover:border-[#4285F4] text-white flex items-center justify-between transition-all shadow-md group ${
-                                    !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#4285F4] text-xs">
-                                      G
-                                    </div>
-                                    <div className="text-left">
-                                      <span className="block font-bold text-xs leading-tight">Google Pay</span>
-                                      <span className="block text-[9px] text-white/50">Direct App</span>
-                                    </div>
-                                  </div>
-                                  <ExternalLink className="w-3 h-3 text-[#4285F4] group-hover:translate-x-0.5 transition-transform" />
-                                </a>
-
-                                {/* 2. PhonePe */}
-                                <a
-                                  href={isUpiSessionReady ? getUpiUrlForApp("phonepe") : "#"}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    handleOpenUpiApp("phonepe", "PhonePe");
-                                  }}
-                                  aria-disabled={!isUpiSessionReady}
-                                  className={`p-2.5 rounded-xl bg-[#251036] hover:bg-[#34164D] border border-[#A855F7]/40 hover:border-[#A855F7] text-white flex items-center justify-between transition-all shadow-md group ${
-                                    !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#A855F7] text-xs">
-                                      Pe
-                                    </div>
-                                    <div className="text-left">
-                                      <span className="block font-bold text-xs leading-tight">PhonePe</span>
-                                      <span className="block text-[9px] text-white/50">Direct App</span>
-                                    </div>
-                                  </div>
-                                  <ExternalLink className="w-3 h-3 text-[#A855F7] group-hover:translate-x-0.5 transition-transform" />
-                                </a>
-
-                                {/* 3. Paytm */}
-                                <a
-                                  href={isUpiSessionReady ? getUpiUrlForApp("paytm") : "#"}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    handleOpenUpiApp("paytm", "Paytm");
-                                  }}
-                                  aria-disabled={!isUpiSessionReady}
-                                  className={`p-2.5 rounded-xl bg-[#08223B] hover:bg-[#0D2F52] border border-[#00BAF2]/40 hover:border-[#00BAF2] text-white flex items-center justify-between transition-all shadow-md group ${
-                                    !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#00BAF2] text-xs">
-                                      ₹
-                                    </div>
-                                    <div className="text-left">
-                                      <span className="block font-bold text-xs leading-tight">Paytm</span>
-                                      <span className="block text-[9px] text-white/50">Direct App</span>
-                                    </div>
-                                  </div>
-                                  <ExternalLink className="w-3 h-3 text-[#00BAF2] group-hover:translate-x-0.5 transition-transform" />
-                                </a>
-
-                                {/* 4. BHIM */}
-                                <a
-                                  href={isUpiSessionReady ? getUpiUrlForApp("bhim") : "#"}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    handleOpenUpiApp("bhim", "BHIM UPI");
-                                  }}
-                                  aria-disabled={!isUpiSessionReady}
-                                  className={`p-2.5 rounded-xl bg-[#132E27] hover:bg-[#1A3D34] border border-[#10B981]/40 hover:border-[#10B981] text-white flex items-center justify-between transition-all shadow-md group ${
-                                    !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#10B981] text-xs">
-                                      B
-                                    </div>
-                                    <div className="text-left">
-                                      <span className="block font-bold text-xs leading-tight">BHIM UPI</span>
-                                      <span className="block text-[9px] text-white/50">Direct App</span>
-                                    </div>
-                                  </div>
-                                  <ExternalLink className="w-3 h-3 text-[#10B981] group-hover:translate-x-0.5 transition-transform" />
-                                </a>
-                              </div>
-
-                              {/* Strict Apps Amount Skipping Helper */}
-                              {flags.skipStrictAmount && (
-                                <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 text-center font-medium leading-tight">
-                                  Amount ₹{formattedAmount} copied, enter exactly ₹{formattedAmount}. Please send the exact amount (verification needs an exact match).
-                                </div>
-                              )}
-
-                              {/* 5. Navi / Supermoney / Other Apps (Universal 1-Tap) */}
+                              {/* Universal 1-Tap UPI Button (Generic upi://pay intent) */}
                               <a
                                 href={upiUri || "#"}
                                 onClick={(e) => {
                                   e.preventDefault();
-                                  handleOpenUpiApp("generic", "Navi / Supermoney / Other UPI");
+                                  handleOpenUpiApp("generic", "Any UPI App");
                                 }}
                                 aria-disabled={!isUpiSessionReady}
-                                className={`w-full py-2.5 px-3.5 rounded-xl gold-gradient-btn font-black text-xs flex items-center justify-between shadow-lg transition-all group ${
+                                className={`w-full py-3 px-3.5 rounded-xl gold-gradient-btn font-black text-xs flex items-center justify-between shadow-lg transition-all group ${
                                   !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
                                 }`}
                               >
                                 <div className="flex items-center gap-2">
-                                  <Zap className="w-3.5 h-3.5 text-[#16031E] shrink-0" />
+                                  <Zap className="w-4 h-4 text-[#16031E] shrink-0" />
                                   <div className="text-left">
-                                    <span className="block font-black text-[#16031E] leading-tight text-xs">
-                                      Pay via Navi, Supermoney, CRED &amp; Others (₹{upiAmount})
+                                    <span className="block font-black text-[#16031E] leading-tight text-xs sm:text-sm">
+                                      Pay with any UPI app (₹{upiAmount})
                                     </span>
                                     <span className="block text-[9px] text-[#16031E]/80 font-medium">
-                                      Fastest 1-Tap instant prefill on Navi, Supermoney &amp; others
+                                      Fastest 1-Tap checkout on Navi, Supermoney, CRED, GPay, PhonePe, Paytm
                                     </span>
                                   </div>
                                 </div>
@@ -1632,118 +1502,12 @@ export function PaymentSelectionModal({
                       </div>
                     )}
 
-                    {/* 4 Major Apps Grid */}
-                    <div className="grid grid-cols-2 gap-2">
-                      {/* 1. Google Pay */}
-                      <a
-                        href={isUpiSessionReady ? getUpiUrlForApp("gpay") : "#"}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleOpenUpiApp("gpay", "Google Pay");
-                        }}
-                        aria-disabled={!isUpiSessionReady}
-                        className={`p-2.5 rounded-xl bg-[#1B2234] hover:bg-[#232C43] border border-[#4285F4]/40 hover:border-[#4285F4] text-white flex items-center justify-between transition-all shadow-md group ${
-                          !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#4285F4] text-xs">
-                            G
-                          </div>
-                          <div className="text-left">
-                            <span className="block font-bold text-xs leading-tight">Google Pay</span>
-                            <span className="block text-[9px] text-white/50">Direct App</span>
-                          </div>
-                        </div>
-                        <ExternalLink className="w-3 h-3 text-[#4285F4] group-hover:translate-x-0.5 transition-transform" />
-                      </a>
-
-                      {/* 2. PhonePe */}
-                      <a
-                        href={isUpiSessionReady ? getUpiUrlForApp("phonepe") : "#"}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleOpenUpiApp("phonepe", "PhonePe");
-                        }}
-                        aria-disabled={!isUpiSessionReady}
-                        className={`p-2.5 rounded-xl bg-[#251036] hover:bg-[#34164D] border border-[#A855F7]/40 hover:border-[#A855F7] text-white flex items-center justify-between transition-all shadow-md group ${
-                          !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#A855F7] text-xs">
-                            Pe
-                          </div>
-                          <div className="text-left">
-                            <span className="block font-bold text-xs leading-tight">PhonePe</span>
-                            <span className="block text-[9px] text-white/50">Direct App</span>
-                          </div>
-                        </div>
-                        <ExternalLink className="w-3 h-3 text-[#A855F7] group-hover:translate-x-0.5 transition-transform" />
-                      </a>
-
-                      {/* 3. Paytm */}
-                      <a
-                        href={isUpiSessionReady ? getUpiUrlForApp("paytm") : "#"}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleOpenUpiApp("paytm", "Paytm");
-                        }}
-                        aria-disabled={!isUpiSessionReady}
-                        className={`p-2.5 rounded-xl bg-[#08223B] hover:bg-[#0D2F52] border border-[#00BAF2]/40 hover:border-[#00BAF2] text-white flex items-center justify-between transition-all shadow-md group ${
-                          !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#00BAF2] text-xs">
-                            ₹
-                          </div>
-                          <div className="text-left">
-                            <span className="block font-bold text-xs leading-tight">Paytm</span>
-                            <span className="block text-[9px] text-white/50">Direct App</span>
-                          </div>
-                        </div>
-                        <ExternalLink className="w-3 h-3 text-[#00BAF2] group-hover:translate-x-0.5 transition-transform" />
-                      </a>
-
-                      {/* 4. BHIM */}
-                      <a
-                        href={isUpiSessionReady ? getUpiUrlForApp("bhim") : "#"}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleOpenUpiApp("bhim", "BHIM UPI");
-                        }}
-                        aria-disabled={!isUpiSessionReady}
-                        className={`p-2.5 rounded-xl bg-[#132E27] hover:bg-[#1A3D34] border border-[#10B981]/40 hover:border-[#10B981] text-white flex items-center justify-between transition-all shadow-md group ${
-                          !isUpiSessionReady ? "opacity-40 pointer-events-none cursor-not-allowed" : "cursor-pointer active:scale-95"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center font-black text-[#10B981] text-xs">
-                            B
-                          </div>
-                          <div className="text-left">
-                            <span className="block font-bold text-xs leading-tight">BHIM UPI</span>
-                            <span className="block text-[9px] text-white/50">Direct App</span>
-                          </div>
-                        </div>
-                        <ExternalLink className="w-3 h-3 text-[#10B981] group-hover:translate-x-0.5 transition-transform" />
-                      </a>
-                    </div>
-
-                    {/* Strict Apps Amount Skipping Helper */}
-                    {flags.skipStrictAmount && (
-                      <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 text-center font-medium leading-tight">
-                        Amount ₹{formattedAmount} copied, enter exactly ₹{formattedAmount}. Please send the exact amount (verification needs an exact match).
-                      </div>
-                    )}
-
-                    {/* 5. Navi / Supermoney / Other Apps (Universal 1-Tap) */}
+                    {/* Universal 1-Tap UPI Button */}
                     <a
                       href={upiUri || "#"}
                       onClick={(e) => {
                         e.preventDefault();
-                        handleOpenUpiApp("generic", "Navi / Supermoney / Other UPI");
+                        handleOpenUpiApp("generic", "Any UPI App");
                       }}
                       aria-disabled={!isUpiSessionReady}
                       className={`w-full py-3 px-3.5 rounded-xl gold-gradient-btn font-black text-xs sm:text-sm flex items-center justify-between shadow-lg transition-all group ${
@@ -2024,7 +1788,7 @@ export function PaymentSelectionModal({
                 ) : (
                   <>
                     <Zap className="w-4 h-4 text-[#16031E] fill-current" />
-                    <span>Waiting for Bank Payment (₹{upiAmount})</span>
+                    <span>Place Order &amp; Proceed to Instant UPI (₹{upiAmount})</span>
                   </>
                 )
               ) : (

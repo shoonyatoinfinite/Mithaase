@@ -122,9 +122,17 @@ export async function POST(req: Request) {
 
       if (vRes?.status === "mismatch") {
         return NextResponse.json(
-          { error: "Amount mismatch detected on payment attempt" },
+          { error: "Amount mismatch detected on payment attempt; routed to manual review." },
           { status: 400 }
         );
+      }
+
+      if (vRes?.status === "received_expired") {
+        return NextResponse.json({
+          received: true,
+          status: "received_expired",
+          note: "Payment received after 10-minute expiry; held for manual reconciliation.",
+        });
       }
 
       // If legacy in-flight payment (vRes === null, no payments row found)
@@ -132,6 +140,7 @@ export async function POST(req: Request) {
         await sql.query(
           `UPDATE orders SET
              payment_status = 'paid',
+             queue_status = 'paid',
              gateway_transaction_id = COALESCE($1, gateway_transaction_id),
              upi_reference = COALESCE($2, upi_reference),
              order_status = CASE WHEN order_status = 'pending_confirmation' THEN 'confirmed' ELSE order_status END,
@@ -139,6 +148,12 @@ export async function POST(req: Request) {
            WHERE (id = $3 OR order_number = $3) AND payment_status <> 'paid';`,
           [paymentId || null, cleanUtr, orderId]
         );
+
+        // Promote next queued order for legacy path as well
+        try {
+          const { promoteNextQueuedOrder } = await import("@/lib/payment-queue");
+          promoteNextQueuedOrder().catch(() => {});
+        } catch {}
       }
 
       // Record status history if not already recorded

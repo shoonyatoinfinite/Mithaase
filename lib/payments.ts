@@ -76,7 +76,7 @@ export async function createAttempt(args: {
           `INSERT INTO payments (
              order_id, attempt_no, attempt_ref, amount_expected, method, status, expires_at
            )
-           VALUES ($1, $2, $3, $4, $5, 'created', now() + interval '15 minutes')
+           VALUES ($1, $2, $3, $4, $5, 'created', now() + interval '10 minutes 30 seconds')
            RETURNING id, attempt_ref, attempt_no`,
           [args.orderId, next, attemptRef, args.amount, args.method]
         );
@@ -194,9 +194,14 @@ export async function markVerified(args: {
     const ok = Number(args.amountReceived).toFixed(2) === Number(p.amount_expected).toFixed(2);
 
     if (!ok) {
+      // Overpay or underpay: never silently confirmed, routed to manual review
       await client.query(
-        `UPDATE payments SET status = 'mismatch', amount_received = $1 WHERE id = $2`,
+        `UPDATE payments SET status = 'manual_review', amount_received = $1 WHERE id = $2`,
         [args.amountReceived, p.id]
+      );
+      await client.query(
+        `UPDATE orders SET payment_status = 'failed' WHERE id = $1 AND payment_status <> 'paid'`,
+        [p.order_id]
       );
       await client.query(
         `INSERT INTO payment_events (payment_id, order_id, source, event, payload)
@@ -206,8 +211,38 @@ export async function markVerified(args: {
       return { ...p, status: "mismatch" };
     }
 
-    // Note: a payment confirmed by YouPI with the exact amount is verified even if the attempt had
-    // already 'expired' (money was really received).
+    // Check if payment arrived after expiry
+    const isLatePayment = p.expires_at && new Date(p.expires_at) < new Date();
+    if (isLatePayment && p.status === "expired") {
+      // Payment received but expired: record for manual reconciliation in admin
+      await client.query(
+        `UPDATE payments
+         SET status = 'received_expired', amount_received = $1,
+             upi_txn_ref = $2, payer_vpa_masked = $3, verified_at = now()
+         WHERE id = $4`,
+        [args.amountReceived, args.upiTxnRef, maskedPayer, p.id]
+      );
+
+      await client.query(
+        `UPDATE orders
+         SET payment_status = 'pending_verification',
+             upi_reference = COALESCE(upi_reference, $1),
+             cancellation_reason = 'Payment received after 10-minute expiry (held for admin reconciliation)',
+             updated_at = now()
+         WHERE id = $2`,
+        [args.upiTxnRef, p.order_id]
+      );
+
+      await client.query(
+        `INSERT INTO payment_events (payment_id, order_id, source, event, payload)
+         VALUES ($1, $2, $3, 'received_after_expiry', $4::jsonb)`,
+        [p.id, p.order_id, eventSource, safePayload]
+      );
+
+      return { ...p, status: "received_expired" };
+    }
+
+    // Standard in-window verified payment
     await client.query(
       `UPDATE payments
        SET status = 'verified', amount_received = $1,
@@ -219,6 +254,7 @@ export async function markVerified(args: {
     await client.query(
       `UPDATE orders
        SET payment_status = 'paid',
+           queue_status = 'paid',
            upi_reference = COALESCE(upi_reference, $1),
            order_status = CASE WHEN order_status = 'pending_confirmation' THEN 'confirmed' ELSE order_status END,
            updated_at = now()
@@ -231,6 +267,12 @@ export async function markVerified(args: {
        VALUES ($1, $2, $3, 'verified', $4::jsonb)`,
       [p.id, p.order_id, eventSource, safePayload]
     );
+
+    // Promote next customer in line immediately
+    try {
+      const { promoteNextQueuedOrder } = await import("@/lib/payment-queue");
+      promoteNextQueuedOrder().catch(() => {});
+    } catch {}
 
     return { ...p, status: "verified" };
   });

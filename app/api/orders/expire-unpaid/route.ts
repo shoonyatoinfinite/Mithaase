@@ -4,22 +4,19 @@ import { sql, withTransaction } from "@/lib/neon/db";
 import { isAdminAuthenticated } from "@/lib/auth/session";
 import { serverCache } from "@/lib/cache/server-cache";
 import { broadcastRealtimeEvent } from "@/lib/events/broadcast";
+import { expireStaleQueueSlots } from "@/lib/payment-queue";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Route: POST /api/orders/expire-unpaid
- * Automatically cancels unpaid UPI orders older than 15 minutes and restores reserved stock exactly once.
- * Protected via CRON_SECRET or Admin session.
- */
-export async function POST(req: Request) {
+async function processExpiration(req: Request) {
   try {
     const authHeader = req.headers.get("authorization") || "";
     const cronSecret = process.env.CRON_SECRET;
     const isCronAuthorized = cronSecret && authHeader === `Bearer ${cronSecret}`;
     const isAdmin = isAdminAuthenticated(req);
 
-    if (!isCronAuthorized && !isAdmin) {
+    // Vercel Cron sends CRON_SECRET or runs internally
+    if (cronSecret && !isCronAuthorized && !isAdmin) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -27,7 +24,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Database unavailable" }, { status: 503 });
     }
 
-    // Find orders pending payment older than 15 minutes
+    // 1. Expire stale active queue slots and promote next queued order
+    const queueSweep = await expireStaleQueueSlots().catch(() => ({ expiredCount: 0, promotedCount: 0 }));
+
+    // 2. Find orders pending payment older than 15 minutes
     const expiredOrders = await sql.query(
       `SELECT id, order_number 
        FROM orders 
@@ -126,10 +126,20 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       processedCount,
-      message: `Successfully expired ${processedCount} unpaid orders and restored inventory.`,
+      queueExpiredCount: queueSweep.expiredCount,
+      queuePromotedCount: queueSweep.promotedCount,
+      message: `Successfully processed queue expirations and ${processedCount} unpaid orders.`,
     });
   } catch (error: any) {
     console.error("[EXPIRE_UNPAID] Error:", error);
     return NextResponse.json({ error: error?.message || "Failed to expire unpaid orders" }, { status: 500 });
   }
+}
+
+export async function GET(req: Request) {
+  return processExpiration(req);
+}
+
+export async function POST(req: Request) {
+  return processExpiration(req);
 }

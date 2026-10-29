@@ -444,6 +444,7 @@ export default function CheckoutPage() {
     isBookingRequest?: boolean;
     orderNumber?: string;
     orderRef?: string;
+    isAutoUpi?: boolean;
   }) => {
     setIsSubmitting(true);
     setOrderError("");
@@ -534,7 +535,27 @@ export default function CheckoutPage() {
 
       setIsPaymentModalOpen(false);
       clearCart();
-      router.push(`/order-confirmation/${data.id}`);
+
+      if (paymentData.isAutoUpi || paymentData.orderRef) {
+        // Enqueue or claim active slot in Neon queue engine
+        try {
+          await fetch("/api/payment/queue/claim", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              orderId: data.id,
+              customerPhone: cleanPhone,
+              amount: finalTotal,
+            }),
+          });
+        } catch (queueErr) {
+          console.warn("[Checkout] Queue claim warning:", queueErr);
+        }
+        const trackingRef = data.order_ref || data.order_number || data.id;
+        router.push(`/pay/${encodeURIComponent(trackingRef)}`);
+      } else {
+        router.push(`/order-confirmation/${data.id}`);
+      }
     } catch (err: any) {
       setOrderError(err.message || "An unexpected error occurred while placing your order.");
       throw err;

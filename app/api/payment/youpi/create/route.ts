@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { sql } from "@/lib/neon/db";
 import { createAttempt, attachYoupi, markAttemptFailed } from "@/lib/payments";
 import { generateOrderRef } from "@/lib/utils/order-ref";
+import { notifyPaymentInstructions } from "@/lib/whatsapp/payment-notifications";
 
 export const dynamic = "force-dynamic";
 
@@ -153,6 +154,15 @@ export async function POST(req: Request) {
 
     // 3. If attempt is reused and has already-attached YouPI data, return immediately (zero row spam)
     if (attempt.reused && attempt.youpi_payment_id && attempt.payee_vpa) {
+      if (cleanPhone && attempt.payee_vpa) {
+        notifyPaymentInstructions({
+          phone: cleanPhone,
+          orderRef: finalOrderRef,
+          amount: finalAmount,
+          upiId: attempt.payee_vpa,
+          customerName: customerName || "Customer",
+        }).catch(() => {});
+      }
       return NextResponse.json({
         success: true,
         mode: "live",
@@ -249,6 +259,19 @@ export async function POST(req: Request) {
           console.error("[YouPI Create] attachYoupi failed:", attachErr);
         }
 
+        // Dispatch WhatsApp Payment Instructions
+        if (cleanPhone && payeeVpa) {
+          notifyPaymentInstructions({
+            phone: cleanPhone,
+            orderRef: finalOrderRef,
+            amount: finalAmount,
+            upiId: payeeVpa,
+            customerName: customerName || "Customer",
+          }).catch((waErr) => {
+            console.warn("[YouPI Create] WhatsApp instructions dispatch warning:", waErr);
+          });
+        }
+
         return NextResponse.json({
           success: true,
           mode: "live",
@@ -300,6 +323,16 @@ export async function POST(req: Request) {
       status: "PENDING",
       createdAt: Date.now(),
     });
+
+    if (cleanPhone && storeVpa) {
+      notifyPaymentInstructions({
+        phone: cleanPhone,
+        orderRef: finalOrderRef,
+        amount: finalAmount,
+        upiId: storeVpa,
+        customerName: customerName || "Customer",
+      }).catch(() => {});
+    }
 
     return NextResponse.json({
       success: true,

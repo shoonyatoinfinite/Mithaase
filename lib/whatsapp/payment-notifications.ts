@@ -1,0 +1,137 @@
+/**
+ * WhatsApp Payment & Queue Notification Service for Mithaasé
+ * Formats and dispatches transactional WhatsApp messages via YouPI-PG gateway.
+ */
+
+import { normalizeAndValidateWhatsAppPhone } from "@/lib/utils/phone";
+
+function getYoupiConfig() {
+  const rawBase =
+    process.env.YOUPI_API_URL ||
+    process.env.YOUPI_BASE_URL ||
+    "https://youpi-pg-yer7.onrender.com";
+  const baseUrl = rawBase.replace(/\/+$/, "");
+  const adminToken =
+    process.env.YOUPI_ADMIN_TOKEN ||
+    process.env.ADMIN_API_TOKEN ||
+    process.env.YOUPI_MERCHANT_KEY ||
+    "";
+  return { baseUrl, adminToken };
+}
+
+function getAppBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return process.env.NEXT_PUBLIC_APP_URL.replace(/\/+$/, "");
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL.replace(/\/+$/, "")}`;
+  }
+  return "https://mithaase.com";
+}
+
+/**
+ * Dispatches an outbound WhatsApp text message via YouPI Gateway
+ */
+export async function sendWhatsAppMessage(toPhone: string, message: string): Promise<boolean> {
+  const phoneVal = normalizeAndValidateWhatsAppPhone(toPhone);
+  if (!phoneVal.isValid) {
+    console.warn("[WhatsApp Notification] Invalid recipient phone:", toPhone);
+    return false;
+  }
+
+  const { baseUrl, adminToken } = getYoupiConfig();
+  const cleanPhone = phoneVal.dbFormat; // 10 digits
+  const intlPhone = `91${cleanPhone}`;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (adminToken) {
+      headers["Authorization"] = `Bearer ${adminToken}`;
+    }
+
+    const res = await fetch(`${baseUrl}/api/v1/admin/whatsapp/test-message`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        to: intlPhone,
+        message,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      console.log(`[WhatsApp Notification] Message delivered to ${cleanPhone}`);
+      return true;
+    } else {
+      const errText = await res.text().catch(() => "");
+      console.warn(`[WhatsApp Notification] Gateway returned ${res.status}:`, errText);
+      return false;
+    }
+  } catch (err: unknown) {
+    const message_str = err instanceof Error ? err.message : String(err);
+    console.warn(`[WhatsApp Notification] Delivery warning to ${cleanPhone}:`, message_str);
+    return false;
+  }
+}
+
+/**
+ * Sends notification when a customer's turn starts (promoted from queue to active slot)
+ */
+export async function notifyTurnStarted(params: {
+  phone: string;
+  orderRef: string;
+  customerName?: string;
+}): Promise<boolean> {
+  const appUrl = getAppBaseUrl();
+  const payUrl = `${appUrl}/pay/${encodeURIComponent(params.orderRef)}`;
+  const greeting = params.customerName ? `Hello *${params.customerName}*!` : "Hello!";
+
+  const message =
+    `🍬 *Mithaasé — Your Payment Turn Has Started!*\n\n` +
+    `${greeting} It's now your turn to complete your payment.\n\n` +
+    `📦 *Order Ref:* ${params.orderRef}\n` +
+    `⏳ *Payment Window:* 10 minutes\n\n` +
+    `Please tap the link below to verify your WhatsApp OTP and complete payment:\n` +
+    `👉 ${payUrl}\n\n` +
+    `_If payment is not completed within 10 minutes, the slot will be released to the next customer._`;
+
+  return sendWhatsAppMessage(params.phone, message);
+}
+
+/**
+ * Sends payment instructions with UPI ID, exact amount, 10-minute warning, and direct QR tracker link
+ */
+export async function notifyPaymentInstructions(params: {
+  phone: string;
+  orderRef: string;
+  amount: number;
+  upiId: string;
+  customerName?: string;
+}): Promise<boolean> {
+  const appUrl = getAppBaseUrl();
+  const payUrl = `${appUrl}/pay/${encodeURIComponent(params.orderRef)}`;
+  const formattedAmount = Number(params.amount).toFixed(2);
+  const greeting = params.customerName ? `Hello *${params.customerName}*!` : "Hello!";
+
+  const message =
+    `🍬 *Mithaasé — UPI Payment Details*\n\n` +
+    `${greeting} Your order is ready for payment.\n\n` +
+    `📦 *Order Ref:* ${params.orderRef}\n` +
+    `💰 *Exact Amount:* ₹${formattedAmount}\n` +
+    `💳 *UPI ID:* ${params.upiId}\n` +
+    `⏳ *Time Limit:* Pay within 10 minutes\n\n` +
+    `⚠️ *Important:* Please transfer the exact amount of *₹${formattedAmount}* for automated bank verification.\n\n` +
+    `📱 *Scan QR Code or 1-Tap Pay:* \n` +
+    `👉 ${payUrl}\n\n` +
+    `— *Shree Shyam Sweets (Mithaasé)*`;
+
+  return sendWhatsAppMessage(params.phone, message);
+}
+
