@@ -52,17 +52,20 @@ export async function POST(req: Request) {
     // 1. Delete expired OTPs from database
     await sql.query(`DELETE FROM phone_otps WHERE expires_at < NOW();`).catch(() => {});
 
-    // 2. Reject if number is already verified on another account (Generic security message)
-    const existingVerified = await sql.query(
-      `SELECT id FROM customer_accounts 
-       WHERE phone = $1 AND phone_verified = true AND id != $2 
+    // 2. Reject if number is already linked or verified on another account
+    const tenDigit = cleanPhone.replace(/[^0-9]/g, "").slice(-10);
+    const existingOtherUser = await sql.query(
+      `SELECT id, email, phone_verified FROM customer_accounts 
+       WHERE (phone = $1 OR phone = $2 OR phone LIKE $3) 
+         AND id != $4 
+         AND LOWER(email) != LOWER($5) 
        LIMIT 1;`,
-      [cleanPhone, session.userId]
+      [`+91${tenDigit}`, tenDigit, `%${tenDigit}`, session.userId, (session.email || "").toLowerCase()]
     );
 
-    if (existingVerified && existingVerified.length > 0) {
+    if (existingOtherUser && existingOtherUser.length > 0) {
       return NextResponse.json(
-        { error: "This mobile number cannot be linked to this account. Please provide another number." },
+        { error: "This mobile number is already linked to another account. Please use a different mobile number." },
         { status: 409 }
       );
     }
@@ -139,3 +142,4 @@ export async function POST(req: Request) {
     );
   }
 }
+

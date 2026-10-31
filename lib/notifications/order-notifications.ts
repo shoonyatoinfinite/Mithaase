@@ -9,6 +9,7 @@ import { sendOrderConfirmedEmail, sendOrderDeliveredBillEmail, sendOrderCancelle
 import {
   notifyOrderConfirmed,
   notifyOrderDelivered,
+  notifyAdminOrderDelivered,
   notifyOrderCancelled,
   notifyOrderOutForDelivery,
   notifyAdminNewOrder,
@@ -302,12 +303,35 @@ export async function sendOrderConfirmedNotification(
 
 /**
  * Sends order delivery completion notification and Official Tax/Delivery Bill via Email and WhatsApp
+ * to both Customer and Admin (including order details, user, assigned rider, and payment breakdown).
  */
 export async function sendOrderDeliveredNotification(
-  orderOrId: string | Order
+  orderOrId: string | Order,
+  riderName?: string,
+  riderPhone?: string,
+  changedBy?: string,
+  note?: string
 ): Promise<void> {
   try {
-    const order = typeof orderOrId === "string" ? await getOrderById(orderOrId) : orderOrId;
+    const orderIdentifier =
+      typeof orderOrId === "string"
+        ? orderOrId
+        : (orderOrId.id || orderOrId.order_number || orderOrId.order_ref);
+
+    let order: Order | null = null;
+    if (sql && orderIdentifier) {
+      try {
+        const rows = await sql.query(
+          `SELECT * FROM orders WHERE id = $1 OR order_number = $1 OR order_ref = $1 LIMIT 1;`,
+          [orderIdentifier]
+        );
+        if (rows && rows.length > 0) order = rows[0] as Order;
+      } catch {}
+    }
+
+    if (!order) {
+      order = typeof orderOrId === "object" ? orderOrId : await getOrderById(orderOrId);
+    }
     if (!order) {
       console.warn("[OrderNotification] Order not found for delivery notification:", orderOrId);
       return;
@@ -320,18 +344,107 @@ export async function sendOrderDeliveredNotification(
 
     const settings = await getStoreSettings();
 
-    // 1. Resolve real address and email for accurate delivery bill
+    // 1. Load items directly from DB and aggregate them
+    if (sql) {
+      try {
+        const itemRows = await sql.query(
+          `SELECT * FROM order_items WHERE order_id = $1 OR order_id = $2;`,
+          [order.id, order.order_number]
+        );
+        if (itemRows && itemRows.length > 0) {
+          order.items = itemRows.map((it: any) => ({
+            id: it.id,
+            order_id: it.order_id,
+            product_id: it.product_id,
+            variant_id: it.variant_id,
+            product_name_snapshot: it.product_name_snapshot,
+            variant_name_snapshot: it.variant_name_snapshot,
+            quantity: Number(it.quantity),
+            unit_price: Number(it.unit_price),
+            line_total: Number(it.line_total),
+            image_url: it.image_url,
+          }));
+        }
+      } catch {}
+    }
+
+    const aggregatedItems = aggregateOrderItems(order.items || []);
+    const itemsSummary =
+      aggregatedItems.length > 0
+        ? aggregatedItems
+            .map((it) => {
+              const variant = it.variantName ? ` (${it.variantName})` : "";
+              return `• ${it.quantity}x ${it.productName}${variant} — ₹${it.lineTotal.toFixed(2)}`;
+            })
+            .join("\n")
+        : `• 1x Fresh Festive Sweets Assortment — ₹${Number(order.total_amount).toFixed(2)}`;
+
+    // Pass aggregated items so customer bill email has clean single rows
+    if (aggregatedItems.length > 0) {
+      order.items = aggregatedItems.map((ai) => ({
+        id: `agg-${ai.productId}-${ai.variantId}`,
+        order_id: order!.id,
+        product_id: ai.productId,
+        variant_id: ai.variantId,
+        product_name_snapshot: ai.productName,
+        variant_name_snapshot: ai.variantName,
+        quantity: ai.quantity,
+        unit_price: ai.unitPrice,
+        line_total: ai.lineTotal,
+        image_url: ai.imageUrl,
+      }));
+    }
+
+    // 2. Resolve Rider Name & Phone
+    let finalRiderName = riderName?.trim() || "";
+    let finalRiderPhone = riderPhone?.trim() || "";
+
+    if ((!finalRiderName || !finalRiderPhone) && sql) {
+      try {
+        const historyRows = await sql.query(
+          `SELECT changed_by, note, new_status 
+           FROM order_status_history 
+           WHERE order_id = $1 OR order_id = $2 
+           ORDER BY created_at DESC;`,
+          [order.id, order.order_number]
+        ).catch(() => []);
+
+        const delivHistory = (historyRows || []).find((h: any) => h.new_status === "delivered" || h.new_status === "out_for_delivery");
+        const candName = (finalRiderName || delivHistory?.changed_by || changedBy || "").trim();
+
+        if (candName && candName !== "Admin" && candName !== "System") {
+          finalRiderName = candName;
+          const riderRows = await sql.query(
+            `SELECT name, phone FROM riders WHERE LOWER(name) = LOWER($1) OR id::text = $1 OR phone = $1 LIMIT 1;`,
+            [candName]
+          ).catch(() => []);
+          if (riderRows && riderRows.length > 0) {
+            finalRiderName = riderRows[0].name;
+            if (!finalRiderPhone) finalRiderPhone = riderRows[0].phone;
+          }
+        }
+      } catch {}
+    }
+
+    if (!finalRiderName) {
+      finalRiderName = (changedBy && changedBy !== "System") ? changedBy.trim() : "Admin / Store Staff";
+    }
+    if (!finalRiderPhone) {
+      finalRiderPhone = (settings?.whatsapp_number || settings?.business_phone || "8290683668").replace(/[^0-9]/g, "").slice(-10);
+    }
+
+    // 3. Resolve real address and email for accurate delivery bill
     await resolveOrderAddress(order);
     const targetEmail = await resolveOrderEmail(order);
     if (targetEmail) {
       order.customer_email = targetEmail;
       sendOrderDeliveredBillEmail(order, settings).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[OrderNotification] Delivery bill email failed for #${order.order_number}:`, msg);
+        console.warn(`[OrderNotification] Delivery bill email failed for #${order!.order_number}:`, msg);
       });
     }
 
-    // 2. Send Delivery Completion WhatsApp Message
+    // 4. Send Delivery Completion WhatsApp Message to Customer
     if (order.customer_phone) {
       notifyOrderDelivered({
         phone: order.customer_phone,
@@ -344,9 +457,21 @@ export async function sendOrderDeliveredNotification(
         customerEmail: order.customer_email,
       }).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[OrderNotification] WhatsApp delivery notification failed for #${order.order_number}:`, msg);
+        console.warn(`[OrderNotification] WhatsApp delivery notification failed for #${order!.order_number}:`, msg);
       });
     }
+
+    // 5. Send Real-Time Order Delivered WhatsApp Message to Admin
+    notifyAdminOrderDelivered({
+      order,
+      riderName: finalRiderName,
+      riderPhone: finalRiderPhone,
+      itemsSummary,
+      adminPhone: (settings?.whatsapp_number || settings?.business_phone || "").trim(),
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[OrderNotification] Admin WhatsApp delivery notification failed for #${order!.order_number}:`, msg);
+    });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("[OrderNotification] sendOrderDeliveredNotification error:", msg);

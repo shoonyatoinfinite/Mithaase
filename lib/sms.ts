@@ -41,3 +41,4 @@ export async function sendSms(phone: string, text: string): Promise<void> {
     throw new Error(`SMS gateway error: HTTP status ${response.status}`);
   }
 }
+

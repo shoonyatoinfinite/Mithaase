@@ -117,7 +117,24 @@ export async function POST(req: Request) {
       );
     }
 
-    // 6. OTP is verified: Update customer_accounts and mark OTP used
+    // 6. OTP is verified: Check if number is already bound to another account before binding
+    const tenDigit = cleanPhone.replace(/[^0-9]/g, "").slice(-10);
+    const existingOtherUser = await sql.query(
+      `SELECT id FROM customer_accounts 
+       WHERE (phone = $1 OR phone = $2 OR phone LIKE $3) 
+         AND id != $4 
+         AND LOWER(email) != LOWER($5) 
+       LIMIT 1;`,
+      [`+91${tenDigit}`, tenDigit, `%${tenDigit}`, session.userId, (session.email || "").toLowerCase()]
+    );
+
+    if (existingOtherUser && existingOtherUser.length > 0) {
+      return NextResponse.json(
+        { error: "This mobile number is already linked to another account. Please use a different mobile number." },
+        { status: 409 }
+      );
+    }
+
     try {
       await sql.query(
         `UPDATE phone_otps 
@@ -172,3 +189,4 @@ export async function POST(req: Request) {
     );
   }
 }
+

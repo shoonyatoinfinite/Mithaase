@@ -591,6 +591,84 @@ export async function notifyOrderDelivered(params: {
 }
 
 /**
+ * Sends real-time Order Delivered WhatsApp notification to Admin
+ * with complete breakdown: order details, customer (user), assigned rider, and payment details.
+ */
+export async function notifyAdminOrderDelivered(params: {
+  order: Order;
+  riderName?: string;
+  riderPhone?: string;
+  itemsSummary?: string;
+  adminPhone?: string;
+}): Promise<boolean> {
+  const { order } = params;
+  const adminHelpline = (params.adminPhone || (await resolveAdminHelpline())).trim();
+  const cleanAdminPhone = adminHelpline.replace(/[^0-9]/g, "").slice(-10);
+
+  if (!cleanAdminPhone) {
+    console.warn("[Admin Delivered Notification] No valid admin phone number configured.");
+    return false;
+  }
+
+  const cleanCustomerPhone = (order.customer_phone || "").replace(/[^0-9]/g, "").slice(-10);
+  const locationStr = cleanLocationString(order.delivery_address, order.locality);
+  const mapLink = resolveCustomerMapUrl(order);
+
+  const isPaid = order.payment_status === "paid";
+  const isCod = order.payment_method?.toLowerCase() === "cod";
+  const totalAmount = Number(order.total_amount || order.subtotal || 0).toFixed(2);
+
+  const paymentMethodLabel = isCod ? "Cash on Delivery (COD)" : "UPI Online (Instant)";
+  const paymentStatusLabel = isCod
+    ? (isPaid ? "Cash Collected at Doorstep ✓" : "Cash Pending Collection")
+    : (isPaid ? `Paid via UPI ✓${order.upi_reference ? ` (Ref: ${order.upi_reference})` : ""}` : "Payment Unconfirmed");
+
+  const riderName = (params.riderName || "Express Fleet Rider").trim();
+  const riderPhone = (params.riderPhone || "").replace(/[^0-9]/g, "").slice(-10);
+  const riderPhoneText = riderPhone ? `+91 ${riderPhone}` : "Not Available";
+
+  const deliveredTime = order.delivered_at
+    ? new Date(order.delivered_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+    : new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+
+  const deliveredDate = order.delivered_at
+    ? new Date(order.delivered_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+    : new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
+  const itemsText = params.itemsSummary || "• Fresh Festive Sweets Assortment";
+
+  const message =
+    `🎉 *ORDER DELIVERED — Admin Fleet Notification!*\n\n` +
+    `Order *#${order.order_number}* has been successfully delivered!\n\n` +
+    `📦 *Order Details:*\n` +
+    `• Order Number: *#${order.order_number}*\n` +
+    (order.order_ref ? `• Order Ref: ${order.order_ref}\n` : "") +
+    `• Delivered On: ${deliveredDate} at ${deliveredTime}\n` +
+    `• Total Amount: *₹${totalAmount}*\n\n` +
+    `👤 *Customer (User) Details:*\n` +
+    `• Name: *${order.customer_name}*\n` +
+    `• Phone: +91 *${cleanCustomerPhone}*\n` +
+    (order.customer_email ? `• Email: ${order.customer_email}\n` : "") +
+    `• Doorstep Location: ${locationStr}\n` +
+    (order.landmark ? `• Landmark: ${order.landmark}\n` : "") +
+    (mapLink ? `🗺️ *Customer GPS Pin:*\n👉 ${mapLink}\n` : "") +
+    `\n🛵 *Delivered By (Rider):*\n` +
+    `• Rider Name: *${riderName}*\n` +
+    `• Rider Mobile: *${riderPhoneText}*\n` +
+    (order.delivered_location_name ? `• At: ${order.delivered_location_name}\n` : "") +
+    (order.delivery_proof_photo ? `📸 Delivery Proof Photo Captured ✓\n` : "") +
+    `\n💳 *Payment Details:*\n` +
+    `• Mode: *${paymentMethodLabel}*\n` +
+    `• Status: *${paymentStatusLabel}*\n` +
+    `• Net Amount: *₹${totalAmount}*\n\n` +
+    `🛒 *Delivered Items:*\n${itemsText}\n\n` +
+    `— Shree Shyam Sweets Fleet Operations`;
+
+  console.log(`[Admin Notification] Dispatching Order Delivered Alert #${order.order_number} to Admin WhatsApp (+91 ${cleanAdminPhone})`);
+  return sendWhatsAppMessage(cleanAdminPhone, message);
+}
+
+/**
  * Sends order cancellation notification to customer via WhatsApp
  */
 export async function notifyOrderCancelled(params: {

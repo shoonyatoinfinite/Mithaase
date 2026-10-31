@@ -263,16 +263,16 @@ export async function sendOrderConfirmedEmail(
   const paymentBadge = isCod
     ? (isPaid ? "Cash Paid on Delivery ✓" : "Cash on Delivery (Payment on Delivery)")
     : isPaid
-    ? `Paid via UPI (Ref: ${order.upi_reference || "Auto-Confirmed"})`
-    : `UPI (Payment Pending)`;
+      ? `Paid via UPI (Ref: ${order.upi_reference || "Auto-Confirmed"})`
+      : `UPI (Payment Pending)`;
 
   const totalLabel = isPendingCod
     ? "Amount to Pay on Delivery (Cash):"
     : isCod
-    ? "Total Amount Paid (COD):"
-    : isPaid
-    ? "Total Amount Paid (UPI Verified):"
-    : "Amount to Pay:";
+      ? "Total Amount Paid (COD):"
+      : isPaid
+        ? "Total Amount Paid (UPI Verified):"
+        : "Amount to Pay:";
 
   const customerMapUrl = resolveCustomerMapUrl(order);
 
@@ -300,7 +300,7 @@ export async function sendOrderConfirmedEmail(
           }));
         }
       }
-    } catch {}
+    } catch { }
   }
 
   // Aggregate items so no item appears twice; quantities and totals are combined
@@ -309,8 +309,8 @@ export async function sendOrderConfirmedEmail(
   const itemsHtml =
     aggregatedItems.length > 0
       ? aggregatedItems
-          .map(
-            (item) => `
+        .map(
+          (item) => `
       <tr>
         <td style="padding: 10px 12px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); color: #FFF8EE; font-size: 13px;">
           <strong style="color: #F5D061;">${item.productName}</strong>
@@ -327,8 +327,8 @@ export async function sendOrderConfirmedEmail(
         </td>
       </tr>
     `
-          )
-          .join("")
+        )
+        .join("")
       : `
       <tr>
         <td style="padding: 10px 12px; border-bottom: 1px solid rgba(212, 175, 55, 0.2); color: #FFF8EE; font-size: 13px;">
@@ -446,14 +446,13 @@ export async function sendOrderConfirmedEmail(
                 <td style="color: #A89587; font-size: 12px; padding: 4px 0;">Subtotal:</td>
                 <td style="color: #FFF8EE; font-size: 12px; text-align: right; padding: 4px 0;">₹${Number(order.subtotal).toFixed(2)}</td>
               </tr>
-              ${
-                order.discount_amount > 0
-                  ? `<tr>
+              ${order.discount_amount > 0
+      ? `<tr>
                       <td style="color: #34D399; font-size: 12px; padding: 4px 0;">Discount (${order.coupon_code || "Promo"}):</td>
                       <td style="color: #34D399; font-size: 12px; text-align: right; padding: 4px 0;">-₹${Number(order.discount_amount).toFixed(2)}</td>
                     </tr>`
-                  : ""
-              }
+      : ""
+    }
               <tr>
                 <td style="color: #A89587; font-size: 12px; padding: 4px 0;">Delivery Fee:</td>
                 <td style="color: #FFF8EE; font-size: 12px; text-align: right; padding: 4px 0;">
@@ -642,14 +641,13 @@ export async function sendOrderDeliveredBillEmail(
               <td style="font-size: 12px; color: #6B5E55; padding: 4px 0;">Item Subtotal:</td>
               <td style="font-size: 12px; font-weight: bold; color: #1D0823; text-align: right; padding: 4px 0;">₹${Number(order.subtotal).toFixed(2)}</td>
             </tr>
-            ${
-              order.discount_amount > 0
-                ? `<tr>
+            ${order.discount_amount > 0
+      ? `<tr>
                     <td style="font-size: 12px; color: #10B981; padding: 4px 0;">Discount (${order.coupon_code || "Promo"}):</td>
                     <td style="font-size: 12px; font-weight: bold; color: #10B981; text-align: right; padding: 4px 0;">-₹${Number(order.discount_amount).toFixed(2)}</td>
                   </tr>`
-                : ""
-            }
+      : ""
+    }
             <tr>
               <td style="font-size: 12px; color: #6B5E55; padding: 4px 0;">Delivery Charges:</td>
               <td style="font-size: 12px; font-weight: bold; color: #1D0823; text-align: right; padding: 4px 0;">
@@ -828,9 +826,8 @@ export async function sendOrderCancelledEmail(
             </div>
           </div>
 
-          ${
-            order.items && order.items.length > 0
-              ? `<table>
+          ${order.items && order.items.length > 0
+      ? `<table>
                   <thead>
                     <tr>
                       <th>Cancelled Item</th>
@@ -843,22 +840,21 @@ export async function sendOrderCancelledEmail(
                     ${itemsHtml}
                   </tbody>
                 </table>`
-              : ""
-          }
+      : ""
+    }
 
           <div class="total-box">
             <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: #D3BEB0;">
               <span>Subtotal:</span>
               <span>₹${Number(order.subtotal).toFixed(2)}</span>
             </div>
-            ${
-              order.discount_amount > 0
-                ? `<div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: #10B981;">
+            ${order.discount_amount > 0
+      ? `<div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: #10B981;">
                     <span>Discount:</span>
                     <span>-₹${Number(order.discount_amount).toFixed(2)}</span>
                   </div>`
-                : ""
-            }
+      : ""
+    }
             <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: #D3BEB0;">
               <span>Delivery Fee:</span>
               <span>₹${Number(order.delivery_charge).toFixed(2)}</span>
@@ -899,7 +895,7 @@ export async function sendOrderCancelledEmail(
       subject: `[Admin Alert] Order #${order.order_number} Cancelled (₹${Number(order.total_amount).toFixed(2)})`,
       text: `Order #${order.order_number} for customer ${order.customer_name} (+91 ${order.customer_phone}) has been cancelled. Reason: ${reason}. Total amount: ₹${Number(order.total_amount).toFixed(2)}.`,
       html,
-    }).catch(() => {});
+    }).catch(() => { });
   }
 
   return sendEmail({

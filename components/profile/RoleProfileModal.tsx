@@ -518,6 +518,12 @@ export function RoleProfileModal({
                     Must be exactly 10 digits
                   </span>
                 )}
+                {role === "customer" && phoneOtpError && !showPhoneOtpBox && (
+                  <p className="text-[11px] text-rose-400 flex items-center gap-1 mt-1.5 bg-rose-950/50 p-2 rounded-lg border border-rose-500/30">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-400" />
+                    <span>{phoneOtpError}</span>
+                  </p>
+                )}
               </div>
             </div>
 

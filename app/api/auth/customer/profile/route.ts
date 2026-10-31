@@ -125,6 +125,24 @@ export async function PUT(req: Request) {
       if (normalised !== currentCustomer.phone) {
         phoneChanged = true;
         newCleanPhone = normalised;
+
+        // Reject if mobile number is already linked to another account
+        const tenDigit = normalised.replace(/[^0-9]/g, "").slice(-10);
+        if (tenDigit.length === 10) {
+          const duplicateRows = await sql.query(
+            `SELECT id, email FROM customer_accounts 
+             WHERE (phone = $1 OR phone = $2 OR phone LIKE $3) 
+               AND id != $4 
+             LIMIT 1;`,
+            [`+91${tenDigit}`, tenDigit, `%${tenDigit}`, session.userId]
+          );
+          if (duplicateRows && duplicateRows.length > 0) {
+            return NextResponse.json(
+              { error: "This mobile number is already linked to another account. Please use a different mobile number." },
+              { status: 409 }
+            );
+          }
+        }
       }
     }
 

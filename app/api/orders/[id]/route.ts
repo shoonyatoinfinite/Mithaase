@@ -206,6 +206,15 @@ export async function PATCH(
           body.changed_by,
           body.note
         ).catch(() => {});
+      } else if (body.order_status === "delivered") {
+        const { sendOrderDeliveredNotification } = await import("@/lib/notifications/order-notifications");
+        sendOrderDeliveredNotification(
+          id,
+          body.rider_name || body.changed_by,
+          body.rider_phone,
+          body.changed_by,
+          body.note
+        ).catch(() => {});
       }
     }
 

@@ -1795,7 +1795,7 @@ export async function updateOrderStatus(
       sendOrderOutForDeliveryNotification(order.id, changedBy, undefined, changedBy, note).catch(() => {});
     } else if (newStatus === "delivered" && prevStatus !== "delivered") {
       const { sendOrderDeliveredNotification } = await import("@/lib/notifications/order-notifications");
-      sendOrderDeliveredNotification(order.id).catch(() => {});
+      sendOrderDeliveredNotification(order.id, changedBy, undefined, changedBy, note).catch(() => {});
     } else if (newStatus === "cancelled" && prevStatus !== "cancelled") {
       const { sendOrderCancelledNotification } = await import("@/lib/notifications/order-notifications");
       sendOrderCancelledNotification(order.id, note || order.cancellation_reason).catch(() => {});
@@ -3310,6 +3310,32 @@ export async function updateCustomerProfile(
   const rawPhone = data.phone !== undefined ? data.phone.trim() : existing.phone;
   const phone = normalisePhone(rawPhone) || rawPhone;
   const phoneChanged = Boolean(phone && existing.phone && phone !== existing.phone);
+
+  // Reject saving a number if it is already linked to another customer account
+  if (phone && phoneChanged) {
+    const tenDigit = phone.replace(/[^0-9]/g, "").slice(-10);
+    if (tenDigit.length === 10) {
+      if (sql) {
+        try {
+          const duplicateCheck = await sql.query(
+            `SELECT id, email, phone FROM customer_accounts 
+             WHERE (phone = $1 OR phone = $2 OR phone LIKE $3) 
+               AND LOWER(email) != LOWER($4) 
+             LIMIT 1;`,
+            [`+91${tenDigit}`, tenDigit, `%${tenDigit}`, normEmail]
+          );
+          if (duplicateCheck && duplicateCheck.length > 0) {
+            return {
+              success: false,
+              error: "This mobile number is already linked to another account. Please use a different mobile number.",
+            };
+          }
+        } catch (dupErr) {
+          console.warn("[STORE] Duplicate phone check warning:", dupErr);
+        }
+      }
+    }
+  }
   const password = data.password !== undefined && data.password.trim() ? data.password.trim() : existing.password;
   const pin = data.pin !== undefined && data.pin.trim() ? data.pin.trim() : existing.pin;
   const delivery_address = data.delivery_address !== undefined ? data.delivery_address.trim() : existing.delivery_address;

@@ -83,7 +83,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
               const fullOrder = await res.json();
               triggerOrderAlert(fullOrder);
             }
-          } catch {}
+          } catch { }
         }
       }
     },
@@ -119,7 +119,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
             lastAlertedOrderIdRef.current = latest.id;
           }
         }
-      } catch {}
+      } catch { }
     };
 
     const interval = setInterval(checkLatestOrders, 4000);
@@ -186,9 +186,8 @@ export function AdminLayout({ children }: AdminLayoutProps) {
 
       {/* Sidebar Navigation */}
       <aside
-        className={`fixed md:sticky top-0 left-0 z-40 h-screen w-64 bg-[#180320] border-r border-[#D4AF37]/25 flex flex-col justify-between p-4 transition-transform duration-300 ${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-        }`}
+        className={`fixed md:sticky top-0 left-0 z-40 h-screen w-64 bg-[#180320] border-r border-[#D4AF37]/25 flex flex-col justify-between p-4 transition-transform duration-300 ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+          }`}
       >
         <div>
           {/* Logo & Store Info */}
@@ -212,9 +211,8 @@ export function AdminLayout({ children }: AdminLayoutProps) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs">
                   <span
-                    className={`w-2 h-2 rounded-full ${
-                      settings.store_status === "open" ? "bg-emerald-400 animate-pulse" : "bg-red-400"
-                    }`}
+                    className={`w-2 h-2 rounded-full ${settings.store_status === "open" ? "bg-emerald-400 animate-pulse" : "bg-red-400"
+                      }`}
                   />
                   <span className="capitalize font-semibold text-white">
                     {settings.store_status}
@@ -250,11 +248,10 @@ export function AdminLayout({ children }: AdminLayoutProps) {
                   key={item.href}
                   href={item.href}
                   onClick={() => setSidebarOpen(false)}
-                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                    isActive
+                  className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all ${isActive
                       ? "bg-[#D4AF37] text-[#16031E] shadow-md font-bold"
                       : "text-[#D3BEB0] hover:text-white hover:bg-white/5"
-                  }`}
+                    }`}
                 >
                   <Icon className="w-4 h-4 shrink-0" />
                   <span>{item.name}</span>

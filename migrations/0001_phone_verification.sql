@@ -51,3 +51,4 @@ CREATE TABLE IF NOT EXISTS phone_otps (
 CREATE INDEX IF NOT EXISTS idx_phone_otps_user_phone ON phone_otps (user_id, phone);
 CREATE INDEX IF NOT EXISTS idx_phone_otps_expires ON phone_otps (expires_at);
 CREATE INDEX IF NOT EXISTS idx_phone_otps_ip ON phone_otps (ip, created_at);
+
