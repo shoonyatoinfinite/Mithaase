@@ -11,6 +11,7 @@ import { Navbar } from "@/components/storefront/Navbar";
 import { Footer } from "@/components/storefront/Footer";
 import { useRealtime } from "@/lib/hooks/useRealtime";
 import { OrderReceipt } from "@/components/orders/OrderReceipt";
+import { CancelOrderModal } from "@/components/orders/CancelOrderModal";
 import {
   Receipt,
   Package,
@@ -38,6 +39,7 @@ export default function CustomerOrdersPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
+  const [selectedCancelOrder, setSelectedCancelOrder] = useState<Order | null>(null);
 
   // Fetch orders matching authenticated customer email
   const fetchCustomerOrders = useCallback(async () => {
@@ -340,6 +342,17 @@ export default function CustomerOrdersPage() {
                           </button>
                         )}
 
+                        {/* Cancel Button (Available before out_for_delivery) */}
+                        {!isDelivered && ord.order_status !== "out_for_delivery" && ord.order_status !== "cancelled" && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCancelOrder(ord)}
+                            className="py-2 px-3 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-semibold text-xs border border-rose-500/30 transition-all cursor-pointer"
+                          >
+                            <span>Cancel</span>
+                          </button>
+                        )}
+
                         {/* Track Live button */}
                         <Link
                           href={`/track/${ord.id}`}
@@ -357,6 +370,19 @@ export default function CustomerOrdersPage() {
           </div>
           )}
         </div>
+      )}
+
+      {/* Order Cancellation Modal */}
+      {selectedCancelOrder && (
+        <CancelOrderModal
+          order={selectedCancelOrder}
+          isOpen={Boolean(selectedCancelOrder)}
+          onClose={() => setSelectedCancelOrder(null)}
+          onCancelled={() => {
+            fetchCustomerOrders();
+          }}
+          adminPhone={settings.whatsapp_number || settings.business_phone}
+        />
       )}
       </main>
 

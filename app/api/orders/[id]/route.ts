@@ -215,11 +215,28 @@ export async function PATCH(
           body.changed_by,
           body.note
         ).catch(() => {});
+      } else if (body.order_status === "ready_for_dispatch" && body.delivery_queued !== true) {
+        const { sendOrderAssignedToRiderNotification } = await import("@/lib/notifications/order-notifications");
+        sendOrderAssignedToRiderNotification(
+          id,
+          body.rider_phone,
+          body.rider_name
+        ).catch(() => {});
       }
     }
 
     // Only Admin can update payment status, delivery queue, or refunds
     if (isAdmin) {
+      if (!body.order_status && (body.action === "call_rider" || body.action === "assign_rider")) {
+        const { sendOrderAssignedToRiderNotification } = await import("@/lib/notifications/order-notifications");
+        sendOrderAssignedToRiderNotification(
+          id,
+          body.rider_phone,
+          body.rider_name
+        ).catch(() => {});
+        return NextResponse.json({ success: true, message: "Delivery request sent to rider fleet via WhatsApp" });
+      }
+
       if (body.action === "send_confirmation") {
         const { sendOrderConfirmedNotification } = await import("@/lib/notifications/order-notifications");
         await sendOrderConfirmedNotification(order.id);

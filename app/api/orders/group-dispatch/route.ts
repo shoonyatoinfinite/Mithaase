@@ -17,9 +17,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Failed to dispatch grouped orders." }, { status: 400 });
     }
 
-    // Broadcast individual status updates
+    // Broadcast individual status updates & notify rider fleet via WhatsApp
+    const { sendOrderAssignedToRiderNotification } = await import("@/lib/notifications/order-notifications");
     for (const order of result.orders) {
       broadcastRealtimeEvent("order_status_updated", order);
+      sendOrderAssignedToRiderNotification(order).catch(() => {});
     }
 
     // Broadcast group dispatch event to rider fleet

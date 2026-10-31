@@ -13,6 +13,9 @@ import {
   notifyOrderCancelled,
   notifyOrderOutForDelivery,
   notifyAdminNewOrder,
+  notifyRiderNewOrderRequest,
+  notifyRiderOrderPickedUp,
+  notifyRiderOrderDelivered,
   aggregateOrderItems,
   resolveCustomerMapUrl,
 } from "@/lib/whatsapp/payment-notifications";
@@ -472,6 +475,18 @@ export async function sendOrderDeliveredNotification(
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[OrderNotification] Admin WhatsApp delivery notification failed for #${order!.order_number}:`, msg);
     });
+
+    // 6. Send Delivery Completion WhatsApp Message to Rider
+    if (finalRiderPhone && finalRiderPhone.length === 10) {
+      notifyRiderOrderDelivered({
+        riderPhone: finalRiderPhone,
+        riderName: finalRiderName,
+        order,
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[OrderNotification] Rider WhatsApp delivered notification failed for #${order!.order_number}:`, msg);
+      });
+    }
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("[OrderNotification] sendOrderDeliveredNotification error:", msg);
@@ -654,9 +669,124 @@ export async function sendOrderOutForDeliveryNotification(
       itemsSummary,
       adminPhone: (settings?.whatsapp_number || settings?.business_phone || "").trim(),
     });
+
+    // 4. Dispatch WhatsApp confirmation to Rider
+    if (finalRiderPhone && finalRiderPhone.length === 10) {
+      notifyRiderOrderPickedUp({
+        riderPhone: finalRiderPhone,
+        riderName: finalRiderName,
+        order,
+        itemsSummary,
+      }).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[OrderNotification] Rider WhatsApp pickup notification failed for #${order!.order_number}:`, msg);
+      });
+    }
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("[OrderNotification] sendOrderOutForDeliveryNotification error:", msg);
+  }
+}
+
+/**
+ * Sends real-time delivery request WhatsApp message to Rider(s) when Admin calls/assigns delivery
+ */
+export async function sendOrderAssignedToRiderNotification(
+  orderOrId: string | Order,
+  targetRiderPhone?: string,
+  targetRiderName?: string
+): Promise<void> {
+  try {
+    const orderIdentifier =
+      typeof orderOrId === "string"
+        ? orderOrId
+        : (orderOrId.id || orderOrId.order_number || orderOrId.order_ref);
+
+    let order: Order | null = null;
+    if (sql && orderIdentifier) {
+      try {
+        const rows = await sql.query(
+          `SELECT * FROM orders WHERE id = $1 OR order_number = $1 OR order_ref = $1 LIMIT 1;`,
+          [orderIdentifier]
+        );
+        if (rows && rows.length > 0) order = rows[0] as Order;
+      } catch {}
+    }
+    if (!order) {
+      order = typeof orderOrId === "object" ? orderOrId : await getOrderById(orderOrId);
+    }
+    if (!order) return;
+
+    // Load and aggregate items
+    if (sql) {
+      try {
+        const itemRows = await sql.query(
+          `SELECT * FROM order_items WHERE order_id = $1 OR order_id = $2;`,
+          [order.id, order.order_number]
+        );
+        if (itemRows && itemRows.length > 0) {
+          order.items = itemRows.map((it: any) => ({
+            id: it.id,
+            order_id: it.order_id,
+            product_id: it.product_id,
+            variant_id: it.variant_id,
+            product_name_snapshot: it.product_name_snapshot,
+            variant_name_snapshot: it.variant_name_snapshot,
+            quantity: Number(it.quantity),
+            unit_price: Number(it.unit_price),
+            line_total: Number(it.line_total),
+            image_url: it.image_url,
+          }));
+        }
+      } catch {}
+    }
+
+    await resolveOrderAddress(order);
+    const aggregatedItems = aggregateOrderItems(order.items || []);
+    const itemsSummary =
+      aggregatedItems.length > 0
+        ? aggregatedItems
+            .map((it) => {
+              const variant = it.variantName ? ` (${it.variantName})` : "";
+              return `• ${it.quantity}x ${it.productName}${variant} — ₹${it.lineTotal.toFixed(2)}`;
+            })
+            .join("\n")
+        : `• 1x Fresh Festive Sweets Box — ₹${Number(order.total_amount).toFixed(2)}`;
+
+    // If specific rider phone is provided:
+    if (targetRiderPhone) {
+      const clean = targetRiderPhone.replace(/[^0-9]/g, "").slice(-10);
+      if (clean.length === 10) {
+        await notifyRiderNewOrderRequest({
+          riderPhone: clean,
+          riderName: targetRiderName,
+          order,
+          itemsSummary,
+        });
+        return;
+      }
+    }
+
+    // Otherwise, dispatch to all active fleet riders
+    if (sql) {
+      const activeRiders = await sql.query(
+        `SELECT name, phone FROM riders WHERE is_active = true;`
+      ).catch(() => []);
+
+      for (const r of (activeRiders || [])) {
+        const clean = (r.phone || "").replace(/[^0-9]/g, "").slice(-10);
+        if (clean.length === 10) {
+          notifyRiderNewOrderRequest({
+            riderPhone: clean,
+            riderName: r.name,
+            order,
+            itemsSummary,
+          }).catch(() => {});
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[OrderNotification] sendOrderAssignedToRiderNotification error:", err);
   }
 }
 

@@ -889,5 +889,136 @@ export async function notifyCustomerSpecialBatchReady(params: {
   return sendWhatsAppMessage(cleanPhone, message);
 }
 
+/**
+ * Sends real-time WhatsApp delivery request/assignment to Rider
+ */
+export async function notifyRiderNewOrderRequest(params: {
+  riderPhone: string;
+  riderName?: string;
+  order: Order;
+  itemsSummary?: string;
+}): Promise<boolean> {
+  const cleanRiderPhone = (params.riderPhone || "").replace(/[^0-9]/g, "").slice(-10);
+  if (!cleanRiderPhone || cleanRiderPhone.length !== 10) return false;
+
+  const { order } = params;
+  const riderName = (params.riderName || "Delivery Partner").trim();
+  const cleanCustomerPhone = (order.customer_phone || "").replace(/[^0-9]/g, "").slice(-10);
+  const locationStr = cleanLocationString(order.delivery_address, order.locality);
+  const mapLink = resolveCustomerMapUrl(order);
+  const totalAmount = Number(order.total_amount || order.subtotal || 0).toFixed(2);
+  const isCod = order.payment_method?.toLowerCase() === "cod";
+  const appBaseUrl = getAppBaseUrl();
+
+  const paymentText = isCod
+    ? `💵 *CASH ON DELIVERY — Collect ₹${totalAmount} from customer*`
+    : `💳 *PREPAID ONLINE (UPI) — ₹0 to collect*`;
+
+  const itemsText = params.itemsSummary || "• Fresh Festive Sweets Box";
+
+  const message =
+    `🛵 *NEW DELIVERY ASSIGNMENT — Shree Shyam Sweets*\n\n` +
+    `Namaste *${riderName}* ji! An order has been assigned for doorstep delivery:\n\n` +
+    `📦 *Order Details:*\n` +
+    `• Order Number: *#${order.order_number}*\n` +
+    (order.order_ref ? `• Order Ref: ${order.order_ref}\n` : "") +
+    `• Total Amount: *₹${totalAmount}*\n` +
+    `• Payment Mode: ${paymentText}\n\n` +
+    `👤 *Customer Recipient:*\n` +
+    `• Name: *${order.customer_name}*\n` +
+    `• Phone: *+91 ${cleanCustomerPhone}*\n` +
+    `• Delivery Address: *${locationStr}*\n` +
+    (order.landmark ? `• Landmark: ${order.landmark}\n` : "") +
+    (mapLink ? `🗺️ *Customer GPS Navigation:*\n👉 ${mapLink}\n` : "") +
+    `\n🛒 *Items to Deliver:*\n${itemsText}\n\n` +
+    `📍 *Pickup Store:*\n` +
+    `Shree Shyam Sweets, Main Bazar, Kothal Kalan\n\n` +
+    `👉 *Open Rider App to Accept & Start:* \n` +
+    `${appBaseUrl}/rider\n\n` +
+    `— Shree Shyam Sweets Fleet Operations`;
+
+  console.log(`[Rider Notification] Dispatching delivery assignment for #${order.order_number} to Rider (+91 ${cleanRiderPhone})`);
+  return sendWhatsAppMessage(cleanRiderPhone, message);
+}
+
+/**
+ * Sends confirmation to Rider when they pick up the order (Out for Delivery)
+ */
+export async function notifyRiderOrderPickedUp(params: {
+  riderPhone: string;
+  riderName?: string;
+  order: Order;
+  itemsSummary?: string;
+}): Promise<boolean> {
+  const cleanRiderPhone = (params.riderPhone || "").replace(/[^0-9]/g, "").slice(-10);
+  if (!cleanRiderPhone || cleanRiderPhone.length !== 10) return false;
+
+  const { order } = params;
+  const riderName = (params.riderName || "Delivery Partner").trim();
+  const cleanCustomerPhone = (order.customer_phone || "").replace(/[^0-9]/g, "").slice(-10);
+  const locationStr = cleanLocationString(order.delivery_address, order.locality);
+  const mapLink = resolveCustomerMapUrl(order);
+  const totalAmount = Number(order.total_amount || order.subtotal || 0).toFixed(2);
+  const isCod = order.payment_method?.toLowerCase() === "cod";
+
+  const paymentText = isCod
+    ? `💵 Collect *₹${totalAmount}* in Cash at customer doorstep`
+    : `💳 *Prepaid Online* (Do NOT collect any cash)`;
+
+  const message =
+    `🚀 *ORDER PICKED UP — ON THE WAY!*\n\n` +
+    `Rider *${riderName}* ji, Order *#${order.order_number}* is now active in your delivery run:\n\n` +
+    `👤 *Customer:* *${order.customer_name}*\n` +
+    `📞 *Call Customer:* +91 ${cleanCustomerPhone}\n` +
+    `📍 *Address:* ${locationStr}\n` +
+    (mapLink ? `🗺️ *GPS Map Navigation:*\n👉 ${mapLink}\n` : "") +
+    `\n💰 *Payment Instructions:*\n${paymentText}\n\n` +
+    `⏰ *Picked up at:* ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}\n\n` +
+    `⚠️ Please drive safely, keep sweets upright, and capture delivery photo upon handover.\n\n` +
+    `— Shree Shyam Sweets Fleet Operations`;
+
+  console.log(`[Rider Notification] Dispatching pickup confirmation for #${order.order_number} to Rider (+91 ${cleanRiderPhone})`);
+  return sendWhatsAppMessage(cleanRiderPhone, message);
+}
+
+/**
+ * Sends delivery completion confirmation to Rider
+ */
+export async function notifyRiderOrderDelivered(params: {
+  riderPhone: string;
+  riderName?: string;
+  order: Order;
+}): Promise<boolean> {
+  const cleanRiderPhone = (params.riderPhone || "").replace(/[^0-9]/g, "").slice(-10);
+  if (!cleanRiderPhone || cleanRiderPhone.length !== 10) return false;
+
+  const { order } = params;
+  const riderName = (params.riderName || "Delivery Partner").trim();
+  const totalAmount = Number(order.total_amount || order.subtotal || 0).toFixed(2);
+  const isCod = order.payment_method?.toLowerCase() === "cod";
+
+  const paymentText = isCod
+    ? `Cash Collected: *₹${totalAmount}* ✓`
+    : `Prepaid UPI Order: *₹${totalAmount}* ✓`;
+
+  const deliveredTime = order.delivered_at
+    ? new Date(order.delivered_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })
+    : new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+
+  const message =
+    `🎉 *DELIVERY COMPLETED — SUCCESSFUL!*\n\n` +
+    `Shabash *${riderName}* ji! You have successfully delivered Order *#${order.order_number}*!\n\n` +
+    `📦 *Order:* *#${order.order_number}*\n` +
+    `👤 *Customer:* ${order.customer_name}\n` +
+    `⏰ *Delivered at:* ${deliveredTime}\n` +
+    `💳 *Payment:* ${paymentText}\n` +
+    (order.delivery_proof_photo ? `📸 *Delivery Proof Photo Saved ✓*\n` : "") +
+    `\nThank you for ensuring fresh and safe festive delivery! 🍬✨\n\n` +
+    `— Shree Shyam Sweets Fleet Operations`;
+
+  console.log(`[Rider Notification] Dispatching delivery success notice for #${order.order_number} to Rider (+91 ${cleanRiderPhone})`);
+  return sendWhatsAppMessage(cleanRiderPhone, message);
+}
+
 
 

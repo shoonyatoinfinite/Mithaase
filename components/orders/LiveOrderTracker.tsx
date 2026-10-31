@@ -24,7 +24,9 @@ import {
   ArrowRight,
   Phone,
   Lock,
+  XCircle,
 } from "lucide-react";
+import { CancelOrderModal } from "@/components/orders/CancelOrderModal";
 
 interface LiveOrderTrackerProps {
   initialOrder: Order;
@@ -163,6 +165,7 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
   const [pulseNewStatus, setPulseNewStatus] = useState<boolean>(false);
   const [isManualRefreshing, setIsManualRefreshing] = useState<boolean>(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState("");
 
@@ -913,10 +916,30 @@ export function LiveOrderTracker({ initialOrder, settings }: LiveOrderTrackerPro
                 <Receipt className="w-3.5 h-3.5" />
                 <span>View My Orders & Receipts</span>
               </Link>
+
+              {!isCancelled && !isDelivered && (
+                <button
+                  type="button"
+                  onClick={() => setIsCancelModalOpen(true)}
+                  className="w-full py-2.5 px-4 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 font-semibold text-xs flex items-center justify-center gap-2 border border-rose-500/30 transition-all text-center cursor-pointer mt-1"
+                >
+                  <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Cancel Order (ऑर्डर कैंसिल करें)</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
       )}
+
+      {/* Order Cancellation Modal (with WhatsApp OTP for COD & Helpline for Prepaid) */}
+      <CancelOrderModal
+        order={order}
+        isOpen={isCancelModalOpen}
+        onClose={() => setIsCancelModalOpen(false)}
+        onCancelled={() => refreshOrder()}
+        adminPhone={settings.whatsapp_number || settings.business_phone}
+      />
 
       {/* Payment Selection Modal for Approved Booking Requests */}
       {isPaymentModalOpen && (
