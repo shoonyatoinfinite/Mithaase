@@ -295,10 +295,8 @@ export function PaymentSelectionModal({
       try {
         localStorage.setItem(`youpi_wa_verified_${clean}`, Date.now().toString());
       } catch {}
-      // Generate live payment session & database queries immediately upon WhatsApp verification
+      // Generate live payment session & database queries upon WhatsApp verification
       await initYoupiPayment(clean, true);
-      // Immediately dispatch active session details to customer and YouPI admin WhatsApp
-      await handleSendToWhatsApp(clean);
     } catch (err: any) {
       setWaOtpError(err.message || "Invalid OTP code.");
     } finally {

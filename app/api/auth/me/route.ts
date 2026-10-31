@@ -17,7 +17,7 @@ export async function GET(req: Request) {
 
     // Direct, live query to Neon PostgreSQL (no serverCache, no in-memory store)
     const rows = await sql.query(
-      `SELECT id, email, phone, name, delivery_address, locality, landmark, delivery_instructions, latitude, longitude, map_url, phone_verified_at, created_at, updated_at
+      `SELECT id, email, phone, name, delivery_address, locality, landmark, delivery_instructions, latitude, longitude, map_url, phone_verified, phone_verified_at, created_at, updated_at
        FROM customer_accounts 
        WHERE id = $1 
        LIMIT 1;`,
@@ -38,6 +38,7 @@ export async function GET(req: Request) {
       email: c.email,
       phone: c.phone,
       name: c.name,
+      phone_verified: Boolean(c.phone_verified),
       phone_verified_at: c.phone_verified_at ? new Date(c.phone_verified_at).toISOString() : null,
       savedProfile: {
         customer_name: c.name,

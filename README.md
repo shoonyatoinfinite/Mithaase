@@ -116,6 +116,34 @@ npm start
 
 ---
 
+## 📱 SMSGate Phone Verification Setup (Optional Profile SMS OTP)
+
+Mithaasé supports optional phone number verification on user profiles via [SMSGate (SMS Gateway for Android)](https://sms-gate.app/), a free and open-source Android app running directly on your phone in Cloud Server mode.
+
+### 1. Install & Configure SMSGate on Android
+1. Download and install the latest SMSGate APK from [GitHub Releases](https://github.com/capcom6/android-sms-gateway/releases) or F-Droid / Google Play.
+2. Grant standard SMS send and background battery optimization permissions.
+3. In the SMSGate app settings, enable **Cloud Server** mode.
+4. Copy your generated Cloud credentials:
+   - **Username** (`SMSGATE_USER`)
+   - **Password** (`SMSGATE_PASS`)
+
+### 2. Configure Vercel / Environment Variables
+Add the credentials and an HMAC secret to your environment variables (`.env.local` or Vercel Dashboard):
+```env
+SMSGATE_USER="your-smsgate-username"
+SMSGATE_PASS="your-smsgate-password"
+OTP_HMAC_SECRET="your-random-32-character-secret-key"
+```
+
+### 3. Verification Behavior & Security
+- **Optional & Non-Blocking:** Verification never blocks user login, browsing, or checkout flows.
+- **Rate-Limited in Database:** Max 3 OTP requests per 10 minutes per user, per phone, and per IP.
+- **HMAC OTP Storage:** Clear-text OTPs are never stored; only an HMAC SHA-256 hash with `OTP_HMAC_SECRET` is saved in PostgreSQL with a 5-minute expiry.
+- **Single Source of Truth:** If a user edits their phone number, `phone_verified` automatically resets to `false`.
+
+---
+
 ## 📂 Key Directory Layout
 
 ```

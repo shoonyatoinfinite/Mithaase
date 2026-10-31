@@ -527,18 +527,27 @@ export async function sendOrderDeliveredBillEmail(
     minute: "2-digit",
   });
 
-  const itemsHtml = (order.items || [])
+  const aggregatedItems = aggregateOrderItems(order.items || []);
+  const itemsHtml = (aggregatedItems.length > 0 ? aggregatedItems : [
+    {
+      productName: "Fresh Festive Sweets Assortment",
+      variantName: "",
+      quantity: 1,
+      unitPrice: Number(order.total_amount),
+      lineTotal: Number(order.total_amount),
+    }
+  ])
     .map(
       (item, idx) => `
       <tr style="border-bottom: 1px solid #E5E0D5;">
         <td style="padding: 10px 8px; font-size: 12px; color: #1D0823; text-align: center;">${idx + 1}</td>
         <td style="padding: 10px 8px; font-size: 12px; color: #1D0823;">
-          <strong>${item.product_name_snapshot}</strong>
-          ${item.variant_name_snapshot ? `<br><span style="font-size: 11px; color: #6B5E55;">${item.variant_name_snapshot}</span>` : ""}
+          <strong>${item.productName}</strong>
+          ${item.variantName ? `<br><span style="font-size: 11px; color: #6B5E55;">${item.variantName}</span>` : ""}
         </td>
         <td style="padding: 10px 8px; font-size: 12px; color: #1D0823; text-align: center;">${item.quantity}</td>
-        <td style="padding: 10px 8px; font-size: 12px; color: #1D0823; text-align: right;">₹${Number(item.unit_price).toFixed(2)}</td>
-        <td style="padding: 10px 8px; font-size: 12px; color: #3B0820; font-weight: bold; text-align: right;">₹${Number(item.line_total).toFixed(2)}</td>
+        <td style="padding: 10px 8px; font-size: 12px; color: #1D0823; text-align: right;">₹${Number(item.unitPrice).toFixed(2)}</td>
+        <td style="padding: 10px 8px; font-size: 12px; color: #3B0820; font-weight: bold; text-align: right;">₹${Number(item.lineTotal).toFixed(2)}</td>
       </tr>
     `
     )
@@ -712,22 +721,31 @@ export async function sendOrderCancelledEmail(
     ? `A full refund of ₹${Number(order.total_amount).toFixed(2)} has been queued/initiated to your original payment account. For UPI payments, refunds typically reflect within 24–48 business hours.`
     : `Since this was a Cash on Delivery / Unpaid order, no payment deduction was made.`;
 
-  const itemsHtml = (order.items || [])
+  const aggregatedCancelledItems = aggregateOrderItems(order.items || []);
+  const itemsHtml = (aggregatedCancelledItems.length > 0 ? aggregatedCancelledItems : [
+    {
+      productName: "Fresh Festive Sweets Assortment",
+      variantName: "",
+      quantity: 1,
+      unitPrice: Number(order.total_amount),
+      lineTotal: Number(order.total_amount),
+    }
+  ])
     .map(
       (item) => `
       <tr>
         <td style="padding: 10px 12px; border-bottom: 1px solid rgba(225, 29, 72, 0.2); color: #FFF8EE; font-size: 13px;">
-          <strong style="color: #FCA5A5;">${item.product_name_snapshot}</strong>
-          ${item.variant_name_snapshot ? `<br><span style="font-size: 11px; color: #D3BEB0;">${item.variant_name_snapshot}</span>` : ""}
+          <strong style="color: #FCA5A5;">${item.productName}</strong>
+          ${item.variantName ? `<br><span style="font-size: 11px; color: #D3BEB0;">${item.variantName}</span>` : ""}
         </td>
         <td style="padding: 10px 12px; border-bottom: 1px solid rgba(225, 29, 72, 0.2); color: #FFF8EE; font-size: 13px; text-align: center;">
           ${item.quantity}
         </td>
         <td style="padding: 10px 12px; border-bottom: 1px solid rgba(225, 29, 72, 0.2); color: #FFF8EE; font-size: 13px; text-align: right;">
-          ₹${Number(item.unit_price).toFixed(2)}
+          ₹${Number(item.unitPrice).toFixed(2)}
         </td>
         <td style="padding: 10px 12px; border-bottom: 1px solid rgba(225, 29, 72, 0.2); color: #FCA5A5; font-weight: bold; font-size: 13px; text-align: right;">
-          ₹${Number(item.line_total).toFixed(2)}
+          ₹${Number(item.lineTotal).toFixed(2)}
         </td>
       </tr>
     `

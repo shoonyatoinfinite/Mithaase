@@ -137,3 +137,22 @@ export function normalizeAndValidateWhatsAppPhone(raw?: string | null): PhoneVal
     };
   }
 }
+
+/**
+ * Normalises an input phone number to strict E.164 Indian mobile format: +91XXXXXXXXXX
+ * Returns null if the phone is not a valid 10-digit mobile number starting with 6, 7, 8, or 9.
+ */
+export function normalisePhone(raw?: string | null): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  let digits = raw.replace(/[^0-9]/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) {
+    digits = digits.slice(2);
+  } else if (digits.length === 11 && digits.startsWith("0")) {
+    digits = digits.slice(1);
+  }
+  if (digits.length === 10 && /^[6-9]/.test(digits)) {
+    return `+91${digits}`;
+  }
+  return null;
+}
+

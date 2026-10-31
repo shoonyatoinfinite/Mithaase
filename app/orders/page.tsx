@@ -101,12 +101,14 @@ export default function CustomerOrdersPage() {
   });
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#16031E] text-[#FFF8EE] overflow-x-hidden max-w-full w-full">
-      <Navbar />
+    <div className="min-h-screen flex flex-col bg-[#16031E] text-[#FFF8EE] overflow-x-hidden max-w-full w-full print:bg-transparent print:text-black">
+      <div className="print:hidden">
+        <Navbar />
+      </div>
 
-      <main className="flex-1 pt-24 pb-12 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto w-full">
+      <main className="flex-1 pt-24 pb-12 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto w-full print:p-0 print:m-0 print:max-w-full">
         {/* Header */}
-        <div className="text-center max-w-2xl mx-auto mb-10">
+        <div className="text-center max-w-2xl mx-auto mb-10 print:hidden">
           <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#3B0E4D] border border-[#D4AF37]/40 text-[#F5D061] text-xs font-semibold tracking-wider uppercase mb-3 shadow-md">
             <Receipt className="w-3.5 h-3.5 text-[#F5D061]" />
             <span>Customer Portal</span>
@@ -123,7 +125,7 @@ export default function CustomerOrdersPage() {
 
         {/* SECURITY ENFORCEMENT: Customer Login Required */}
         {!isAuthenticated ? (
-          <div className="mb-10 max-w-lg mx-auto">
+          <div className="mb-10 max-w-lg mx-auto print:hidden">
             <CustomerAuthPortal
               mode="embedded"
               title="Orders Portal"
@@ -142,10 +144,10 @@ export default function CustomerOrdersPage() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="receipt-modal-title"
-            className="fixed inset-0 z-50 overflow-y-auto bg-black/90 backdrop-blur-md p-2 sm:p-4 md:p-6 animate-fadeIn"
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/90 backdrop-blur-md p-2 sm:p-4 md:p-6 animate-fadeIn print:static print:p-0 print:m-0 print:bg-transparent print:overflow-visible"
           >
-            <div className="min-h-full flex items-start justify-center py-4 sm:py-8">
-              <div className="relative w-full max-w-3xl bg-[#FAF6EE] text-[#1D0823] rounded-2xl sm:rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] border-2 sm:border-4 border-[#D4AF37] overflow-hidden my-auto">
+            <div className="min-h-full flex items-start justify-center py-4 sm:py-8 print:p-0 print:m-0 print:min-h-0 print:block">
+              <div className="relative w-full max-w-3xl bg-[#FAF6EE] text-[#1D0823] rounded-2xl sm:rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.9)] border-2 sm:border-4 border-[#D4AF37] overflow-hidden my-auto print:border-none print:shadow-none print:m-0 print:p-0 print:max-w-none print:overflow-visible">
                 {/* Modal Top Control Bar (Sticky & Print-hidden) */}
                 <div className="sticky top-0 z-30 bg-[#24062E] text-white px-4 py-3 sm:px-6 flex items-center justify-between border-b-2 border-[#D4AF37]/50 shadow-md print:hidden">
                   <div className="flex items-center gap-2">
@@ -184,7 +186,7 @@ export default function CustomerOrdersPage() {
                   </div>
                 </div>
 
-                <div className="p-2 sm:p-5 md:p-6">
+                <div className="p-2 sm:p-5 md:p-6 print:p-0 print:m-0">
                   <OrderReceipt order={selectedReceiptOrder} settings={settings} />
                 </div>
               </div>
@@ -194,12 +196,13 @@ export default function CustomerOrdersPage() {
 
         {/* Orders Listing (Only when authenticated) */}
         {isAuthenticated && (
-          isLoading ? (
-            <div className="py-16 text-center">
-              <RefreshCw className="w-8 h-8 text-[#D4AF37] animate-spin mx-auto mb-3" />
-              <p className="text-xs text-[#D3BEB0]">Loading your festival orders...</p>
-            </div>
-          ) : filteredOrders.length === 0 ? (
+          <div className="print:hidden">
+            {isLoading ? (
+              <div className="py-16 text-center">
+                <RefreshCw className="w-8 h-8 text-[#D4AF37] animate-spin mx-auto mb-3" />
+                <p className="text-xs text-[#D3BEB0]">Loading your festival orders...</p>
+              </div>
+            ) : filteredOrders.length === 0 ? (
             <div className="p-8 sm:p-12 rounded-3xl bg-[#20052B] border border-white/10 text-center max-w-lg mx-auto space-y-4">
               <ShoppingBag className="w-12 h-12 text-white/30 mx-auto" />
               <h3 className="text-lg font-serif font-bold text-white">No Orders Found</h3>
@@ -352,11 +355,14 @@ export default function CustomerOrdersPage() {
               })}
             </div>
           </div>
-          )
-        )}
+          )}
+        </div>
+      )}
       </main>
 
-      <Footer />
+      <div className="print:hidden">
+        <Footer />
+      </div>
     </div>
   );
 }

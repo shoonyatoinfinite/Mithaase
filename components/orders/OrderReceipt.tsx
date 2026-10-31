@@ -3,6 +3,7 @@
 import React, { useRef, useState } from "react";
 import { Order, StoreSettings } from "@/types";
 import { Diya } from "@/components/animations/Diya";
+import { aggregateOrderItems } from "@/lib/whatsapp/payment-notifications";
 import {
   ShieldCheck,
   Calendar,
@@ -40,6 +41,7 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
     }
   };
 
+  const displayItems = aggregateOrderItems(order.items || []);
   const receiptNumber = `REC-${order.order_number.replace(/[^0-9]/g, "") || order.id.slice(-6)}`;
   const orderDate = new Date(order.created_at).toLocaleDateString("en-IN", {
     day: "numeric",
@@ -51,6 +53,50 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
 
   return (
     <div className="space-y-4 print:p-0 print:m-0 print:w-full">
+      <style dangerouslySetInnerHTML={{ __html: `
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 6mm 8mm;
+          }
+          html, body {
+            background: #ffffff !important;
+            color: #000000 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            font-size: 11px !important;
+          }
+          body * {
+            visibility: hidden !important;
+          }
+          #official-order-receipt,
+          #official-order-receipt * {
+            visibility: visible !important;
+          }
+          #official-order-receipt {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 12px 16px !important;
+            background: #FAF6EE !important;
+            color: #1D0823 !important;
+            box-shadow: none !important;
+            border: 1.5px solid #D4AF37 !important;
+            border-radius: 12px !important;
+            page-break-after: avoid !important;
+            page-break-inside: avoid !important;
+          }
+          .receipt-mobile-view {
+            display: none !important;
+          }
+          .receipt-table-view {
+            display: block !important;
+          }
+        }
+      `}} />
       {/* Official Tax & Delivery Receipt Invoice Card */}
       <div
         ref={receiptRef}
@@ -161,42 +207,42 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
         </div>
 
         {/* Itemized Sweets: Mobile Card View (< sm) */}
-        <div className="py-3 space-y-2 sm:hidden">
+        <div className="py-3 space-y-2 sm:hidden receipt-mobile-view">
           <span className="text-[10px] uppercase font-bold text-black/50 block">
-            Purchased Sweets ({order.items.length})
+            Purchased Sweets ({displayItems.length})
           </span>
-          {order.items.map((item, idx) => (
+          {displayItems.map((item, idx) => (
             <div
-              key={item.id}
+              key={`mob-${item.productId}-${item.variantId}-${idx}`}
               className="p-2.5 rounded-xl bg-black/5 border border-black/10 flex items-start justify-between gap-2 text-xs"
             >
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1.5">
                   <span className="font-mono text-[10px] text-black/40">#{idx + 1}</span>
                   <strong className="text-[#1D0823] font-bold text-xs">
-                    {item.product_name_snapshot}
+                    {item.productName}
                   </strong>
                 </div>
                 <div className="text-[11px] text-black/70 pl-3">
-                  <span>{item.variant_name_snapshot}</span>
-                  <span className="mx-1">•</span>
+                  {item.variantName && <span>{item.variantName}</span>}
+                  {item.variantName && <span className="mx-1">•</span>}
                   <span className="font-mono font-bold text-[#3B0820]">Qty: {item.quantity}</span>
                 </div>
                 <span className="text-[10px] text-black/50 pl-3 block font-mono">
-                  @ ₹{item.unit_price} / unit
+                  @ ₹{item.unitPrice} / unit
                 </span>
               </div>
               <div className="text-right shrink-0">
                 <span className="font-mono font-black text-sm text-[#1D0823]">
-                  ₹{item.line_total}
+                  ₹{item.lineTotal}
                 </span>
               </div>
             </div>
           ))}
         </div>
 
-        {/* Itemized Sweets Table with Explicit Per Item Price and Quantity (sm and up) */}
-        <div className="hidden sm:block py-5 overflow-x-auto max-w-full">
+        {/* Itemized Sweets Table with Explicit Per Item Price and Quantity (sm and up, forced on print) */}
+        <div className="hidden sm:block py-5 overflow-x-auto max-w-full receipt-table-view">
           <table className="w-full min-w-[500px] text-xs">
             <thead>
               <tr className="border-b-2 border-[#1D0823]/20 text-[11px] uppercase tracking-wider text-[#3B0820] font-black">
@@ -209,17 +255,17 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
               </tr>
             </thead>
             <tbody className="divide-y divide-black/10">
-              {order.items.map((item, idx) => (
-                <tr key={item.id} className="py-2.5">
+              {displayItems.map((item, idx) => (
+                <tr key={`tbl-${item.productId}-${item.variantId}-${idx}`} className="py-2.5">
                   <td className="py-2.5 text-black/50 font-mono">{idx + 1}</td>
                   <td className="py-2.5">
                     <strong className="text-[#1D0823] block text-xs sm:text-sm">
-                      {item.product_name_snapshot}
+                      {item.productName}
                     </strong>
                     <span className="text-[10px] text-black/60">Prepared in 100% Pure Desi Ghee</span>
                   </td>
                   <td className="py-2.5 text-center text-black/70 font-medium">
-                    {item.variant_name_snapshot}
+                    {item.variantName || "Standard Pack"}
                   </td>
                   <td className="py-2.5 text-center bg-black/5">
                     <span className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-black/10 font-mono font-black text-xs sm:text-sm text-[#1D0823]">
@@ -227,11 +273,11 @@ export function OrderReceipt({ order, settings }: OrderReceiptProps) {
                     </span>
                   </td>
                   <td className="py-2.5 text-right font-mono px-2">
-                    <strong className="text-black font-bold text-xs sm:text-sm">₹{item.unit_price}</strong>
+                    <strong className="text-black font-bold text-xs sm:text-sm">₹{item.unitPrice}</strong>
                     <span className="text-[10px] text-black/50 block">/ unit</span>
                   </td>
                   <td className="py-2.5 text-right font-mono font-black text-xs sm:text-sm text-[#1D0823]">
-                    ₹{item.line_total}
+                    ₹{item.lineTotal}
                   </td>
                 </tr>
               ))}

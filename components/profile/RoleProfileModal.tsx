@@ -29,6 +29,7 @@ export interface RoleProfileModalProps {
     name?: string;
     email?: string;
     phone?: string;
+    phone_verified?: boolean;
     delivery_address?: string;
     locality?: string;
     landmark?: string;
@@ -53,8 +54,18 @@ export function RoleProfileModal({
   const [name, setName] = useState(initialData?.name || "");
   const [email, setEmail] = useState(initialData?.email || "");
   const [phone, setPhone] = useState(initialData?.phone || "");
+  const [phoneVerified, setPhoneVerified] = useState(Boolean(initialData?.phone_verified));
   const [pin, setPin] = useState("");
   const [password, setPassword] = useState("");
+
+  // SMS Verification state (Optional for customer profile)
+  const [isSendingPhoneOtp, setIsSendingPhoneOtp] = useState(false);
+  const [isVerifyingPhoneOtp, setIsVerifyingPhoneOtp] = useState(false);
+  const [showPhoneOtpBox, setShowPhoneOtpBox] = useState(false);
+  const [phoneOtpInput, setPhoneOtpInput] = useState("");
+  const [phoneOtpTimer, setPhoneOtpTimer] = useState(0);
+  const [phoneOtpError, setPhoneOtpError] = useState("");
+  const [phoneOtpSuccess, setPhoneOtpSuccess] = useState("");
 
   // Customer specific
   const [deliveryAddress, setDeliveryAddress] = useState(initialData?.delivery_address || "");
@@ -66,6 +77,15 @@ export function RoleProfileModal({
   const [mapUrl, setMapUrl] = useState(initialData?.map_url || "");
   const [isLocatingGps, setIsLocatingGps] = useState(false);
   const [gpsNotice, setGpsNotice] = useState("");
+
+  // 30-Second Countdown timer for SMS OTP
+  useEffect(() => {
+    if (phoneOtpTimer <= 0) return;
+    const interval = setInterval(() => {
+      setPhoneOtpTimer((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [phoneOtpTimer]);
 
   // Rider specific
   const [vehicleNumber, setVehicleNumber] = useState(initialData?.vehicle_number || "");
@@ -109,6 +129,7 @@ export function RoleProfileModal({
       if (initialData.name) setName(initialData.name);
       if (initialData.email) setEmail(initialData.email);
       if (initialData.phone) setPhone(initialData.phone);
+      if (initialData.phone_verified !== undefined) setPhoneVerified(Boolean(initialData.phone_verified));
       if (initialData.delivery_address) setDeliveryAddress(initialData.delivery_address);
       if (initialData.locality) setLocality(initialData.locality);
       if (initialData.landmark) setLandmark(initialData.landmark);
@@ -147,6 +168,9 @@ export function RoleProfileModal({
               setName(data.name || "");
               setEmail(data.email || customerEmail);
               setPhone(data.phone || "");
+              if (data.phone_verified !== undefined) {
+                setPhoneVerified(Boolean(data.phone_verified));
+              }
               setDeliveryAddress(data.delivery_address || "");
               setLocality(data.locality || "Kothal Kalan (Village & Main Chowk)");
               setLandmark(data.landmark || "");
@@ -168,6 +192,9 @@ export function RoleProfileModal({
               setName(data.name || "");
               setEmail(data.email || "rider@mithaase.in");
               setPhone(data.phone || "");
+              if (data.phone_verified !== undefined) {
+                setPhoneVerified(Boolean(data.phone_verified));
+              }
               setVehicleNumber(data.vehicle_number || "");
               setVehicleType(data.vehicle_type || "Motorbike");
             }
@@ -184,6 +211,70 @@ export function RoleProfileModal({
   }, [isOpen, role, initialRiderId, initialData]);
 
   if (!isOpen) return null;
+
+  const handleSendPhoneOtp = async () => {
+    setPhoneOtpError("");
+    setPhoneOtpSuccess("");
+    const cleanPhone = phone.replace(/\D/g, "");
+    if (cleanPhone.length !== 10 || !/^[6-9]\d{9}$/.test(cleanPhone)) {
+      setPhoneOtpError("Please enter a valid 10-digit Indian mobile number (starts with 6-9).");
+      return;
+    }
+
+    setIsSendingPhoneOtp(true);
+    try {
+      const res = await fetch("/api/phone/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: cleanPhone }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to send verification code via SMS.");
+      }
+      setShowPhoneOtpBox(true);
+      setPhoneOtpTimer(30);
+      setPhoneOtpSuccess(data.message || "6-digit OTP sent to your phone via SMS!");
+    } catch (err: any) {
+      setPhoneOtpError(err.message || "Failed to send SMS OTP.");
+    } finally {
+      setIsSendingPhoneOtp(false);
+    }
+  };
+
+  const handleVerifyPhoneOtp = async () => {
+    setPhoneOtpError("");
+    setPhoneOtpSuccess("");
+    const cleanOtp = phoneOtpInput.replace(/\D/g, "").slice(0, 6);
+    if (cleanOtp.length !== 6) {
+      setPhoneOtpError("Please enter the complete 6-digit OTP received via SMS.");
+      return;
+    }
+
+    setIsVerifyingPhoneOtp(true);
+    try {
+      const res = await fetch("/api/phone/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, otp: cleanOtp }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to verify phone OTP.");
+      }
+      setPhoneVerified(true);
+      setShowPhoneOtpBox(false);
+      setPhoneOtpInput("");
+      setPhoneOtpSuccess("🎉 Mobile number verified successfully!");
+      if (data.customer) {
+        onProfileUpdated?.(data.customer);
+      }
+    } catch (err: any) {
+      setPhoneOtpError(err.message || "Incorrect OTP. Please try again.");
+    } finally {
+      setIsVerifyingPhoneOtp(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -378,9 +469,32 @@ export function RoleProfileModal({
               </div>
 
               <div>
-                <label className="block font-semibold text-white/80 mb-1">
-                  Mobile Number *
-                </label>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block font-semibold text-white/80">
+                    Mobile Number *
+                  </label>
+                  {role === "customer" && (
+                    phoneVerified ? (
+                      <span className="text-[10px] text-emerald-400 bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 rounded-full flex items-center gap-1 font-bold">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                        <span>Verified</span>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleSendPhoneOtp}
+                        disabled={isSendingPhoneOtp || phoneOtpTimer > 0 || phone.replace(/\D/g, "").length !== 10}
+                        className="text-[10px] text-[#F5D061] hover:text-white bg-[#D4AF37]/15 hover:bg-[#D4AF37]/25 border border-[#D4AF37]/40 px-2.5 py-0.5 rounded-full transition-all cursor-pointer font-bold disabled:opacity-50"
+                      >
+                        {isSendingPhoneOtp
+                          ? "Sending..."
+                          : phoneOtpTimer > 0
+                          ? `Resend in ${phoneOtpTimer}s`
+                          : "Verify via SMS"}
+                      </button>
+                    )
+                  )}
+                </div>
                 <div className="relative">
                   <Phone className="w-4 h-4 text-white/40 absolute left-3 top-3" />
                   <input
@@ -388,7 +502,13 @@ export function RoleProfileModal({
                     required
                     maxLength={10}
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                    onChange={(e) => {
+                      const clean = e.target.value.replace(/\D/g, "").slice(0, 10);
+                      setPhone(clean);
+                      setPhoneVerified(false);
+                      setShowPhoneOtpBox(false);
+                      setPhoneOtpError("");
+                    }}
                     placeholder="10-digit mobile"
                     className="w-full bg-[#16031E] border border-white/15 focus:border-[#D4AF37] rounded-xl pl-9 pr-3 py-2.5 text-white font-mono outline-none"
                   />
@@ -400,6 +520,70 @@ export function RoleProfileModal({
                 )}
               </div>
             </div>
+
+            {/* Optional Customer Phone Verification Box */}
+            {role === "customer" && showPhoneOtpBox && !phoneVerified && (
+              <div className="p-3.5 rounded-2xl bg-[#280838] border border-[#D4AF37]/50 space-y-2.5 animate-fadeIn shadow-lg">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-white font-bold flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-[#F5D061]" />
+                    <span>Enter 6-Digit SMS Code</span>
+                  </span>
+                  <span className="text-[#F5D061] font-mono text-[11px]">
+                    Sent to +91 {phone.replace(/\D/g, "").slice(-10)}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={phoneOtpInput}
+                    onChange={(e) => {
+                      setPhoneOtpInput(e.target.value.replace(/\D/g, "").slice(0, 6));
+                      setPhoneOtpError("");
+                    }}
+                    placeholder="• • • • • •"
+                    className="flex-1 bg-[#16031E] border border-white/20 focus:border-[#D4AF37] rounded-xl px-3 py-2 text-center text-sm font-mono tracking-widest text-white outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleVerifyPhoneOtp}
+                    disabled={isVerifyingPhoneOtp || phoneOtpInput.replace(/\D/g, "").length !== 6}
+                    className="px-4 py-2 rounded-xl gold-gradient-btn text-xs font-bold shrink-0 disabled:opacity-50 cursor-pointer shadow-md"
+                  >
+                    {isVerifyingPhoneOtp ? "Verifying..." : "Confirm OTP"}
+                  </button>
+                </div>
+
+                {phoneOtpError && (
+                  <p className="text-[11px] text-rose-400 flex items-center gap-1 bg-rose-950/50 p-2 rounded-lg border border-rose-500/30">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{phoneOtpError}</span>
+                  </p>
+                )}
+
+                {phoneOtpSuccess && (
+                  <p className="text-[11px] text-emerald-300 flex items-center gap-1 bg-emerald-950/50 p-2 rounded-lg border border-emerald-500/30">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+                    <span>{phoneOtpSuccess}</span>
+                  </p>
+                )}
+
+                <div className="flex justify-between items-center text-[10px] text-white/60 pt-1 border-t border-white/10">
+                  <span>Didn&apos;t get SMS code?</span>
+                  <button
+                    type="button"
+                    disabled={phoneOtpTimer > 0 || isSendingPhoneOtp}
+                    onClick={handleSendPhoneOtp}
+                    className="text-[#F5D061] hover:underline font-bold disabled:opacity-50 disabled:no-underline cursor-pointer"
+                  >
+                    {phoneOtpTimer > 0 ? `Resend SMS in ${phoneOtpTimer}s` : "Resend OTP SMS"}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* CUSTOMER ONLY: Delivery Address & Locality */}
             {role === "customer" && (

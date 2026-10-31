@@ -196,6 +196,17 @@ export async function PATCH(
       if (!res.success) {
         return NextResponse.json({ error: res.error || "Failed to update status" }, { status: 400 });
       }
+
+      if (body.order_status === "out_for_delivery") {
+        const { sendOrderOutForDeliveryNotification } = await import("@/lib/notifications/order-notifications");
+        sendOrderOutForDeliveryNotification(
+          id,
+          body.rider_name || body.changed_by,
+          body.rider_phone,
+          body.changed_by,
+          body.note
+        ).catch(() => {});
+      }
     }
 
     // Only Admin can update payment status, delivery queue, or refunds

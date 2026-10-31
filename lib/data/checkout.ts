@@ -525,6 +525,9 @@ export async function processAuthoritativeCheckout(params: CreateOrderParams): P
         }
 
       // C. Insert order_items (price snapshots)
+      // Delete any previous draft items for this order before inserting to prevent duplicates
+      await client.query(`DELETE FROM order_items WHERE order_id = $1;`, [orderId]);
+
       for (const line of verifiedLines) {
         await client.query(
           `INSERT INTO order_items (

@@ -28,11 +28,23 @@ import {
   initialCoupons,
 } from "./initial-data";
 import { sql } from "@/lib/neon/db";
+import { normalisePhone } from "@/lib/utils/phone";
 import { serverCache } from "@/lib/cache/server-cache";
 import { generateOrderRef } from "@/lib/utils/order-ref";
-import fs from "fs";
-import path from "path";
 import crypto from "crypto";
+
+function getNodeFs() {
+  if (typeof window === "undefined") {
+    try {
+      const nodeRequire = eval("require");
+      return {
+        fs: nodeRequire("fs"),
+        path: nodeRequire("path"),
+      };
+    } catch {}
+  }
+  return null;
+}
 
 /**
  * Offloads Base64 data URLs to Neon media_assets table (Object Storage)
@@ -74,15 +86,17 @@ export async function persistMediaAsset(
   }
 }
 
-const PRODUCTS_OVERRIDE_PATH = path.join(process.cwd(), "lib", "data", "products-override.json");
-
 function loadOverriddenProducts(): Product[] | null {
   try {
-    if (fs.existsSync(PRODUCTS_OVERRIDE_PATH)) {
-      const data = fs.readFileSync(PRODUCTS_OVERRIDE_PATH, "utf8");
-      const parsed = JSON.parse(data);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+    const node = getNodeFs();
+    if (node) {
+      const p = node.path.join(process.cwd(), "lib", "data", "products-override.json");
+      if (node.fs.existsSync(p)) {
+        const data = node.fs.readFileSync(p, "utf8");
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
       }
     }
   } catch (err) {
@@ -93,21 +107,27 @@ function loadOverriddenProducts(): Product[] | null {
 
 function persistProductsToDisk(products: Product[]) {
   try {
-    fs.writeFileSync(PRODUCTS_OVERRIDE_PATH, JSON.stringify(products, null, 2), "utf8");
+    const node = getNodeFs();
+    if (node) {
+      const p = node.path.join(process.cwd(), "lib", "data", "products-override.json");
+      node.fs.writeFileSync(p, JSON.stringify(products, null, 2), "utf8");
+    }
   } catch (err) {
     console.error("[STORE] Error persisting products override to disk:", err);
   }
 }
 
-const ORDERS_OVERRIDE_PATH = path.join(process.cwd(), "lib", "data", "orders-override.json");
-
 function loadOverriddenOrders(): Order[] | null {
   try {
-    if (fs.existsSync(ORDERS_OVERRIDE_PATH)) {
-      const data = fs.readFileSync(ORDERS_OVERRIDE_PATH, "utf8");
-      const parsed = JSON.parse(data);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+    const node = getNodeFs();
+    if (node) {
+      const p = node.path.join(process.cwd(), "lib", "data", "orders-override.json");
+      if (node.fs.existsSync(p)) {
+        const data = node.fs.readFileSync(p, "utf8");
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
       }
     }
   } catch (err) {
@@ -118,7 +138,11 @@ function loadOverriddenOrders(): Order[] | null {
 
 function persistOrdersToDisk(orders: Order[]) {
   try {
-    fs.writeFileSync(ORDERS_OVERRIDE_PATH, JSON.stringify(orders, null, 2), "utf8");
+    const node = getNodeFs();
+    if (node) {
+      const p = node.path.join(process.cwd(), "lib", "data", "orders-override.json");
+      node.fs.writeFileSync(p, JSON.stringify(orders, null, 2), "utf8");
+    }
   } catch (err) {
     console.error("[STORE] Error persisting orders override to disk:", err);
   }
@@ -1308,6 +1332,8 @@ export async function getOrders(
           params.push(norm);
           conditions.push(`(LOWER(customer_email) = $1 OR LOWER(order_number) = $1 OR id = $1)`);
         }
+        // Exclude unplaced draft checkout sessions from customer orders view
+        conditions.push(`NOT (payment_method = 'upi' AND (upi_reference IS NULL OR upi_reference = '') AND payment_status = 'unpaid' AND (booking_status IS NULL OR (booking_status != 'requested' AND booking_status != 'confirmed')))`);
       }
 
       if (statusFilter && statusFilter !== "all") {
@@ -1445,6 +1471,14 @@ export async function getOrders(
         o.order_number.toLowerCase() === norm ||
         o.id === norm
     );
+    list = list.filter((o) => {
+      const isUnplacedDraft =
+        o.payment_method === "upi" &&
+        (!o.upi_reference || o.upi_reference.trim() === "") &&
+        o.payment_status === "unpaid" &&
+        (!o.booking_status || (o.booking_status !== "requested" && o.booking_status !== "confirmed"));
+      return !isUnplacedDraft;
+    });
   }
   if (statusFilter && statusFilter !== "all") {
     if (statusFilter === "current" || statusFilter === "active") {
@@ -1756,6 +1790,9 @@ export async function updateOrderStatus(
     if (newStatus === "confirmed" && prevStatus !== "confirmed") {
       const { sendOrderConfirmedNotification } = await import("@/lib/notifications/order-notifications");
       sendOrderConfirmedNotification(order.id).catch(() => {});
+    } else if (newStatus === "out_for_delivery" && prevStatus !== "out_for_delivery") {
+      const { sendOrderOutForDeliveryNotification } = await import("@/lib/notifications/order-notifications");
+      sendOrderOutForDeliveryNotification(order.id, changedBy, undefined, changedBy, note).catch(() => {});
     } else if (newStatus === "delivered" && prevStatus !== "delivered") {
       const { sendOrderDeliveredNotification } = await import("@/lib/notifications/order-notifications");
       sendOrderDeliveredNotification(order.id).catch(() => {});
@@ -2357,6 +2394,8 @@ export async function findCustomerByIdentifier(identifier: string): Promise<Cust
           latitude: r.latitude ? Number(r.latitude) : 28.1907,
           longitude: r.longitude ? Number(r.longitude) : 76.1624,
           map_url: r.map_url ? String(r.map_url) : "https://www.google.com/maps?q=28.1907,76.1624",
+          phone_verified: Boolean(r.phone_verified),
+          phone_verified_at: r.phone_verified_at ? new Date(r.phone_verified_at).toISOString() : null,
           created_at: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
           updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : new Date().toISOString(),
         };
@@ -3268,7 +3307,9 @@ export async function updateCustomerProfile(
   }
 
   const name = data.name !== undefined ? data.name.trim() : existing.name;
-  const phone = data.phone !== undefined ? data.phone.trim().replace(/[^0-9]/g, "") : existing.phone;
+  const rawPhone = data.phone !== undefined ? data.phone.trim() : existing.phone;
+  const phone = normalisePhone(rawPhone) || rawPhone;
+  const phoneChanged = Boolean(phone && existing.phone && phone !== existing.phone);
   const password = data.password !== undefined && data.password.trim() ? data.password.trim() : existing.password;
   const pin = data.pin !== undefined && data.pin.trim() ? data.pin.trim() : existing.pin;
   const delivery_address = data.delivery_address !== undefined ? data.delivery_address.trim() : existing.delivery_address;
@@ -3283,10 +3324,23 @@ export async function updateCustomerProfile(
     try {
       const rows = await sql.query(
         `UPDATE customer_accounts 
-         SET name = $1, phone = $2, password = $3, pin = $4, delivery_address = $5, locality = $6, landmark = $7, delivery_instructions = $8, latitude = $9, longitude = $10, map_url = $11, updated_at = NOW()
+         SET name = $1,
+             phone = $2,
+             password = $3,
+             pin = $4,
+             delivery_address = $5,
+             locality = $6,
+             landmark = $7,
+             delivery_instructions = $8,
+             latitude = $9,
+             longitude = $10,
+             map_url = $11,
+             phone_verified = CASE WHEN $13 = true THEN false ELSE phone_verified END,
+             phone_verified_at = CASE WHEN $13 = true THEN NULL ELSE phone_verified_at END,
+             updated_at = NOW()
          WHERE LOWER(email) = $12
          RETURNING *;`,
-        [name, phone, password || null, pin, delivery_address, locality, landmark || null, delivery_instructions || null, latitude, longitude, map_url || null, normEmail]
+        [name, phone, password || null, pin, delivery_address, locality, landmark || null, delivery_instructions || null, latitude, longitude, map_url || null, normEmail, phoneChanged]
       );
       if (rows && rows.length > 0) {
         const r = rows[0];
@@ -3304,6 +3358,8 @@ export async function updateCustomerProfile(
           latitude: Number(r.latitude) || 28.1907,
           longitude: Number(r.longitude) || 76.1624,
           map_url: r.map_url || "",
+          phone_verified: Boolean(r.phone_verified),
+          phone_verified_at: r.phone_verified_at ? new Date(r.phone_verified_at).toISOString() : undefined,
           created_at: r.created_at,
           updated_at: r.updated_at,
         };

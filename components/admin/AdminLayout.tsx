@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 
 import { AdminQuickOrderTracker } from "./AdminQuickOrderTracker";
+import { AdminRiderStatusTracker } from "./AdminRiderStatusTracker";
 import { OrderAlertCard } from "@/components/notifications/OrderAlertCard";
 import { playBeepNotification } from "@/lib/utils/audio";
 import { useRealtime } from "@/lib/hooks/useRealtime";
@@ -317,15 +318,8 @@ export function AdminLayout({ children }: AdminLayoutProps) {
             {/* Quick 4-Digit Order Tracker Box */}
             <AdminQuickOrderTracker />
 
-            {/* Direct Link to Rider Dashboard */}
-            <Link
-              href="/rider"
-              target="_blank"
-              className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-[#F5D061] text-xs font-bold border border-white/10 flex items-center gap-1.5 transition-all shrink-0"
-              title="Open Rider Delivery Fleet"
-            >
-              <span>🛵 Riders</span>
-            </Link>
+            {/* Quick Live Rider Status Tracker Modal */}
+            <AdminRiderStatusTracker />
 
             {/* Admin Profile Section Button with Green Logged-In Indicator inside at top */}
             <button

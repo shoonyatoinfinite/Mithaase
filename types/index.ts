@@ -255,6 +255,8 @@ export interface CustomerAccount {
   latitude: number;
   longitude: number;
   map_url: string;
+  phone_verified?: boolean;
+  phone_verified_at?: string | null;
   created_at: string;
   updated_at: string;
 }

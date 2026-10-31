@@ -295,6 +295,7 @@ export default function RiderDashboardPage() {
     setIsBatchUpdating(true);
 
     try {
+      const storedRiderPhone = typeof window !== "undefined" ? sessionStorage.getItem("mithaase_rider_phone") : null;
       await Promise.all(
         selectedOrderIds.map((id) =>
           fetch(`/api/orders/${id}`, {
@@ -304,6 +305,8 @@ export default function RiderDashboardPage() {
               order_status: "out_for_delivery",
               note: `Out for batch delivery with rider ${riderName || "Team"}`,
               changed_by: riderName || "Rider",
+              rider_name: riderName || "Rider",
+              rider_phone: storedRiderPhone || undefined,
             }),
           })
         )
@@ -336,10 +339,13 @@ export default function RiderDashboardPage() {
     }
   ) => {
     try {
+      const storedRiderPhone = typeof window !== "undefined" ? sessionStorage.getItem("mithaase_rider_phone") : null;
       const body: any = {
         order_status: newStatus,
         note: `Order ${newStatus.replace(/_/g, " ")} by rider ${riderName || ""}`,
         changed_by: riderName || "Rider",
+        rider_name: riderName || "Rider",
+        rider_phone: storedRiderPhone || undefined,
       };
 
       if (deliveryProofPhoto) {

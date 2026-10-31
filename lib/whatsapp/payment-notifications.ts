@@ -241,10 +241,14 @@ export async function notifyPaymentInstructions(params: {
 
 export async function resolveAdminHelpline(): Promise<string> {
   try {
-    const { getStoreSettings } = await import("@/lib/data/store");
-    const settings = await getStoreSettings();
-    const raw = (settings?.whatsapp_number || settings?.business_phone || "").trim();
-    if (raw) return raw;
+    const { sql } = await import("@/lib/neon/db");
+    if (sql) {
+      const rows = await sql.query("SELECT whatsapp_number, business_phone FROM store_settings LIMIT 1;").catch(() => []);
+      if (rows && rows.length > 0) {
+        const raw = (rows[0].whatsapp_number || rows[0].business_phone || "").trim();
+        if (raw) return raw;
+      }
+    }
     return "+91 8290683668";
   } catch {
     return "+91 8290683668";
@@ -614,6 +618,75 @@ export async function notifyOrderCancelled(params: {
     `— *Shree Shyam Sweets (Mithaasé)*`;
 
   return sendWhatsAppMessage(params.phone, message);
+}
+
+/**
+ * Sends real-time Out for Delivery WhatsApp notifications to both Customer and Admin
+ * including the delivery partner's name, mobile number, and order details.
+ */
+export async function notifyOrderOutForDelivery(params: {
+  order: Order;
+  riderName: string;
+  riderPhone: string;
+  itemsSummary: string;
+  adminPhone?: string;
+}): Promise<{ customerSent: boolean; adminSent: boolean }> {
+  const { order, riderName, riderPhone, itemsSummary } = params;
+  const adminHelpline = (params.adminPhone || (await resolveAdminHelpline())).trim();
+  const cleanAdminPhone = adminHelpline.replace(/[^0-9]/g, "").slice(-10);
+
+  const cleanCustomerPhone = (order.customer_phone || "").replace(/[^0-9]/g, "").slice(-10);
+  const locationStr = cleanLocationString(order.delivery_address, order.locality);
+  const mapLink = resolveCustomerMapUrl(order);
+
+  const isPaid = order.payment_status === "paid";
+  const isCod = order.payment_method?.toLowerCase() === "cod";
+  const paymentText = isCod
+    ? (isPaid ? "Cash Paid on Delivery ✓" : `Cash on Delivery (₹${Number(order.total_amount).toFixed(2)} to collect at doorstep)`)
+    : (isPaid ? "Paid via UPI ✓" : `UPI Pending (₹${Number(order.total_amount).toFixed(2)})`);
+
+  let customerSent = false;
+  let adminSent = false;
+
+  // 1. Notify Customer with Rider Name & Contact
+  if (cleanCustomerPhone) {
+    const customerMsg =
+      `🍬 *Mithaasé — Your Order is Out for Delivery! 🛵*\n\n` +
+      `Hello *${order.customer_name || "Valued Customer"}*! Our delivery partner has picked up your freshly packed sweets and is heading to your doorstep.\n\n` +
+      `📦 *Order Number:* #${order.order_number}\n` +
+      `🛵 *Delivery Partner:* *${riderName || "Express Fleet"}*\n` +
+      `📞 *Rider Contact:* *+91 ${riderPhone}*\n\n` +
+      `🛒 *Items in Delivery:*\n${itemsSummary}\n\n` +
+      `📍 *Delivering To:*\n${locationStr}\n` +
+      (order.landmark ? `• Landmark: ${order.landmark}\n` : "") +
+      `\n💰 *Payment:* ${paymentText}\n\n` +
+      `Please ensure someone is available at the doorstep to receive your festive package.\n\n` +
+      `— *Shree Shyam Sweets (Mithaasé)*\n` +
+      `📞 Helpline: ${adminHelpline}`;
+
+    customerSent = await sendWhatsAppMessage(cleanCustomerPhone, customerMsg);
+  }
+
+  // 2. Notify Admin with Out for Delivery & Rider Info
+  if (cleanAdminPhone) {
+    const adminMsg =
+      `🛵 *RIDER DISPATCHED — Out for Delivery Alert!*\n\n` +
+      `Order *#${order.order_number}* is now out for delivery!\n\n` +
+      `👤 *Customer:* *${order.customer_name}*\n` +
+      `📱 *Customer Phone:* +91 ${cleanCustomerPhone}\n` +
+      `📍 *Location:* ${locationStr}\n` +
+      (mapLink ? `🗺️ *Customer Google Maps Pin:*\n👉 ${mapLink}\n` : "") +
+      `\n🛵 *Assigned Rider:* *${riderName}*\n` +
+      `📞 *Rider Mobile:* *+91 ${riderPhone}*\n\n` +
+      `🛒 *Items:*\n${itemsSummary}\n\n` +
+      `💰 *Total Amount:* ₹${Number(order.total_amount).toFixed(2)} (${paymentText})\n` +
+      `⏰ *Dispatched at:* ${new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}\n\n` +
+      `— Shree Shyam Sweets Fleet Operations`;
+
+    adminSent = await sendWhatsAppMessage(cleanAdminPhone, adminMsg);
+  }
+
+  return { customerSent, adminSent };
 }
 
 

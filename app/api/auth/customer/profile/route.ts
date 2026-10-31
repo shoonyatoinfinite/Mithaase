@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { sql } from "@/lib/neon/db";
 import { getCustomerSessionFromRequest } from "@/lib/auth/session";
-import { normalizeAndValidateWhatsAppPhone } from "@/lib/utils/phone";
-import { assertPhoneVerifiedServerSide } from "@/lib/auth/otp-service";
+import { normalisePhone } from "@/lib/utils/phone";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +33,7 @@ export async function GET(req: Request) {
     }
 
     const rows = await sql.query(
-      `SELECT id, email, phone, name, delivery_address, locality, landmark, delivery_instructions, latitude, longitude, map_url, phone_verified_at, created_at, updated_at
+      `SELECT id, email, phone, name, delivery_address, locality, landmark, delivery_instructions, latitude, longitude, map_url, phone_verified, phone_verified_at, created_at, updated_at
        FROM customer_accounts 
        WHERE id = $1 
        LIMIT 1;`,
@@ -53,6 +52,7 @@ export async function GET(req: Request) {
         email: customer.email,
         phone: customer.phone,
         name: customer.name,
+        phone_verified: Boolean(customer.phone_verified),
         phone_verified_at: customer.phone_verified_at,
         savedProfile: {
           customer_name: customer.name,
@@ -101,7 +101,7 @@ export async function PUT(req: Request) {
 
     // Fetch current user record to compare phone changes
     const currentRows = await sql.query(
-      `SELECT id, phone FROM customer_accounts WHERE id = $1 LIMIT 1;`,
+      `SELECT id, phone, phone_verified, phone_verified_at FROM customer_accounts WHERE id = $1 LIMIT 1;`,
       [session.userId]
     );
 
@@ -114,30 +114,22 @@ export async function PUT(req: Request) {
     let phoneChanged = false;
 
     if (data.phone) {
-      const phoneValidation = normalizeAndValidateWhatsAppPhone(data.phone);
-      if (!phoneValidation.isValid) {
-        return NextResponse.json({ error: phoneValidation.error }, { status: 400 });
+      const normalised = normalisePhone(data.phone);
+      if (!normalised) {
+        return NextResponse.json(
+          { error: "Please enter a valid 10-digit Indian mobile number." },
+          { status: 400 }
+        );
       }
 
-      if (phoneValidation.dbFormat !== currentCustomer.phone) {
+      if (normalised !== currentCustomer.phone) {
         phoneChanged = true;
-        newCleanPhone = phoneValidation.dbFormat;
-
-        // Atomically require consumed WhatsApp OTP verification for new phone number
-        const verification = await assertPhoneVerifiedServerSide(newCleanPhone, "change", 15);
-        if (!verification.verified && process.env.NODE_ENV === "production") {
-          return NextResponse.json(
-            {
-              error:
-                "Changing your mobile number requires completing WhatsApp OTP verification for the new number.",
-            },
-            { status: 400 }
-          );
-        }
+        newCleanPhone = normalised;
       }
     }
 
     // Direct, live parameterized UPDATE on Neon PostgreSQL
+    // If phone changed, reset phone_verified to false and phone_verified_at to null
     try {
       const rows = await sql.query(
         `UPDATE customer_accounts SET
@@ -150,10 +142,11 @@ export async function PUT(req: Request) {
            latitude = COALESCE($7, latitude),
            longitude = COALESCE($8, longitude),
            map_url = COALESCE($9, map_url),
-           phone_verified_at = CASE WHEN $10 = true THEN NOW() ELSE phone_verified_at END,
+           phone_verified = CASE WHEN $10 = true THEN false ELSE phone_verified END,
+           phone_verified_at = CASE WHEN $10 = true THEN NULL ELSE phone_verified_at END,
            updated_at = NOW()
          WHERE id = $11
-         RETURNING id, email, phone, name, delivery_address, locality, landmark, delivery_instructions, latitude, longitude, map_url, phone_verified_at, updated_at;`,
+         RETURNING id, email, phone, name, delivery_address, locality, landmark, delivery_instructions, latitude, longitude, map_url, phone_verified, phone_verified_at, updated_at;`,
         [
           data.name ? data.name.trim() : null,
           newCleanPhone,
@@ -177,6 +170,7 @@ export async function PUT(req: Request) {
           email: updated.email,
           phone: updated.phone,
           name: updated.name,
+          phone_verified: Boolean(updated.phone_verified),
           phone_verified_at: updated.phone_verified_at,
           savedProfile: {
             customer_name: updated.name,

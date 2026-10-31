@@ -5,10 +5,11 @@ let cachedPool: Pool | null = null;
 
 function resolveDatabaseUrl(): string {
   let url = process.env.DATABASE_URL || process.env.DATABASE_URL_UNPOOLED || "";
-  if (!url) {
+  if (!url && typeof window === "undefined") {
     try {
-      const fs = require("fs");
-      const path = require("path");
+      const nodeRequire = eval("require");
+      const fs = nodeRequire("fs");
+      const path = nodeRequire("path");
       const envPath = path.join(process.cwd(), ".env.local");
       if (fs.existsSync(envPath)) {
         const envContent = fs.readFileSync(envPath, "utf8");

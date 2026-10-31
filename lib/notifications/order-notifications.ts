@@ -10,6 +10,7 @@ import {
   notifyOrderConfirmed,
   notifyOrderDelivered,
   notifyOrderCancelled,
+  notifyOrderOutForDelivery,
   notifyAdminNewOrder,
   aggregateOrderItems,
   resolveCustomerMapUrl,
@@ -21,6 +22,7 @@ import type { Order } from "@/types";
 const sentConfirmationOrders = new Set<string>();
 const sentDeliveredOrders = new Set<string>();
 const sentCancellationOrders = new Set<string>();
+const sentOutForDeliveryOrders = new Set<string>();
 
 /**
  * Atomic deduplication lock spanning serverless lambdas.
@@ -29,17 +31,19 @@ const sentCancellationOrders = new Set<string>();
  */
 async function claimNotificationLock(
   orderId: string,
-  notificationType: "confirmed" | "delivered" | "cancelled"
+  notificationType: "confirmed" | "delivered" | "cancelled" | "out_for_delivery"
 ): Promise<boolean> {
   const memKey = `${orderId}:${notificationType}`;
   if (notificationType === "confirmed" && sentConfirmationOrders.has(memKey)) return false;
   if (notificationType === "delivered" && sentDeliveredOrders.has(memKey)) return false;
   if (notificationType === "cancelled" && sentCancellationOrders.has(memKey)) return false;
+  if (notificationType === "out_for_delivery" && sentOutForDeliveryOrders.has(memKey)) return false;
 
   // Mark in-memory set immediately
   if (notificationType === "confirmed") sentConfirmationOrders.add(memKey);
   if (notificationType === "delivered") sentDeliveredOrders.add(memKey);
   if (notificationType === "cancelled") sentCancellationOrders.add(memKey);
+  if (notificationType === "out_for_delivery") sentOutForDeliveryOrders.add(memKey);
 
   if (sql) {
     try {
@@ -409,5 +413,127 @@ export async function sendOrderCancelledNotification(
     console.error("[OrderNotification] sendOrderCancelledNotification error:", msg);
   }
 }
+
+/**
+ * Dispatches Out-for-Delivery notifications to both Customer and Admin
+ * including the delivery partner's name and contact number.
+ */
+export async function sendOrderOutForDeliveryNotification(
+  orderOrId: string | Order,
+  riderName?: string,
+  riderPhone?: string,
+  changedBy?: string,
+  note?: string
+): Promise<void> {
+  try {
+    const orderIdentifier =
+      typeof orderOrId === "string"
+        ? orderOrId
+        : (orderOrId.id || orderOrId.order_number || orderOrId.order_ref);
+
+    let order: Order | null = null;
+    if (sql && orderIdentifier) {
+      try {
+        const rows = await sql.query(
+          `SELECT * FROM orders WHERE id = $1 OR order_number = $1 OR order_ref = $1 LIMIT 1;`,
+          [orderIdentifier]
+        );
+        if (rows && rows.length > 0) order = rows[0] as Order;
+      } catch {}
+    }
+    if (!order) {
+      order = typeof orderOrId === "object" ? orderOrId : await getOrderById(orderOrId);
+    }
+    if (!order) {
+      console.warn("[OrderNotification] Order not found for out_for_delivery:", orderOrId);
+      return;
+    }
+
+    const acquired = await claimNotificationLock(order.id, "out_for_delivery");
+    if (!acquired) return;
+
+    const settings = await getStoreSettings();
+
+    // 1. Load items & aggregate them
+    if (sql) {
+      try {
+        const itemRows = await sql.query(
+          `SELECT * FROM order_items WHERE order_id = $1 OR order_id = $2;`,
+          [order.id, order.order_number]
+        );
+        if (itemRows && itemRows.length > 0) {
+          order.items = itemRows.map((it: any) => ({
+            id: it.id,
+            order_id: it.order_id,
+            product_id: it.product_id,
+            variant_id: it.variant_id,
+            product_name_snapshot: it.product_name_snapshot,
+            variant_name_snapshot: it.variant_name_snapshot,
+            quantity: Number(it.quantity),
+            unit_price: Number(it.unit_price),
+            line_total: Number(it.line_total),
+            image_url: it.image_url,
+          }));
+        }
+      } catch {}
+    }
+
+    await resolveOrderAddress(order);
+    const aggregatedItems = aggregateOrderItems(order.items || []);
+    const itemsSummary =
+      aggregatedItems.length > 0
+        ? aggregatedItems
+            .map((it) => {
+              const variant = it.variantName ? ` (${it.variantName})` : "";
+              return `• ${it.quantity}x ${it.productName}${variant} — ₹${it.lineTotal.toFixed(2)}`;
+            })
+            .join("\n")
+        : `• 1x Fresh Festive Sweets Assortment — ₹${Number(order.total_amount).toFixed(2)}`;
+
+    // 2. Resolve Rider Name & Phone
+    let finalRiderName = riderName?.trim() || "";
+    let finalRiderPhone = riderPhone?.trim() || "";
+
+    if ((!finalRiderPhone || !finalRiderName) && sql) {
+      try {
+        const searchVal = (finalRiderName || changedBy || "").trim();
+        if (searchVal) {
+          const riderRows = await sql.query(
+            `SELECT name, phone FROM riders WHERE LOWER(name) = LOWER($1) OR id::text = $1 OR phone = $1 LIMIT 1;`,
+            [searchVal]
+          ).catch(() => []);
+          if (riderRows && riderRows.length > 0) {
+            if (!finalRiderName) finalRiderName = riderRows[0].name;
+            if (!finalRiderPhone) finalRiderPhone = riderRows[0].phone;
+          }
+        }
+      } catch {}
+    }
+
+    if (!finalRiderName) {
+      finalRiderName = (changedBy && changedBy !== "Admin" && changedBy !== "System")
+        ? changedBy.trim()
+        : "Express Delivery Partner";
+    }
+    if (!finalRiderPhone) {
+      finalRiderPhone = (settings?.whatsapp_number || settings?.business_phone || "8290683668")
+        .replace(/[^0-9]/g, "")
+        .slice(-10);
+    }
+
+    // 3. Dispatch WhatsApp alert to Customer and Admin
+    await notifyOrderOutForDelivery({
+      order,
+      riderName: finalRiderName,
+      riderPhone: finalRiderPhone,
+      itemsSummary,
+      adminPhone: (settings?.whatsapp_number || settings?.business_phone || "").trim(),
+    });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("[OrderNotification] sendOrderOutForDeliveryNotification error:", msg);
+  }
+}
+
 
 

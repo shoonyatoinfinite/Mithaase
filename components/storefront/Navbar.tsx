@@ -32,7 +32,7 @@ interface NavbarProps {
 export function Navbar({ hideAnnouncement = false }: NavbarProps) {
   const { itemCount, subtotal } = useCart();
   const { settings, isStoreShutoff } = useStoreSettings();
-  const { user, isAuthenticated, logout, openAuthModal } = useUserAuth();
+  const { user, isAuthenticated, logout, openAuthModal, refreshUser } = useUserAuth();
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
@@ -427,9 +427,13 @@ export function Navbar({ hideAnnouncement = false }: NavbarProps) {
         email: user?.email,
         name: user?.name,
         phone: user?.phone,
+        phone_verified: user?.phone_verified,
       }}
       isOpen={showCustomerProfileModal}
       onClose={() => setShowCustomerProfileModal(false)}
+      onProfileUpdated={() => {
+        refreshUser?.();
+      }}
     />
   </>
   );

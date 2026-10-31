@@ -23,6 +23,7 @@ export interface CustomerUser {
   name?: string;
   phone?: string;
   image?: string;
+  phone_verified?: boolean;
   phone_verified_at?: string | null;
   authProvider?: "pin" | "google";
   savedProfile?: SavedDeliveryProfile;
@@ -99,6 +100,7 @@ export function UserAuthProvider({ children }: { children: React.ReactNode }) {
             email: data.user.email,
             name: data.user.name,
             phone: data.user.phone,
+            phone_verified: Boolean(data.user.phone_verified),
             phone_verified_at: data.user.phone_verified_at,
             savedProfile: data.user.savedProfile,
           };
