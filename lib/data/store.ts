@@ -15,6 +15,8 @@ import {
   Coupon,
   Rider,
   AdminProfile,
+  ProductDemand,
+  ProductDemandSummary,
 } from "@/types";
 import {
   initialCategories,
@@ -916,6 +918,34 @@ export async function adjustVariantStock(
       };
       db.inventoryMovements.unshift(movement);
       persistProductsToDisk(db.products);
+
+      // Trigger real-time stock alert to Admin WhatsApp
+      if (nextStock <= 0) {
+        import("@/lib/whatsapp/payment-notifications").then(({ notifyAdminStockAlert }) => {
+          notifyAdminStockAlert({
+            productName: product.name,
+            variantName: variant.variant_name,
+            variantId,
+            currentStock: nextStock,
+            lowStockThreshold: variant.low_stock_threshold || 5,
+            type: "out_of_stock",
+            triggerReason: reason,
+          }).catch(() => {});
+        });
+      } else if (nextStock <= (variant.low_stock_threshold || 5)) {
+        import("@/lib/whatsapp/payment-notifications").then(({ notifyAdminStockAlert }) => {
+          notifyAdminStockAlert({
+            productName: product.name,
+            variantName: variant.variant_name,
+            variantId,
+            currentStock: nextStock,
+            lowStockThreshold: variant.low_stock_threshold || 5,
+            type: "low_stock",
+            triggerReason: reason,
+          }).catch(() => {});
+        });
+      }
+
       return { success: true, newStock: nextStock };
     }
   }
@@ -1066,7 +1096,35 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
       created_by: "System",
       created_at: new Date().toISOString(),
     });
+
+    // Real-time stock alert to Admin WhatsApp
+    if (item.variant.stock_quantity <= 0) {
+      import("@/lib/whatsapp/payment-notifications").then(({ notifyAdminStockAlert }) => {
+        notifyAdminStockAlert({
+          productName: item.product.name,
+          variantName: item.variant.variant_name,
+          variantId: item.variant.id,
+          currentStock: item.variant.stock_quantity,
+          lowStockThreshold: item.variant.low_stock_threshold || 5,
+          type: "out_of_stock",
+          triggerReason: `Online order placement (#${orderNumber})`,
+        }).catch(() => {});
+      });
+    } else if (item.variant.stock_quantity <= (item.variant.low_stock_threshold || 5)) {
+      import("@/lib/whatsapp/payment-notifications").then(({ notifyAdminStockAlert }) => {
+        notifyAdminStockAlert({
+          productName: item.product.name,
+          variantName: item.variant.variant_name,
+          variantId: item.variant.id,
+          currentStock: item.variant.stock_quantity,
+          lowStockThreshold: item.variant.low_stock_threshold || 5,
+          type: "low_stock",
+          triggerReason: `Online order placement (#${orderNumber})`,
+        }).catch(() => {});
+      });
+    }
   }
+  persistProductsToDisk(db.products);
 
   const phoneToMatch = (params.customer_phone || "").replace(/[^0-9]/g, "");
   const emailToMatch = (params.customer_email || "").trim().toLowerCase();
@@ -1260,6 +1318,18 @@ export async function createOrder(params: CreateOrderParams): Promise<{ success:
           it.line_total,
           it.image_url || null,
         ]);
+      }
+
+      // Deduct stock in Postgres product_variants table
+      for (const item of stockDeductions) {
+        const isVarUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.variant.id || "");
+        if (isVarUuid) {
+          await sql.query(`
+            UPDATE product_variants 
+            SET stock_quantity = $1, updated_at = NOW() 
+            WHERE id = $2;
+          `, [item.variant.stock_quantity, item.variant.id]).catch(() => {});
+        }
       }
 
       // 1. Insert initial order status history into Postgres
@@ -3419,5 +3489,232 @@ export async function updateCustomerProfile(
   }
 
   return { success: false, error: "Customer not found." };
+}
+
+// 12. SPECIAL BATCH DEMANDS (OUT OF STOCK CUSTOMER INTEREST & 10+ KG THRESHOLD)
+export interface RecordDemandParams {
+  productId: string;
+  productName?: string;
+  variantName?: string;
+  customerName: string;
+  customerPhone: string;
+  customerEmail?: string;
+  quantityKg: number;
+  notes?: string;
+}
+
+export async function recordProductDemand(params: RecordDemandParams) {
+  const cleanPhone = normalisePhone(params.customerPhone) || params.customerPhone.trim();
+  const qty = Math.max(0.25, Number(params.quantityKg) || 1.0);
+
+  let productName = params.productName || "";
+  if (!productName) {
+    const prod = await getProductById(params.productId);
+    if (prod) productName = prod.name;
+  }
+  if (!productName) productName = "Festive Special Sweet";
+
+  const demandId = crypto.randomUUID();
+
+  if (sql) {
+    try {
+      await sql.query(`
+        INSERT INTO product_demands (
+          id, product_id, product_name, variant_name, customer_name,
+          customer_phone, customer_email, quantity_kg, notes, status, admin_alert_sent, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', false, NOW(), NOW());
+      `, [
+        demandId,
+        params.productId,
+        productName,
+        params.variantName || null,
+        params.customerName.trim(),
+        cleanPhone,
+        params.customerEmail?.trim() || null,
+        qty,
+        params.notes?.trim() || null,
+      ]);
+
+      // Calculate total pending demand for this product
+      const sumRows = await sql.query(`
+        SELECT 
+          COALESCE(SUM(quantity_kg), 0)::float as total_kg,
+          COUNT(DISTINCT customer_phone)::int as customer_count,
+          BOOL_OR(admin_alert_sent) as any_alert_sent
+        FROM product_demands 
+        WHERE product_id = $1 AND status = 'pending';
+      `, [params.productId]);
+
+      const totalKg = Number(sumRows?.[0]?.total_kg || qty);
+      const customerCount = Number(sumRows?.[0]?.customer_count || 1);
+      const anyAlertSent = Boolean(sumRows?.[0]?.any_alert_sent);
+
+      // Trigger Admin WhatsApp alert when community demand reaches 10+ KG
+      if (totalKg >= 10.0 && !anyAlertSent) {
+        import("@/lib/whatsapp/payment-notifications").then(({ notifyAdminSpecialDemandAlert }) => {
+          notifyAdminSpecialDemandAlert({
+            productName,
+            totalKg,
+            customerCount,
+          }).catch(() => {});
+        });
+
+        // Mark admin_alert_sent = true for these pending rows
+        await sql.query(`
+          UPDATE product_demands 
+          SET admin_alert_sent = true, updated_at = NOW() 
+          WHERE product_id = $1 AND status = 'pending';
+        `, [params.productId]).catch(() => {});
+      }
+
+      return {
+        success: true,
+        demandId,
+        totalKg,
+        customerCount,
+        targetMet: totalKg >= 10.0,
+      };
+    } catch (err) {
+      console.error("[STORE] recordProductDemand error:", err);
+    }
+  }
+
+  return { success: true, demandId, totalKg: qty, customerCount: 1, targetMet: qty >= 10 };
+}
+
+export async function getProductDemandByProduct(productId: string) {
+  if (sql) {
+    try {
+      const rows = await sql.query(`
+        SELECT 
+          COALESCE(SUM(quantity_kg), 0)::float as total_kg,
+          COUNT(DISTINCT customer_phone)::int as customer_count
+        FROM product_demands 
+        WHERE product_id = $1 AND status = 'pending';
+      `, [productId]);
+
+      const totalKg = Number(rows?.[0]?.total_kg || 0);
+      const customerCount = Number(rows?.[0]?.customer_count || 0);
+
+      return {
+        totalKg,
+        targetKg: 10.0,
+        customerCount,
+        isTargetReached: totalKg >= 10.0,
+      };
+    } catch (err) {
+      console.error("[STORE] getProductDemandByProduct error:", err);
+    }
+  }
+  return { totalKg: 0, targetKg: 10.0, customerCount: 0, isTargetReached: false };
+}
+
+export async function getAllProductDemandsSummary(): Promise<ProductDemandSummary[]> {
+  if (sql) {
+    try {
+      const rows = await sql.query(`
+        SELECT 
+          d.id, d.product_id, d.product_name, d.variant_name,
+          d.customer_name, d.customer_phone, d.customer_email,
+          d.quantity_kg::float, d.notes, d.status, d.admin_alert_sent,
+          d.notified_at, d.created_at, d.updated_at,
+          p.slug, p.image_url
+        FROM product_demands d
+        LEFT JOIN products p ON p.id = d.product_id
+        WHERE d.status = 'pending'
+        ORDER BY d.created_at DESC;
+      `);
+
+      const map = new Map<string, ProductDemandSummary>();
+      for (const r of rows) {
+        const pId = String(r.product_id);
+        if (!map.has(pId)) {
+          map.set(pId, {
+            productId: pId,
+            productName: r.product_name,
+            imageUrl: r.image_url || undefined,
+            slug: r.slug || undefined,
+            totalKg: 0,
+            targetKg: 10.0,
+            isTargetReached: false,
+            customerCount: 0,
+            demands: [],
+          });
+        }
+        const item = map.get(pId)!;
+        item.totalKg += Number(r.quantity_kg);
+        item.demands.push({
+          id: String(r.id),
+          product_id: pId,
+          product_name: r.product_name,
+          variant_name: r.variant_name || undefined,
+          customer_name: r.customer_name,
+          customer_phone: r.customer_phone,
+          customer_email: r.customer_email || undefined,
+          quantity_kg: Number(r.quantity_kg),
+          notes: r.notes || undefined,
+          status: r.status,
+          admin_alert_sent: Boolean(r.admin_alert_sent),
+          notified_at: r.notified_at ? new Date(r.notified_at).toISOString() : undefined,
+          created_at: new Date(r.created_at).toISOString(),
+          updated_at: new Date(r.updated_at).toISOString(),
+        });
+      }
+
+      for (const item of map.values()) {
+        const uniquePhones = new Set(item.demands.map((d) => d.customer_phone));
+        item.customerCount = uniquePhones.size;
+        item.isTargetReached = item.totalKg >= 10.0;
+      }
+
+      return Array.from(map.values()).sort((a, b) => b.totalKg - a.totalKg);
+    } catch (err) {
+      console.error("[STORE] getAllProductDemandsSummary error:", err);
+    }
+  }
+  return [];
+}
+
+export async function fulfillProductDemands(productId: string): Promise<{ success: boolean; count: number; error?: string }> {
+  if (sql) {
+    try {
+      const rows = await sql.query(`
+        SELECT d.*, p.slug 
+        FROM product_demands d
+        LEFT JOIN products p ON p.id = d.product_id
+        WHERE d.product_id = $1 AND d.status = 'pending';
+      `, [productId]);
+
+      if (!rows || rows.length === 0) {
+        return { success: false, count: 0, error: "No pending demands found for this sweet." };
+      }
+
+      const { notifyCustomerSpecialBatchReady } = await import("@/lib/whatsapp/payment-notifications");
+
+      let notifiedCount = 0;
+      for (const r of rows) {
+        const sent = await notifyCustomerSpecialBatchReady({
+          customerName: r.customer_name,
+          customerPhone: r.customer_phone,
+          productName: r.product_name,
+          quantityKg: Number(r.quantity_kg),
+          productSlug: r.slug,
+        }).catch(() => false);
+        if (sent) notifiedCount++;
+      }
+
+      await sql.query(`
+        UPDATE product_demands 
+        SET status = 'fulfilled_notified', notified_at = NOW(), updated_at = NOW() 
+        WHERE product_id = $1 AND status = 'pending';
+      `, [productId]);
+
+      return { success: true, count: rows.length };
+    } catch (err) {
+      console.error("[STORE] fulfillProductDemands error:", err);
+      return { success: false, count: 0, error: "Failed to notify customers." };
+    }
+  }
+  return { success: false, count: 0, error: "Database not connected." };
 }
 

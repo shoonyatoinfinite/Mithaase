@@ -767,5 +767,127 @@ export async function notifyOrderOutForDelivery(params: {
   return { customerSent, adminSent };
 }
 
+// Cooldown map to prevent duplicate stock alerts within 15 minutes
+const stockAlertCooldownMap = new Map<string, number>();
+
+/**
+ * Sends real-time Low Stock / Out of Stock alert to Admin WhatsApp
+ */
+export async function notifyAdminStockAlert(params: {
+  productName: string;
+  variantName: string;
+  variantId?: string;
+  currentStock: number;
+  lowStockThreshold: number;
+  type: "out_of_stock" | "low_stock";
+  triggerReason?: string;
+  adminPhone?: string;
+}): Promise<boolean> {
+  const isOut = params.type === "out_of_stock" || params.currentStock <= 0;
+  const key = `${params.productName}_${params.variantName}_${isOut ? "out" : "low"}`;
+  const now = Date.now();
+  const lastAlertTime = stockAlertCooldownMap.get(key) || 0;
+
+  // 15-minute cooldown per variant & stock condition
+  if (now - lastAlertTime < 15 * 60 * 1000) {
+    console.log(`[Stock Notification] Cooldown active for ${key}, skipping duplicate alert.`);
+    return false;
+  }
+
+  const adminHelpline = (params.adminPhone || (await resolveAdminHelpline())).trim();
+  const cleanAdminPhone = adminHelpline.replace(/[^0-9]/g, "").slice(-10);
+
+  if (!cleanAdminPhone) {
+    console.warn("[Stock Alert] No valid admin phone configured.");
+    return false;
+  }
+
+  const title = isOut ? "🚨 *PRODUCT OUT OF STOCK ALERT*" : "⚠️ *LOW INVENTORY WARNING*";
+  const statusBadge = isOut ? "🔴 *OUT OF STOCK* (0 Units Remaining)" : `🟡 *LOW STOCK* (${params.currentStock} Units Remaining)`;
+  const appBaseUrl = getAppBaseUrl();
+
+  const message =
+    `${title}\n\n` +
+    `Attention Admin! An item in your sweet inventory has reached critical stock levels:\n\n` +
+    `📦 *Sweet Name:* *${params.productName}*\n` +
+    `⚖️ *Variant / Size:* *${params.variantName}*\n` +
+    `📊 *Current Stock:* *${params.currentStock} units*\n` +
+    `🎯 *Low Stock Limit:* ${params.lowStockThreshold} units\n` +
+    `⚡ *Status:* ${statusBadge}\n` +
+    (params.triggerReason ? `📝 *Triggered by:* ${params.triggerReason}\n` : "") +
+    `\n👉 *Action Required:* Please schedule a fresh batch with your halwai or restock from the Admin Dashboard:\n` +
+    `${appBaseUrl}/admin/inventory\n\n` +
+    `— Shree Shyam Sweets Inventory System`;
+
+  stockAlertCooldownMap.set(key, now);
+  console.log(`[Stock Notification] Sending ${params.type} alert for ${params.productName} (${params.variantName}) to Admin (+91 ${cleanAdminPhone})`);
+  return sendWhatsAppMessage(cleanAdminPhone, message);
+}
+
+/**
+ * Sends real-time High Demand WhatsApp Alert to Admin when out-of-stock item crosses 10+ KG community requests
+ */
+export async function notifyAdminSpecialDemandAlert(params: {
+  productName: string;
+  totalKg: number;
+  customerCount: number;
+  adminPhone?: string;
+}): Promise<boolean> {
+  const adminHelpline = (params.adminPhone || (await resolveAdminHelpline())).trim();
+  const cleanAdminPhone = adminHelpline.replace(/[^0-9]/g, "").slice(-10);
+
+  if (!cleanAdminPhone) {
+    console.warn("[Special Demand Alert] No valid admin phone configured.");
+    return false;
+  }
+
+  const appBaseUrl = getAppBaseUrl();
+  const message =
+    `🌟 *SPECIAL BATCH DEMAND ALERT — 10+ KG REACHED!*\n\n` +
+    `Great news! Customer requests for an out-of-stock item have crossed the *10 kg threshold*:\n\n` +
+    `📦 *Sweet:* *${params.productName}*\n` +
+    `⚖️ *Total Demand:* *${Number(params.totalKg).toFixed(1)} kg*\n` +
+    `👥 *Interested Customers:* *${params.customerCount} customers*\n\n` +
+    `Community interest is high! Your kitchen can now prepare a dedicated fresh festive batch.\n\n` +
+    `👉 *Review & Approve Batch:* Once ready, click 'Approve & Notify Customers' in Admin to auto-send them WhatsApp messages:\n` +
+    `${appBaseUrl}/admin/inventory\n\n` +
+    `— Shree Shyam Sweets Production Fleet`;
+
+  console.log(`[Special Demand] Dispatching 10+ kg alert for ${params.productName} (${params.totalKg} kg) to Admin (+91 ${cleanAdminPhone})`);
+  return sendWhatsAppMessage(cleanAdminPhone, message);
+}
+
+/**
+ * Sends customer notification when the requested out-of-stock sweet is freshly prepared
+ */
+export async function notifyCustomerSpecialBatchReady(params: {
+  customerName: string;
+  customerPhone: string;
+  productName: string;
+  quantityKg: number;
+  productSlug?: string;
+  adminPhone?: string;
+}): Promise<boolean> {
+  const cleanPhone = params.customerPhone.replace(/[^0-9]/g, "").slice(-10);
+  if (!cleanPhone || cleanPhone.length !== 10) return false;
+
+  const adminHelpline = params.adminPhone || (await resolveAdminHelpline());
+  const appBaseUrl = getAppBaseUrl();
+  const orderUrl = params.productSlug ? `${appBaseUrl}/product/${params.productSlug}` : `${appBaseUrl}/#shop`;
+
+  const message =
+    `🍯✨ *Special Batch Ready — Shree Shyam Sweets!*\n\n` +
+    `Namaste *${params.customerName}* ji! 🙏\n\n` +
+    `Wonderful news! The special fresh festive batch of *${params.productName}* you requested (*${Number(params.quantityKg).toFixed(1)} kg*) has been specially prepared by our Master Halwai in pure desi ghee!\n\n` +
+    `Because community demand was high, this fresh batch is limited. Order now to get it delivered fresh to your doorstep:\n` +
+    `👉 ${orderUrl}\n\n` +
+    `Thank you for your love and trust in Shree Shyam Sweets! 🍬\n\n` +
+    `— *Shree Shyam Sweets*\n` +
+    `📞 Helpline: ${adminHelpline}`;
+
+  console.log(`[Batch Ready] Dispatching ready notification for ${params.productName} to ${params.customerName} (+91 ${cleanPhone})`);
+  return sendWhatsAppMessage(cleanPhone, message);
+}
+
 
 

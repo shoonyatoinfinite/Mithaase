@@ -37,6 +37,13 @@ export async function GET(req: Request) {
     const grossRevenue = onlineTotal + offlineTotal;
     const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
     const estimatedProfit = grossRevenue - totalExpenses;
+    const profitMargin = grossRevenue > 0 ? Math.round((estimatedProfit / grossRevenue) * 100) : 0;
+
+    // Average Order Values
+    const avgOnlineOrderValue =
+      validOnlineOrders.length > 0 ? Math.round(onlineTotal / validOnlineOrders.length) : 0;
+    const avgOfflineSaleValue =
+      filteredOfflineSales.length > 0 ? Math.round(offlineTotal / filteredOfflineSales.length) : 0;
 
     // Payment methods breakdown
     const paymentMethods = {
@@ -50,6 +57,20 @@ export async function GET(req: Request) {
     filteredOfflineSales.forEach((s) => {
       if (s.payment_method === "cash") paymentMethods.cash += s.total_amount;
       if (s.payment_method === "upi") paymentMethods.upi += s.total_amount;
+    });
+
+    // Order status breakdown
+    const orderStatusBreakdown: Record<string, number> = {
+      delivered: 0,
+      out_for_delivery: 0,
+      preparing: 0,
+      confirmed: 0,
+      pending_confirmation: 0,
+      cancelled: 0,
+    };
+    filteredOrders.forEach((o) => {
+      const st = o.order_status || "pending_confirmation";
+      orderStatusBreakdown[st] = (orderStatusBreakdown[st] || 0) + 1;
     });
 
     // Product units sold breakdown
@@ -83,6 +104,84 @@ export async function GET(req: Request) {
       expenseBreakdown[e.category] = (expenseBreakdown[e.category] || 0) + e.amount;
     });
 
+    // Daily Timeline Data for Trend Graphs
+    const dayMap = new Map<
+      string,
+      {
+        date: string;
+        label: string;
+        onlineRevenue: number;
+        offlineRevenue: number;
+        totalRevenue: number;
+        ordersCount: number;
+        offlineCount: number;
+      }
+    >();
+
+    // Helper to format date label
+    const formatDayLabel = (dStr: string) => {
+      const d = new Date(dStr);
+      return d.toLocaleDateString("en-IN", { month: "short", day: "numeric" });
+    };
+
+    validOnlineOrders.forEach((o) => {
+      const day = o.created_at.split("T")[0];
+      if (!dayMap.has(day)) {
+        dayMap.set(day, {
+          date: day,
+          label: formatDayLabel(day),
+          onlineRevenue: 0,
+          offlineRevenue: 0,
+          totalRevenue: 0,
+          ordersCount: 0,
+          offlineCount: 0,
+        });
+      }
+      const entry = dayMap.get(day)!;
+      entry.onlineRevenue += o.total_amount;
+      entry.totalRevenue += o.total_amount;
+      entry.ordersCount += 1;
+    });
+
+    filteredOfflineSales.forEach((s) => {
+      const day = s.created_at.split("T")[0];
+      if (!dayMap.has(day)) {
+        dayMap.set(day, {
+          date: day,
+          label: formatDayLabel(day),
+          onlineRevenue: 0,
+          offlineRevenue: 0,
+          totalRevenue: 0,
+          ordersCount: 0,
+          offlineCount: 0,
+        });
+      }
+      const entry = dayMap.get(day)!;
+      entry.offlineRevenue += s.total_amount;
+      entry.totalRevenue += s.total_amount;
+      entry.offlineCount += 1;
+    });
+
+    // If dayMap has fewer than 2 days, ensure at least last 7 days are represented
+    if (range === "7days" || range === "all") {
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(now.getTime() - i * 86400000).toISOString().split("T")[0];
+        if (!dayMap.has(d)) {
+          dayMap.set(d, {
+            date: d,
+            label: formatDayLabel(d),
+            onlineRevenue: 0,
+            offlineRevenue: 0,
+            totalRevenue: 0,
+            ordersCount: 0,
+            offlineCount: 0,
+          });
+        }
+      }
+    }
+
+    const timeline = Array.from(dayMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+
     return NextResponse.json({
       range,
       grossRevenue,
@@ -92,15 +191,21 @@ export async function GET(req: Request) {
       offlineTotal,
       totalExpenses,
       estimatedProfit,
+      profitMargin,
+      avgOnlineOrderValue,
+      avgOfflineSaleValue,
       ordersCount: validOnlineOrders.length,
       offlineSalesCount: filteredOfflineSales.length,
       cancelledOrdersCount: filteredOrders.filter((o) => o.order_status === "cancelled").length,
+      orderStatusBreakdown,
       paymentMethods,
       topProducts,
       expenseBreakdown,
       productsCount: products.length,
+      timeline,
     });
   } catch (error) {
+    console.error("[API] GET /api/reports error:", error);
     return NextResponse.json({ error: "Failed to generate report" }, { status: 500 });
   }
 }

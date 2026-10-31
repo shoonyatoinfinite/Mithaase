@@ -283,3 +283,32 @@ export interface AdminProfile {
   role: 'super_admin' | 'manager' | 'staff';
 }
 
+export interface ProductDemand {
+  id: string;
+  product_id: string;
+  product_name: string;
+  variant_name?: string;
+  customer_name: string;
+  customer_phone: string;
+  customer_email?: string;
+  quantity_kg: number;
+  notes?: string;
+  status: 'pending' | 'batch_scheduled' | 'fulfilled_notified' | 'cancelled';
+  admin_alert_sent: boolean;
+  notified_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProductDemandSummary {
+  productId: string;
+  productName: string;
+  imageUrl?: string;
+  slug?: string;
+  totalKg: number;
+  targetKg: number;
+  isTargetReached: boolean;
+  customerCount: number;
+  demands: ProductDemand[];
+}
+

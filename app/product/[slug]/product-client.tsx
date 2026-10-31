@@ -8,12 +8,14 @@ import { useStoreSettings } from "@/lib/context/store-context";
 import { StoreClosedModal } from "@/components/storefront/StoreClosedModal";
 import { ShoppingBag, Check, Plus, Minus, Sparkles, AlertCircle, ArrowRight } from "lucide-react";
 import { useRealtime } from "@/lib/hooks/useRealtime";
+import { ProductDemandModal } from "@/components/products/ProductDemandModal";
 
 export function ProductDetailClient({ product }: { product: Product }) {
   const router = useRouter();
   const { addItem, items } = useCart();
   const { settings, isStoreClosed } = useStoreSettings();
   const [isStoreClosedModalOpen, setIsStoreClosedModalOpen] = useState(false);
+  const [isDemandModalOpen, setIsDemandModalOpen] = useState(false);
   const [currentProduct, setCurrentProduct] = useState<Product>(product);
 
   useEffect(() => {
@@ -267,34 +269,43 @@ export function ProductDetailClient({ product }: { product: Product }) {
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={handleAddToCart}
-          disabled={isOutOfStock || isMaxInCart}
-          className={`flex-1 w-full py-4 px-6 rounded-full font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-xl ${
-            isOutOfStock || isMaxInCart
-              ? "bg-white/10 text-white/40 cursor-not-allowed border border-white/5"
-              : added
-              ? "bg-emerald-600 text-white border border-emerald-400"
-              : "gold-gradient-btn"
-          }`}
-        >
-          {added ? (
-            <>
-              <Check className="w-4 h-4" />
-              <span>Added to Cart!</span>
-            </>
-          ) : isOutOfStock ? (
-            <span>Currently Unavailable</span>
-          ) : isMaxInCart ? (
-            <span>Max in Cart ({availableStock} units)</span>
-          ) : (
-            <>
-              <ShoppingBag className="w-4 h-4" />
-              <span>Add to Cart</span>
-            </>
-          )}
-        </button>
+        {isOutOfStock ? (
+          <button
+            type="button"
+            onClick={() => setIsDemandModalOpen(true)}
+            className="flex-1 w-full py-4 px-6 rounded-full font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-xl bg-gradient-to-r from-amber-500 to-[#D4AF37] hover:from-amber-400 hover:to-[#F5D061] text-[#16031E] cursor-pointer"
+          >
+            <Sparkles className="w-4 h-4 text-[#16031E]" />
+            <span>Request Fresh Halwai Batch (मांग दर्ज करें)</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleAddToCart}
+            disabled={isMaxInCart}
+            className={`flex-1 w-full py-4 px-6 rounded-full font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-xl ${
+              isMaxInCart
+                ? "bg-white/10 text-white/40 cursor-not-allowed border border-white/5"
+                : added
+                ? "bg-emerald-600 text-white border border-emerald-400"
+                : "gold-gradient-btn"
+            }`}
+          >
+            {added ? (
+              <>
+                <Check className="w-4 h-4" />
+                <span>Added to Cart!</span>
+              </>
+            ) : isMaxInCart ? (
+              <span>Max in Cart ({availableStock} units)</span>
+            ) : (
+              <>
+                <ShoppingBag className="w-4 h-4" />
+                <span>Add to Cart</span>
+              </>
+            )}
+          </button>
+        )}
 
         {!isOutOfStock && (
           <button
@@ -307,6 +318,31 @@ export function ProductDetailClient({ product }: { product: Product }) {
           </button>
         )}
       </div>
+
+      {isOutOfStock && (
+        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-3 text-xs text-[#FFF8EE]">
+          <div className="flex items-center gap-2.5">
+            <Sparkles className="w-4 h-4 text-[#F5D061] shrink-0" />
+            <span>
+              <strong>Out of Stock?</strong> Request your desired quantity. When community requests reach <strong>10 kg</strong>, our Halwai prepares a dedicated batch!
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsDemandModalOpen(true)}
+            className="px-3.5 py-1.5 rounded-lg bg-[#D4AF37] text-[#16031E] font-bold text-xs shrink-0 hover:bg-[#F5D061] transition-colors"
+          >
+            Request
+          </button>
+        </div>
+      )}
+
+      {/* Special Batch Demand Modal */}
+      <ProductDemandModal
+        product={currentProduct}
+        isOpen={isDemandModalOpen}
+        onClose={() => setIsDemandModalOpen(false)}
+      />
 
       {/* Store Closed Modal */}
       <StoreClosedModal

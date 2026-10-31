@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Product, ProductVariant } from "@/types";
 import { useCart } from "@/lib/context/cart-context";
 import { ShoppingBag, Check, Plus, Minus, AlertCircle, Sparkles } from "lucide-react";
+import { ProductDemandModal } from "@/components/products/ProductDemandModal";
 
 interface ProductCardProps {
   product: Product;
@@ -13,6 +14,7 @@ interface ProductCardProps {
 
 export function ProductCard({ product }: ProductCardProps) {
   const { addItem, items } = useCart();
+  const [isDemandModalOpen, setIsDemandModalOpen] = useState(false);
   const activeVariants = product.variants.filter((v) => v.is_active);
   // Default to 1kg variant if available, otherwise fallback to first variant
   const default1kg =
@@ -254,44 +256,58 @@ export function ProductCard({ product }: ProductCardProps) {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={handleAddToCart}
-              disabled={isOutOfStock || isMaxInCart}
-              className={`h-9 px-3.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-bold transition-all ${
-                isOutOfStock || isMaxInCart
-                  ? "bg-white/10 text-white/40 cursor-not-allowed border border-white/5"
-                  : addedAnimation
-                  ? "bg-emerald-600 text-white border border-emerald-400"
-                  : "gold-gradient-btn"
-              }`}
-              title={
-                isOutOfStock
-                  ? "Out of stock"
-                  : isMaxInCart
-                  ? `Maximum available stock (${availableStock}) already in cart`
-                  : "Add to cart"
-              }
-            >
-              {addedAnimation ? (
-                <>
-                  <Check className="w-3.5 h-3.5" />
-                  <span>Added!</span>
-                </>
-              ) : isOutOfStock ? (
-                <span>Sold Out</span>
-              ) : isMaxInCart ? (
-                <span>Max in Cart</span>
-              ) : (
-                <>
-                  <ShoppingBag className="w-3.5 h-3.5" />
-                  <span>Add</span>
-                </>
-              )}
-            </button>
+            {isOutOfStock ? (
+              <button
+                type="button"
+                onClick={() => setIsDemandModalOpen(true)}
+                className="h-9 px-3 rounded-lg flex items-center justify-center gap-1.5 text-xs font-bold transition-all bg-amber-500/20 text-[#F5D061] border border-amber-500/40 hover:bg-amber-500/30 cursor-pointer shadow-md"
+                title="Special Halwai Batch Request (10+ kg goal)"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-[#F5D061]" />
+                <span>Request Batch</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleAddToCart}
+                disabled={isMaxInCart}
+                className={`h-9 px-3.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-bold transition-all ${
+                  isMaxInCart
+                    ? "bg-white/10 text-white/40 cursor-not-allowed border border-white/5"
+                    : addedAnimation
+                    ? "bg-emerald-600 text-white border border-emerald-400"
+                    : "gold-gradient-btn"
+                }`}
+                title={
+                  isMaxInCart
+                    ? `Maximum available stock (${availableStock}) already in cart`
+                    : "Add to cart"
+                }
+              >
+                {addedAnimation ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Added!</span>
+                  </>
+                ) : isMaxInCart ? (
+                  <span>Max in Cart</span>
+                ) : (
+                  <>
+                    <ShoppingBag className="w-3.5 h-3.5" />
+                    <span>Add</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      <ProductDemandModal
+        product={product}
+        isOpen={isDemandModalOpen}
+        onClose={() => setIsDemandModalOpen(false)}
+      />
     </div>
   );
 }
